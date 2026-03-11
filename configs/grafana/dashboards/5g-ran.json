@@ -1,0 +1,137 @@
+{
+  "title": "5G RAN Performance",
+  "uid": "5g-ran-v1",
+  "description": "OAI gNB + nrUE metrics — N2/N3 throughput, container health, CPU/memory",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-30m", "to": "now"},
+  "timezone": "browser",
+  "graphTooltip": 1,
+  "tags": ["5g", "oai", "ran"],
+  "editable": true,
+  "panels": [
+
+    {"type":"row","id":1,"title":"RAN Status","gridPos":{"x":0,"y":0,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "stat", "id": 2, "title": "gNB Container",
+      "gridPos": {"x": 0, "y": 1, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_tasks_state{name=\"oai-gnb\",state=\"running\"} or vector(0)", "instant": true, "refId": "A"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]},"mappings":[{"type":"value","options":{"0":{"text":"STOPPED","color":"red"},"1":{"text":"RUNNING","color":"green"}}}]},"overrides":[]}
+    },
+
+    {
+      "type": "stat", "id": 3, "title": "nrUE Container",
+      "gridPos": {"x": 4, "y": 1, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_tasks_state{name=\"oai-nrue\",state=\"running\"} or vector(0)", "instant": true, "refId": "A"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]},"mappings":[{"type":"value","options":{"0":{"text":"STOPPED","color":"red"},"1":{"text":"CONNECTED","color":"green"}}}]},"overrides":[]}
+    },
+
+    {
+      "type": "stat", "id": 4, "title": "N3 DL Rate",
+      "gridPos": {"x": 8, "y": 1, "w": 5, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_transmit_bytes_total{name=\"oai-gnb\"}[1m]) * 8", "instant": true, "refId": "A", "legendFormat": "DL"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"blue","value":null}]},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "stat", "id": 5, "title": "N3 UL Rate",
+      "gridPos": {"x": 13, "y": 1, "w": 5, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_receive_bytes_total{name=\"oai-gnb\"}[1m]) * 8", "instant": true, "refId": "A", "legendFormat": "UL"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"blue","value":null}]},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "stat", "id": 6, "title": "N2 NGAP Traffic",
+      "gridPos": {"x": 18, "y": 1, "w": 6, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "(rate(container_network_receive_bytes_total{name=\"open5gs-amf\"}[1m]) + rate(container_network_transmit_bytes_total{name=\"open5gs-amf\"}[1m])) * 8", "instant": true, "refId": "A", "legendFormat": "N2 bps"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"blue","value":null}]},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":7,"title":"N3 Interface — GTP-U Throughput","gridPos":{"x":0,"y":5,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 8, "title": "N3 DL / UL Throughput (gNB container network)",
+      "gridPos": {"x": 0, "y": 6, "w": 24, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_transmit_bytes_total{name=\"oai-gnb\"}[1m]) * 8", "refId": "A", "legendFormat": "▼ DL  (gNB→UE)"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_receive_bytes_total{name=\"oai-gnb\"}[1m]) * 8", "refId": "B", "legendFormat": "▲ UL  (UE→gNB)"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_receive_bytes_total{name=\"oai-nrue\"}[1m]) * 8", "refId": "C", "legendFormat": "▼ UE RX"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_transmit_bytes_total{name=\"oai-nrue\"}[1m]) * 8", "refId": "D", "legendFormat": "▲ UE TX"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max","lastNotNull"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":20,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":9,"title":"N2 Control Plane","gridPos":{"x":0,"y":15,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 10, "title": "N2 NGAP Traffic (AMF ↔ gNB)",
+      "gridPos": {"x": 0, "y": 16, "w": 24, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_receive_bytes_total{name=\"open5gs-amf\"}[1m]) * 8", "refId": "A", "legendFormat": "AMF RX (gNB→AMF)"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_transmit_bytes_total{name=\"open5gs-amf\"}[1m]) * 8", "refId": "B", "legendFormat": "AMF TX (AMF→gNB)"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":15,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":11,"title":"RAN Container Resources","gridPos":{"x":0,"y":23,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 12, "title": "gNB + UE CPU Usage",
+      "gridPos": {"x": 0, "y": 24, "w": 12, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_cpu_usage_seconds_total{name=\"oai-gnb\"}[1m]) * 100", "refId": "A", "legendFormat": "gNB CPU %"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_cpu_usage_seconds_total{name=\"oai-nrue\"}[1m]) * 100", "refId": "B", "legendFormat": "nrUE CPU %"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":10,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"percent","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "timeseries", "id": 13, "title": "gNB + UE Memory Usage",
+      "gridPos": {"x": 12, "y": 24, "w": 12, "h": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_memory_working_set_bytes{name=\"oai-gnb\"} / 1048576", "refId": "A", "legendFormat": "gNB Memory (MiB)"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_memory_working_set_bytes{name=\"oai-nrue\"} / 1048576", "refId": "B", "legendFormat": "nrUE Memory (MiB)"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":10,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"MiB","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":14,"title":"RAN Logs (via Loki)","gridPos":{"x":0,"y":31,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "logs", "id": 15, "title": "gNB Logs",
+      "gridPos": {"x": 0, "y": 32, "w": 12, "h": 9},
+      "datasource": {"type": "loki", "uid": "loki-ds"},
+      "targets": [{"datasource":{"type":"loki","uid":"loki-ds"}, "expr": "{nf=\"gnb\"}", "refId": "A"}],
+      "options": {"dedupStrategy":"none","enableLogDetails":true,"prettifyLogMessage":false,"showCommonLabels":false,"showLabels":true,"showTime":true,"sortOrder":"Descending","wrapLogMessage":false}
+    },
+
+    {
+      "type": "logs", "id": 16, "title": "nrUE Logs",
+      "gridPos": {"x": 12, "y": 32, "w": 12, "h": 9},
+      "datasource": {"type": "loki", "uid": "loki-ds"},
+      "targets": [{"datasource":{"type":"loki","uid":"loki-ds"}, "expr": "{nf=\"nrue\"}", "refId": "A"}],
+      "options": {"dedupStrategy":"none","enableLogDetails":true,"prettifyLogMessage":false,"showCommonLabels":false,"showLabels":true,"showTime":true,"sortOrder":"Descending","wrapLogMessage":false}
+    }
+
+  ]
+}

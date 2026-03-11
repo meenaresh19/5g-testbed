@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: '5G Testbed Dashboards'
+    orgId: 1
+    folder: '5G Testbed'
+    type: file
+    disableDeletion: true
+    editable: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

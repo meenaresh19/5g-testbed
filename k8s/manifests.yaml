@@ -1,0 +1,421 @@
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: 5g-testbed
+  labels:
+    app.kubernetes.io/managed-by: "5g-testbed"
+---
+# MongoDB
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: 5g-testbed
+spec:
+  serviceName: mongodb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:6.0
+        ports:
+        - containerPort: 27017
+        volumeMounts:
+        - name: mongo-data
+          mountPath: /data/db
+        livenessProbe:
+          exec:
+            command: ["mongosh","--eval","db.adminCommand('ping')"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: mongo-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: 5g-testbed
+spec:
+  selector:
+    app: mongodb
+  clusterIP: None
+  ports:
+  - port: 27017
+---
+# NRF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-nrf
+  namespace: 5g-testbed
+  labels:
+    nf: nrf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      nf: nrf
+  template:
+    metadata:
+      labels:
+        nf: nrf
+    spec:
+      containers:
+      - name: nrf
+        image: gradiant/open5gs:2.7.0
+        command: ["open5gs-nrfd","-c","/etc/open5gs/nrf.yaml"]
+        volumeMounts:
+        - name: config
+          mountPath: /etc/open5gs/nrf.yaml
+          subPath: nrf.yaml
+      volumes:
+      - name: config
+        configMap:
+          name: open5gs-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-nrf
+  namespace: 5g-testbed
+spec:
+  selector:
+    nf: nrf
+  ports:
+  - port: 7777
+    name: sbi
+---
+# AMF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-amf
+  namespace: 5g-testbed
+  labels:
+    nf: amf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      nf: amf
+  template:
+    metadata:
+      labels:
+        nf: amf
+      annotations:
+        k8s.v1.cni.cncf.io/networks: '[{"name":"n2-network"}]'
+    spec:
+      containers:
+      - name: amf
+        image: gradiant/open5gs:2.7.0
+        command: ["open5gs-amfd","-c","/etc/open5gs/amf.yaml"]
+        ports:
+        - containerPort: 38412
+          protocol: SCTP
+          name: ngap
+        - containerPort: 7777
+          name: sbi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/open5gs/amf.yaml
+          subPath: amf.yaml
+      volumes:
+      - name: config
+        configMap:
+          name: open5gs-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-amf
+  namespace: 5g-testbed
+spec:
+  selector:
+    nf: amf
+  ports:
+  - port: 38412
+    protocol: SCTP
+    name: ngap
+  - port: 7777
+    name: sbi
+---
+# SMF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-smf
+  namespace: 5g-testbed
+  labels:
+    nf: smf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      nf: smf
+  template:
+    metadata:
+      labels:
+        nf: smf
+    spec:
+      containers:
+      - name: smf
+        image: gradiant/open5gs:2.7.0
+        command: ["open5gs-smfd","-c","/etc/open5gs/smf.yaml"]
+        volumeMounts:
+        - name: config
+          mountPath: /etc/open5gs/smf.yaml
+          subPath: smf.yaml
+      volumes:
+      - name: config
+        configMap:
+          name: open5gs-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-smf
+  namespace: 5g-testbed
+spec:
+  selector:
+    nf: smf
+  ports:
+  - port: 7777
+    name: sbi
+  - port: 8805
+    protocol: UDP
+    name: pfcp
+---
+# UPF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-upf
+  namespace: 5g-testbed
+  labels:
+    nf: upf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      nf: upf
+  template:
+    metadata:
+      labels:
+        nf: upf
+    spec:
+      containers:
+      - name: upf
+        image: gradiant/open5gs:2.7.0
+        command: ["open5gs-upfd","-c","/etc/open5gs/upf.yaml"]
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN"]
+        volumeMounts:
+        - name: config
+          mountPath: /etc/open5gs/upf.yaml
+          subPath: upf.yaml
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
+      volumes:
+      - name: config
+        configMap:
+          name: open5gs-config
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun
+---
+# Open5GS WebUI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-webui
+  namespace: 5g-testbed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open5gs-webui
+  template:
+    metadata:
+      labels:
+        app: open5gs-webui
+    spec:
+      containers:
+      - name: webui
+        image: gradiant/open5gs-webui:2.7.0
+        env:
+        - name: DB_URI
+          value: mongodb://mongodb/open5gs
+        - name: NODE_ENV
+          value: production
+        ports:
+        - containerPort: 9999
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-webui
+  namespace: 5g-testbed
+spec:
+  type: NodePort
+  selector:
+    app: open5gs-webui
+  ports:
+  - port: 9999
+    nodePort: 30999
+---
+# OAI gNB
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oai-gnb
+  namespace: 5g-testbed
+  labels:
+    nf: gnb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      nf: gnb
+  template:
+    metadata:
+      labels:
+        nf: gnb
+    spec:
+      hostNetwork: false
+      containers:
+      - name: gnb
+        image: oaisoftwarealliance/oai-gnb:develop
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN","SYS_NICE"]
+        env:
+        - name: USE_SA_TDD_MONO
+          value: "yes"
+        - name: GNB_NAME
+          value: "OAI-gNB-1"
+        - name: MCC
+          value: "001"
+        - name: MNC
+          value: "01"
+        - name: TAC
+          value: "1"
+        - name: NSSAI_SST
+          value: "1"
+        - name: AMF_IP_ADDRESS
+          value: "open5gs-amf"
+        volumeMounts:
+        - name: config
+          mountPath: /opt/oai-gnb/etc/gnb.conf
+          subPath: gnb.conf
+      volumes:
+      - name: config
+        configMap:
+          name: oai-config
+---
+# OAI nrUE
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oai-nrue
+  namespace: 5g-testbed
+  labels:
+    nf: nrue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      nf: nrue
+  template:
+    metadata:
+      labels:
+        nf: nrue
+    spec:
+      containers:
+      - name: nrue
+        image: oaisoftwarealliance/oai-nr-ue:develop
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN","SYS_NICE"]
+        env:
+        - name: RFSIMULATOR
+          value: "oai-gnb"
+        - name: IMSI
+          value: "001010000000001"
+        - name: KEY
+          value: "fec86ba6eb707ed08905757b1bb44b8f"
+        - name: OPC
+          value: "C42449363BBAD02B66D16BC975D77CC1"
+        - name: DNN
+          value: "internet"
+        - name: NSSAI_SST
+          value: "1"
+        volumeMounts:
+        - name: config
+          mountPath: /opt/oai-nr-ue/etc/ue.conf
+          subPath: ue.conf
+      volumes:
+      - name: config
+        configMap:
+          name: oai-config
+---
+# Testbed Management UI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testbed-ui
+  namespace: 5g-testbed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testbed-ui
+  template:
+    metadata:
+      labels:
+        app: testbed-ui
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: ui-files
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: ui-files
+        configMap:
+          name: testbed-ui-files
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: testbed-ui
+  namespace: 5g-testbed
+spec:
+  type: NodePort
+  selector:
+    app: testbed-ui
+  ports:
+  - port: 80
+    nodePort: 30300

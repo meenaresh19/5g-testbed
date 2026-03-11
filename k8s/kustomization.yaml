@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: 5g-testbed
+
+resources:
+  - manifests.yaml
+
+configMapGenerator:
+  - name: open5gs-config
+    files:
+      - configs/open5gs/nrf.yaml
+      - configs/open5gs/scp.yaml
+      - configs/open5gs/amf.yaml
+      - configs/open5gs/smf.yaml
+      - configs/open5gs/upf.yaml
+      - configs/open5gs/ausf.yaml
+      - configs/open5gs/udm.yaml
+      - configs/open5gs/udr.yaml
+      - configs/open5gs/pcf.yaml
+      - configs/open5gs/bsf.yaml
+      - configs/open5gs/nssf.yaml
+
+  - name: oai-config
+    files:
+      - configs/oai/gnb.conf
+      - configs/oai/ue.conf
+
+images:
+  - name: gradiant/open5gs
+    newTag: "2.7.0"
+  - name: oaisoftwarealliance/oai-gnb
+    newTag: develop
+  - name: oaisoftwarealliance/oai-nr-ue
+    newTag: develop

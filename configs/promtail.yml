@@ -1,0 +1,49 @@
+# ============================================================
+# Promtail — Docker container log shipper → Loki
+# Uses Docker socket for automatic container discovery.
+# Labels nf= and type= are sourced from Docker container labels
+# set via com.5g-testbed.nf / com.5g-testbed.type in compose.
+# ============================================================
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/promtail-positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+    batchsize: 1048576
+
+scrape_configs:
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+        filters:
+          - name: label
+            values: ["com.5g-testbed.nf"]   # only our containers
+
+    relabel_configs:
+      # Container name  →  label "container" (strip leading /)
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+
+      # 5G NF name  →  label "nf" (e.g. amf, smf, upf)
+      - source_labels: ['__meta_docker_container_label_com_5g_testbed_nf']
+        target_label: nf
+
+      # NF type  →  label "type" (e.g. 5gc, ran, mgmt, obs)
+      - source_labels: ['__meta_docker_container_label_com_5g_testbed_type']
+        target_label: type
+
+      # Log stream (stdout / stderr)
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: stream
+
+    pipeline_stages:
+      - docker: {}           # parse Docker JSON log format
+      - drop:
+          expression: '^\s*$'   # drop empty lines

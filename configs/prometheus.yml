@@ -1,0 +1,79 @@
+# ============================================================
+# Prometheus scrape configuration for 5G Testbed
+# Scrapes all Open5GS NF metrics (port 9090 on core-net)
+# plus cAdvisor container metrics.
+# ============================================================
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: '5g-testbed'
+
+# ── Open5GS Core Network Functions ───────────────────────────
+scrape_configs:
+
+  - job_name: 'open5gs-nrf'
+    static_configs:
+      - targets: ['10.45.0.10:9090']
+        labels: {nf: 'nrf', plane: 'cp'}
+
+  - job_name: 'open5gs-amf'
+    static_configs:
+      - targets: ['10.45.0.12:9090']
+        labels: {nf: 'amf', plane: 'cp'}
+
+  - job_name: 'open5gs-smf'
+    static_configs:
+      - targets: ['10.45.0.13:9090']
+        labels: {nf: 'smf', plane: 'cp'}
+
+  - job_name: 'open5gs-upf'
+    static_configs:
+      - targets: ['10.45.0.14:9090']
+        labels: {nf: 'upf', plane: 'up'}
+
+  - job_name: 'open5gs-ausf'
+    static_configs:
+      - targets: ['10.45.0.15:9090']
+        labels: {nf: 'ausf', plane: 'cp'}
+
+  - job_name: 'open5gs-udm'
+    static_configs:
+      - targets: ['10.45.0.16:9090']
+        labels: {nf: 'udm', plane: 'cp'}
+
+  - job_name: 'open5gs-udr'
+    static_configs:
+      - targets: ['10.45.0.17:9090']
+        labels: {nf: 'udr', plane: 'cp'}
+
+  - job_name: 'open5gs-pcf'
+    static_configs:
+      - targets: ['10.45.0.18:9090']
+        labels: {nf: 'pcf', plane: 'cp'}
+
+  - job_name: 'open5gs-bsf'
+    static_configs:
+      - targets: ['10.45.0.19:9090']
+        labels: {nf: 'bsf', plane: 'cp'}
+
+  - job_name: 'open5gs-nssf'
+    static_configs:
+      - targets: ['10.45.0.20:9090']
+        labels: {nf: 'nssf', plane: 'cp'}
+
+  # ── Container metrics (CPU / Memory / Network) ─────────────
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels: {source: 'cadvisor'}
+    metric_relabel_configs:
+      # Keep only containers we care about (drops /system.slice, etc.)
+      - source_labels: [name]
+        regex: '(open5gs-.*|oai-.*|5g-.*)'
+        action: keep
+
+  # ── Self-monitoring ─────────────────────────────────────────
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

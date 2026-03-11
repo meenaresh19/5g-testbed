@@ -1,0 +1,2096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>5G Testbed — Control Plane</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+:root {
+  --bg: #040810;
+  --bg2: #070d1a;
+  --bg3: #0a1525;
+  --panel: #0d1b2e;
+  --panel2: #0f2035;
+  --border: #1a3a5c;
+  --border2: #1f4a70;
+  --accent: #00c8ff;
+  --accent2: #0080c8;
+  --accent3: #00ffc8;
+  --warn: #ffb800;
+  --danger: #ff3b5c;
+  --success: #00e676;
+  --muted: #4a7090;
+  --text: #c8e8ff;
+  --text2: #7aaccc;
+  --text3: #3a6080;
+  --glow: 0 0 20px rgba(0,200,255,0.3);
+  --glow2: 0 0 40px rgba(0,200,255,0.15);
+  --font-main: 'Exo 2', sans-serif;
+  --font-mono: 'Share Tech Mono', monospace;
+  --font-head: 'Orbitron', sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font-main);overflow:hidden}
+#root{height:100%;display:flex;flex-direction:column}
+
+/* Scrollbars */
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:var(--bg2)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* Scanlines overlay */
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.03) 2px,rgba(0,0,0,0.03) 4px);pointer-events:none;z-index:9999}
+
+/* Top bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:52px;background:var(--bg2);border-bottom:1px solid var(--border);position:relative;flex-shrink:0}
+.topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent)}
+.logo{display:flex;align-items:center;gap:12px}
+.logo-icon{width:32px;height:32px;position:relative}
+.logo-icon svg{width:100%;height:100%}
+.logo-text{font-family:var(--font-head);font-size:13px;font-weight:700;letter-spacing:3px;color:var(--accent);text-shadow:var(--glow)}
+.topbar-status{display:flex;align-items:center;gap:20px}
+.status-pill{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text2)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);animation:pulse 2s infinite}
+.status-dot.warn{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.status-dot.off{background:var(--muted);box-shadow:none;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.topbar-time{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+
+/* Layout */
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:200px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.nav-section{padding:16px 0 8px;border-bottom:1px solid var(--border)}
+.nav-label{font-size:9px;font-weight:700;letter-spacing:3px;color:var(--muted);padding:0 16px 8px;text-transform:uppercase;font-family:var(--font-head)}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);transition:all .15s;letter-spacing:.5px;position:relative}
+.nav-item:hover{color:var(--text);background:rgba(0,200,255,.05)}
+.nav-item.active{color:var(--accent);background:rgba(0,200,255,.08)}
+.nav-item.active::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.nav-icon{width:16px;height:16px;flex-shrink:0}
+.sidebar-footer{margin-top:auto;padding:16px;border-top:1px solid var(--border)}
+.version-tag{font-family:var(--font-mono);font-size:10px;color:var(--text3)}
+
+/* Main content */
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.main-header{padding:16px 24px 0;flex-shrink:0}
+.page-title{font-family:var(--font-head);font-size:18px;font-weight:700;color:var(--accent);letter-spacing:2px;text-shadow:var(--glow)}
+.page-sub{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.5px}
+.main-content{flex:1;overflow-y:auto;padding:16px 24px 24px}
+
+/* Cards */
+.card{background:var(--panel);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.card-title{font-family:var(--font-head);font-size:11px;letter-spacing:2px;color:var(--text2);font-weight:400}
+.card-body{padding:16px}
+
+/* Grid */
+.grid{display:grid;gap:16px}
+.grid-2{grid-template-columns:1fr 1fr}
+.grid-3{grid-template-columns:1fr 1fr 1fr}
+.grid-4{grid-template-columns:1fr 1fr 1fr 1fr}
+
+/* NF Status Cards */
+.nf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:20px}
+.nf-card{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px 14px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.nf-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--border2);transition:all .2s}
+.nf-card.running::before{background:var(--success);box-shadow:0 0 10px var(--success)}
+.nf-card.stopped::before{background:var(--danger)}
+.nf-card.warn::before{background:var(--warn)}
+.nf-card:hover{border-color:var(--border2);background:var(--panel2);transform:translateY(-1px)}
+.nf-name{font-family:var(--font-head);font-size:11px;font-weight:700;letter-spacing:1.5px;color:var(--text);margin-bottom:6px}
+.nf-status{font-family:var(--font-mono);font-size:10px;display:flex;align-items:center;gap:5px}
+.nf-status.running{color:var(--success)}
+.nf-status.stopped{color:var(--danger)}
+.nf-status.starting{color:var(--warn)}
+.nf-meta{font-size:10px;color:var(--muted);margin-top:4px;font-family:var(--font-mono)}
+
+/* Form elements */
+.form-row{display:grid;gap:12px;margin-bottom:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-label{font-size:10px;font-weight:700;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase;font-family:var(--font-head)}
+.form-input{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:8px 12px;color:var(--text);font-family:var(--font-mono);font-size:12px;outline:none;transition:all .15s}
+.form-input:focus{border-color:var(--accent2);box-shadow:0 0 0 2px rgba(0,128,200,.15)}
+.form-input::placeholder{color:var(--text3)}
+select.form-input option{background:var(--bg3)}
+.form-textarea{resize:vertical;min-height:80px;font-size:11px;line-height:1.6}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:4px;border:none;cursor:pointer;font-family:var(--font-head);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;transition:all .15s}
+.btn-primary{background:var(--accent2);color:white}
+.btn-primary:hover{background:var(--accent);box-shadow:var(--glow)}
+.btn-success{background:rgba(0,230,118,.15);color:var(--success);border:1px solid var(--success)}
+.btn-success:hover{background:rgba(0,230,118,.25)}
+.btn-danger{background:rgba(255,59,92,.15);color:var(--danger);border:1px solid var(--danger)}
+.btn-danger:hover{background:rgba(255,59,92,.25)}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn-ghost:hover{border-color:var(--border2);color:var(--text)}
+.btn-sm{padding:4px 10px;font-size:9px}
+.btn-xs{padding:3px 8px;font-size:9px}
+
+/* Table */
+.data-table{width:100%;border-collapse:collapse}
+.data-table th{text-align:left;font-family:var(--font-head);font-size:9px;letter-spacing:2px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.data-table td{padding:9px 12px;font-family:var(--font-mono);font-size:11px;color:var(--text2);border-bottom:1px solid rgba(26,58,92,.5)}
+.data-table tr:hover td{background:rgba(0,200,255,.04);color:var(--text)}
+.data-table tr:last-child td{border-bottom:none}
+
+/* Badge */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;font-family:var(--font-mono)}
+.badge-success{background:rgba(0,230,118,.12);color:var(--success);border:1px solid rgba(0,230,118,.3)}
+.badge-warn{background:rgba(255,184,0,.12);color:var(--warn);border:1px solid rgba(255,184,0,.3)}
+.badge-danger{background:rgba(255,59,92,.12);color:var(--danger);border:1px solid rgba(255,59,92,.3)}
+.badge-info{background:rgba(0,200,255,.12);color:var(--accent);border:1px solid rgba(0,200,255,.3)}
+.badge-muted{background:rgba(74,112,144,.12);color:var(--muted);border:1px solid rgba(74,112,144,.3)}
+
+/* Metric widgets */
+.metric{display:flex;flex-direction:column;gap:4px}
+.metric-val{font-family:var(--font-head);font-size:24px;font-weight:700;color:var(--accent)}
+.metric-label{font-size:10px;color:var(--muted);letter-spacing:1px;font-family:var(--font-mono)}
+.metric-sub{font-family:var(--font-mono);font-size:11px;color:var(--text2)}
+
+/* Slice card */
+.slice-card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:12px;position:relative;overflow:hidden;transition:all .2s}
+.slice-card:hover{border-color:var(--border2)}
+.slice-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.slice-name{font-family:var(--font-head);font-size:13px;font-weight:700;color:var(--text);letter-spacing:1px}
+.slice-nssai{font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:2px}
+.slice-nfs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.nf-chip{font-family:var(--font-mono);font-size:10px;padding:3px 8px;border-radius:3px;background:rgba(0,200,255,.08);color:var(--accent);border:1px solid rgba(0,200,255,.2)}
+.nf-chip.up{background:rgba(0,230,118,.08);color:var(--success);border-color:rgba(0,230,118,.2)}
+.slice-stripe{position:absolute;left:0;top:0;bottom:0;width:3px}
+.slice-stripe.sst1{background:var(--accent)}
+.slice-stripe.sst2{background:var(--accent3)}
+.slice-stripe.sst3{background:var(--warn)}
+
+/* Topology */
+.topo-canvas{background:var(--bg3);border-radius:6px;border:1px solid var(--border);padding:20px;min-height:300px;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.topo-node{position:absolute;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;transition:all .2s}
+.topo-node:hover .node-box{border-color:var(--accent);box-shadow:var(--glow)}
+.node-box{width:56px;height:40px;border:1px solid var(--border2);border-radius:4px;background:var(--panel);display:flex;align-items:center;justify-content:center;font-family:var(--font-head);font-size:9px;font-weight:700;color:var(--accent);letter-spacing:1px;position:relative}
+.node-box.active{border-color:var(--success);background:rgba(0,230,118,.06)}
+.node-box.ue{border-color:var(--accent3);color:var(--accent3)}
+.node-box.ran{border-color:var(--warn);color:var(--warn)}
+.node-label{font-size:9px;color:var(--muted);font-family:var(--font-mono)}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(4,8,16,.85);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal{background:var(--panel);border:1px solid var(--border2);border-radius:8px;width:560px;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 0 60px rgba(0,200,255,.15)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.modal-title{font-family:var(--font-head);font-size:13px;letter-spacing:2px;color:var(--accent)}
+.modal-body{overflow-y:auto;padding:20px;flex:1}
+.modal-footer{padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:var(--bg3)}
+
+/* Tab bar */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab{padding:8px 18px;font-family:var(--font-head);font-size:10px;letter-spacing:1.5px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;text-transform:uppercase}
+.tab:hover{color:var(--text2)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* Log viewer */
+.log-viewer{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:12px;font-family:var(--font-mono);font-size:11px;height:200px;overflow-y:auto;color:var(--text2)}
+.log-line{line-height:1.5;margin-bottom:1px}
+.log-line.info{color:var(--text2)}
+.log-line.warn{color:var(--warn)}
+.log-line.err{color:var(--danger)}
+.log-line.ok{color:var(--success)}
+.log-ts{color:var(--text3);margin-right:8px}
+.log-nf{color:var(--accent);margin-right:8px}
+
+/* Tooltip */
+.tip{position:relative}
+.tip:hover .tip-content{opacity:1;pointer-events:auto;transform:translateY(0)}
+.tip-content{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%) translateY(4px);background:var(--bg2);border:1px solid var(--border2);border-radius:4px;padding:6px 10px;font-size:10px;white-space:nowrap;opacity:0;pointer-events:none;transition:all .15s;z-index:100;color:var(--text2);font-family:var(--font-mono)}
+
+/* Range slider */
+.range-input{-webkit-appearance:none;appearance:none;width:100%;height:4px;background:var(--border2);border-radius:2px;outline:none}
+.range-input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer;box-shadow:0 0 8px var(--accent)}
+
+/* Toggle */
+.toggle{position:relative;width:36px;height:20px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-track{position:absolute;inset:0;background:var(--border2);border-radius:10px;transition:.2s;cursor:pointer}
+.toggle-track::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:var(--muted);top:3px;left:3px;transition:.2s}
+.toggle input:checked + .toggle-track{background:var(--accent2)}
+.toggle input:checked + .toggle-track::after{transform:translateX(16px);background:white}
+
+/* Animations */
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes slideIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
+.fade-in{animation:fadeIn .2s ease}
+.slide-in{animation:slideIn .15s ease}
+
+/* Progress bar */
+.progress{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.progress-fill{height:100%;border-radius:2px;background:var(--accent);transition:width .5s}
+.progress-fill.warn{background:var(--warn)}
+.progress-fill.danger{background:var(--danger)}
+
+/* Divider */
+.divider{height:1px;background:var(--border);margin:16px 0}
+.section-title{font-family:var(--font-head);font-size:10px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:12px}
+
+.flex{display:flex}.items-center{align-items:center}.justify-between{justify-content:space-between}
+.gap-2{gap:8px}.gap-3{gap:12px}.gap-4{gap:16px}.mt-2{margin-top:8px}.mt-3{margin-top:12px}.mt-4{margin-top:16px}
+.mb-3{margin-bottom:12px}.mb-4{margin-bottom:16px}.w-full{width:100%}
+.text-xs{font-size:11px}.text-muted{color:var(--muted)}.text-accent{color:var(--accent)}.text-success{color:var(--success)}
+.font-mono{font-family:var(--font-mono)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ── Config ───────────────────────────────────────────────
+// API is proxied by nginx: /api/ → testbed-api:5000/
+const API = '/api';
+
+async function apiFetch(path, opts) {
+  try {
+    const r = await fetch(API + path, opts);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch (e) {
+    console.warn('[API]', path, e.message);
+    return null;
+  }
+}
+
+// ── Mock Data ────────────────────────────────────────────
+const NF_DEFS = {
+  core: [
+    { id:'nrf',  name:'NRF',  ip:'10.45.0.10', desc:'Network Repository',   port:7777 },
+    { id:'scp',  name:'SCP',  ip:'10.45.0.11', desc:'Service Comm Proxy',   port:7777 },
+    { id:'amf',  name:'AMF',  ip:'10.45.0.12', desc:'Access & Mobility',    port:7777 },
+    { id:'smf',  name:'SMF',  ip:'10.45.0.13', desc:'Session Management',   port:7777 },
+    { id:'upf',  name:'UPF',  ip:'10.45.0.14', desc:'User Plane',           port:8805 },
+    { id:'ausf', name:'AUSF', ip:'10.45.0.15', desc:'Auth Server',          port:7777 },
+    { id:'udm',  name:'UDM',  ip:'10.45.0.16', desc:'Unified Data Mgmt',    port:7777 },
+    { id:'udr',  name:'UDR',  ip:'10.45.0.17', desc:'Unified Data Repo',    port:7777 },
+    { id:'pcf',  name:'PCF',  ip:'10.45.0.18', desc:'Policy Control',       port:7777 },
+    { id:'bsf',  name:'BSF',  ip:'10.45.0.19', desc:'Binding Support',      port:7777 },
+    { id:'nssf', name:'NSSF', ip:'10.45.0.20', desc:'Slice Selection',      port:7777 },
+  ],
+  ran: [
+    { id:'gnb',  name:'gNB',  ip:'10.45.0.50', desc:'5G Base Station',  port:38412 },
+    { id:'nrue', name:'nrUE', ip:'192.168.70.30', desc:'UE Simulator',  port:0    },
+  ]
+};
+
+const INIT_STATUS = Object.fromEntries(
+  [...NF_DEFS.core, ...NF_DEFS.ran].map(n => [n.id, 'running'])
+);
+
+const INIT_SLICES = [
+  { id:'s1', name:'eMBB Default', sst:1, sd:'000000', nfs:['amf','smf','upf','ausf','udm','udr','pcf'],
+    dnn:'internet', qos:'5QI-9', ues:3, ul:'50 Mbps', dl:'150 Mbps', active:true },
+  { id:'s2', name:'URLLC',        sst:2, sd:'000001', nfs:['amf','smf','upf','pcf'],
+    dnn:'urllc',    qos:'5QI-82', ues:1, ul:'10 Mbps', dl:'20 Mbps', active:true },
+  { id:'s3', name:'mMTC / IoT',   sst:3, sd:'000001', nfs:['amf','smf','upf','udm','udr'],
+    dnn:'iot',      qos:'5QI-65', ues:12, ul:'1 Mbps', dl:'1 Mbps', active:false },
+];
+
+const INIT_SUBS = [
+  { imsi:'001010000000001', key:'fec86ba6eb707ed0', opc:'C42449363BBAD02B', dnn:'internet', sst:1, sd:'000000', state:'REGISTERED' },
+  { imsi:'001010000000002', key:'0c0a34601d4f07677303652c0462535b', opc:'63bfa50ee6523365ff14c1f45f88737d', dnn:'urllc', sst:2, sd:'000001', state:'REGISTERED' },
+  { imsi:'001010000000003', key:'465b5ce8b199b49faa5f0a2ee238a6bc', opc:'e8ed289deba952e4283b54e88e6183ca', dnn:'iot', sst:3, sd:'000001', state:'IDLE' },
+];
+
+const LOGS = [
+  { ts:'10:42:33', nf:'AMF', msg:'UE registered IMSI=001010000000001 SST=1', lvl:'ok' },
+  { ts:'10:42:34', nf:'SMF', msg:'PDU Session established DNN=internet QFI=1', lvl:'ok' },
+  { ts:'10:42:35', nf:'UPF', msg:'GTP-U tunnel created TEID=0x00000001', lvl:'ok' },
+  { ts:'10:42:38', nf:'gNB', msg:'NGAP: InitialContextSetup complete', lvl:'info' },
+  { ts:'10:43:01', nf:'PCF', msg:'Policy rule applied 5QI=9 UL=50Mbps DL=150Mbps', lvl:'info' },
+  { ts:'10:43:05', nf:'AMF', msg:'UE registered IMSI=001010000000002 SST=2', lvl:'ok' },
+  { ts:'10:43:11', nf:'NRF', msg:'NF registration: SMF instance registered', lvl:'info' },
+  { ts:'10:43:22', nf:'AUSF', msg:'5G-AKA authentication success', lvl:'ok' },
+  { ts:'10:43:45', nf:'BSF', msg:'PCF binding: UE=001010000000001 PCF=10.45.0.18', lvl:'info' },
+  { ts:'10:44:02', nf:'UPF', msg:'WARN: High throughput on N3 interface (89%)', lvl:'warn' },
+];
+
+// ── Components ────────────────────────────────────────────
+function Icon({ name, size=16 }) {
+  const icons = {
+    dashboard: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>,
+    core: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>,
+    ran: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 6l6 6-6 6"/><path d="M23 6l-6 6 6 6"/><path d="M12 2v20"/></svg>,
+    ue: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="17" r="1"/></svg>,
+    slice: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>,
+    sub: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+    logs: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+    topo: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><line x1="12" y1="7" x2="5" y2="17"/><line x1="12" y1="7" x2="19" y2="17"/><line x1="5" y1="19" x2="19" y2="19"/></svg>,
+    plus: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+    close: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+    edit: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+    trash: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>,
+    play: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>,
+    stop: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>,
+    settings: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+    trace: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="2"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"/><path d="M22 2L12 12"/><path d="M16 2h6v6"/></svg>,
+    download: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+    chart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>,
+    speed: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2C6.48 2 2 6.48 2 12"/><path d="M12 2c5.52 0 10 4.48 10 10"/><path d="M12 12l-4-4"/><circle cx="12" cy="12" r="2"/><path d="M2 12h2M20 12h2M12 2v2M12 20v2"/></svg>,
+    shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>,
+  };
+  return icons[name] || null;
+}
+
+// ── Dashboard Page ────────────────────────────────────────
+function Dashboard({ nfStatus }) {
+  const all = [...NF_DEFS.core, ...NF_DEFS.ran];
+  const running = all.filter(n => nfStatus[n.id] === 'running').length;
+  return (
+    <div className="fade-in">
+      <div className="grid grid-4 mb-4">
+        {[
+          { label:'NFs Running', val:`${running}/${all.length}`, sub:'All systems operational', color:'var(--success)' },
+          { label:'Active UEs', val:'16', sub:'3 slices active', color:'var(--accent)' },
+          { label:'Throughput DL', val:'2.4 Gbps', sub:'Avg across all UPFs', color:'var(--accent3)' },
+          { label:'Uptime', val:'4d 12h', sub:'Since last restart', color:'var(--warn)' },
+        ].map(m => (
+          <div key={m.label} className="card">
+            <div className="card-body">
+              <div className="metric">
+                <div className="metric-val" style={{color:m.color}}>{m.val}</div>
+                <div className="metric-label" style={{color:'var(--muted)'}}>{m.label}</div>
+                <div className="metric-sub">{m.sub}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2" style={{gap:16}}>
+        <div className="card">
+          <div className="card-header"><span className="card-title">CORE NF STATUS</span></div>
+          <div className="card-body" style={{padding:'12px'}}>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
+              {NF_DEFS.core.map(nf => (
+                <div key={nf.id} className={`nf-card ${nfStatus[nf.id]}`}>
+                  <div className="nf-name">{nf.name}</div>
+                  <div className={`nf-status ${nfStatus[nf.id]}`}>
+                    <span style={{width:6,height:6,borderRadius:'50%',background:'currentColor',display:'inline-block'}}/>
+                    {nfStatus[nf.id]}
+                  </div>
+                  <div className="nf-meta">{nf.ip}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header"><span className="card-title">LIVE EVENTS</span></div>
+          <div className="card-body" style={{padding:0}}>
+            <div className="log-viewer" style={{height:250,borderRadius:0,border:'none'}}>
+              {LOGS.map((l,i) => (
+                <div key={i} className={`log-line ${l.lvl}`}>
+                  <span className="log-ts">{l.ts}</span>
+                  <span className="log-nf">[{l.nf}]</span>
+                  {l.msg}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card mt-4">
+        <div className="card-header"><span className="card-title">INTERFACE UTILIZATION</span></div>
+        <div className="card-body">
+          <div className="grid grid-3" style={{gap:20}}>
+            {[
+              {name:'N1/N2 (NGAP)', pct:34, color:'var(--accent)'},
+              {name:'N3 (GTP-U)', pct:72, color:'var(--accent3)'},
+              {name:'N4 (PFCP)', pct:18, color:'var(--warn)'},
+              {name:'N6 (DN)', pct:55, color:'var(--accent)'},
+              {name:'SBI (HTTP/2)', pct:41, color:'var(--accent3)'},
+              {name:'N9 (UPF-UPF)', pct:5, color:'var(--muted)'},
+            ].map(iface => (
+              <div key={iface.name}>
+                <div className="flex justify-between mb-2">
+                  <span style={{fontSize:11,color:'var(--text2)',fontFamily:'var(--font-mono)'}}>{iface.name}</span>
+                  <span style={{fontSize:11,color:iface.color,fontFamily:'var(--font-mono)'}}>{iface.pct}%</span>
+                </div>
+                <div className="progress">
+                  <div className="progress-fill" style={{width:`${iface.pct}%`,background:iface.color}}/>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Core NFs Page ──────────────────────────────────────────
+function CoreNFs({ nfStatus, setNfStatus }) {
+  const [selected, setSelected] = useState(null);
+  const [editCfg, setEditCfg] = useState(false);
+  const nf = selected ? [...NF_DEFS.core,...NF_DEFS.ran].find(n=>n.id===selected) : null;
+
+  const toggle = async (id) => {
+    const isRunning = nfStatus[id] === 'running';
+    const action = isRunning ? 'stop' : 'start';
+    // Optimistic UI update
+    setNfStatus(s => ({...s, [id]: isRunning ? 'stopped' : 'starting'}));
+    const result = await apiFetch(`/nf/${id}/${action}`, { method: 'POST' });
+    // Refresh real status after 2 s regardless of result
+    setTimeout(async () => {
+      const data = await apiFetch('/status');
+      if (data) setNfStatus(prev => ({...prev, ...data}));
+    }, 2000);
+  };
+
+  return (
+    <div className="fade-in">
+      <div className="grid grid-2 mb-4">
+        <div className="card">
+          <div className="card-header"><span className="card-title">5G CORE — NETWORK FUNCTIONS</span></div>
+          <div className="card-body" style={{padding:0}}>
+            <table className="data-table w-full">
+              <thead>
+                <tr><th>NF</th><th>Description</th><th>IP Address</th><th>Port</th><th>State</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {NF_DEFS.core.map(nf => (
+                  <tr key={nf.id} style={{cursor:'pointer'}} onClick={()=>setSelected(nf.id)}>
+                    <td><span style={{fontFamily:'var(--font-head)',color:'var(--accent)',fontSize:11}}>{nf.name}</span></td>
+                    <td>{nf.desc}</td>
+                    <td>{nf.ip}</td>
+                    <td>{nf.port}</td>
+                    <td>
+                      <span className={`badge badge-${nfStatus[nf.id]==='running'?'success':nfStatus[nf.id]==='starting'?'warn':'danger'}`}>
+                        {nfStatus[nf.id]}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="flex gap-2" onClick={e=>e.stopPropagation()}>
+                        <button className={`btn btn-xs ${nfStatus[nf.id]==='running'?'btn-danger':'btn-success'}`}
+                          onClick={()=>toggle(nf.id)}>
+                          {nfStatus[nf.id]==='running'?'Stop':'Start'}
+                        </button>
+                        <button className="btn btn-xs btn-ghost" onClick={()=>{setSelected(nf.id);setEditCfg(true)}}>
+                          <Icon name="settings" size={10}/>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header"><span className="card-title">RAN — gNB + nrUE</span></div>
+          <div className="card-body" style={{padding:0}}>
+            <table className="data-table w-full">
+              <thead>
+                <tr><th>NF</th><th>Description</th><th>IP</th><th>State</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {NF_DEFS.ran.map(nf => (
+                  <tr key={nf.id} style={{cursor:'pointer'}} onClick={()=>setSelected(nf.id)}>
+                    <td><span style={{fontFamily:'var(--font-head)',color:'var(--warn)',fontSize:11}}>{nf.name}</span></td>
+                    <td>{nf.desc}</td>
+                    <td>{nf.ip}</td>
+                    <td>
+                      <span className={`badge badge-${nfStatus[nf.id]==='running'?'success':'danger'}`}>
+                        {nfStatus[nf.id]}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="flex gap-2" onClick={e=>e.stopPropagation()}>
+                        <button className={`btn btn-xs ${nfStatus[nf.id]==='running'?'btn-danger':'btn-success'}`}
+                          onClick={()=>toggle(nf.id)}>
+                          {nfStatus[nf.id]==='running'?'Stop':'Start'}
+                        </button>
+                        <button className="btn btn-xs btn-ghost" onClick={()=>{setSelected(nf.id);setEditCfg(true)}}>
+                          <Icon name="settings" size={10}/>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {editCfg && nf && (
+        <NFConfigModal nf={nf} onClose={()=>setEditCfg(false)} />
+      )}
+    </div>
+  );
+}
+
+function NFConfigModal({ nf, onClose }) {
+  const [cfg, setCfg] = useState({
+    logLevel: 'info',
+    bindAddr: nf.ip,
+    port: nf.port,
+    metrics: true,
+    traceFull: false,
+    maxConn: 64,
+  });
+
+  const gnbExtra = nf.id === 'gnb' ? {
+    mcc:'001', mnc:'01', tac:'1', cellId:'0xe00',
+    band:'78', arfcn:'641280', bw:'100MHz', txPwr:'20',
+    amfIp:'10.45.0.12', gnbIp:'10.45.0.50', rfSim:'server',
+  } : null;
+
+  const ueExtra = nf.id === 'nrue' ? {
+    imsi:'001010000000001',
+    key:'fec86ba6eb707ed08905757b1bb44b8f',
+    opc:'C42449363BBAD02B66D16BC975D77CC1',
+    dnn:'internet', sst:'1', sd:'',
+    gnbIp:'192.168.70.20', rfSim:'192.168.70.20',
+  } : null;
+
+  const [gCfg, setGCfg] = useState(gnbExtra || {});
+  const [uCfg, setUCfg] = useState(ueExtra || {});
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">{nf.name} — CONFIGURATION</span>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}><Icon name="close" size={14}/></button>
+        </div>
+        <div className="modal-body">
+          <div className="section-title">Common Parameters</div>
+          <div className="form-row grid-2">
+            <div className="form-group">
+              <label className="form-label">Bind Address</label>
+              <input className="form-input" value={cfg.bindAddr} onChange={e=>setCfg({...cfg,bindAddr:e.target.value})}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Port</label>
+              <input className="form-input" value={cfg.port} onChange={e=>setCfg({...cfg,port:e.target.value})}/>
+            </div>
+          </div>
+          <div className="form-row grid-2">
+            <div className="form-group">
+              <label className="form-label">Log Level</label>
+              <select className="form-input" value={cfg.logLevel} onChange={e=>setCfg({...cfg,logLevel:e.target.value})}>
+                <option value="trace">trace</option><option value="debug">debug</option>
+                <option value="info">info</option><option value="warn">warn</option><option value="error">error</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Max Connections</label>
+              <input className="form-input" type="number" value={cfg.maxConn} onChange={e=>setCfg({...cfg,maxConn:e.target.value})}/>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-3">
+            {[['metrics','Prometheus Metrics'],['traceFull','Full Trace']].map(([k,l])=>(
+              <label key={k} className="flex items-center gap-2" style={{cursor:'pointer',fontSize:12,color:'var(--text2)'}}>
+                <label className="toggle"><input type="checkbox" checked={cfg[k]} onChange={e=>setCfg({...cfg,[k]:e.target.checked})}/><span className="toggle-track"/></label>
+                {l}
+              </label>
+            ))}
+          </div>
+
+          {gnbExtra && <>
+            <div className="divider"/>
+            <div className="section-title">gNB / OAI RAN Parameters</div>
+            <div className="form-row grid-2">
+              {[['mcc','MCC'],['mnc','MNC'],['tac','TAC'],['cellId','Cell ID'],
+                ['band','NR Band'],['arfcn','ARFCN'],['bw','Bandwidth'],['txPwr','Tx Power (dBm)'],
+                ['amfIp','AMF IP'],['gnbIp','gNB IP'],['rfSim','RFSim Address']].map(([k,l])=>(
+                <div key={k} className="form-group">
+                  <label className="form-label">{l}</label>
+                  <input className="form-input" value={gCfg[k]||''} onChange={e=>setGCfg({...gCfg,[k]:e.target.value})}/>
+                </div>
+              ))}
+            </div>
+          </>}
+
+          {ueExtra && <>
+            <div className="divider"/>
+            <div className="section-title">UE / nrUE Simulator Parameters</div>
+            <div className="form-row grid-2">
+              {[['imsi','IMSI'],['key','K (128-bit key)'],['opc','OPc'],
+                ['dnn','DNN'],['sst','SST'],['sd','SD (hex)'],
+                ['gnbIp','gNB IP'],['rfSim','RFSim Address']].map(([k,l])=>(
+                <div key={k} className="form-group">
+                  <label className="form-label">{l}</label>
+                  <input className="form-input" value={uCfg[k]||''} onChange={e=>setUCfg({...uCfg,[k]:e.target.value})}/>
+                </div>
+              ))}
+            </div>
+          </>}
+
+          {nf.id === 'amf' && <>
+            <div className="divider"/>
+            <div className="section-title">AMF — PLMN & Slices</div>
+            <div className="form-row grid-2">
+              <div className="form-group"><label className="form-label">PLMN MCC</label><input className="form-input" defaultValue="001"/></div>
+              <div className="form-group"><label className="form-label">PLMN MNC</label><input className="form-input" defaultValue="01"/></div>
+              <div className="form-group"><label className="form-label">AMF Region ID</label><input className="form-input" defaultValue="2"/></div>
+              <div className="form-group"><label className="form-label">AMF Set ID</label><input className="form-input" defaultValue="1"/></div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Supported S-NSSAIs</label>
+              <input className="form-input" defaultValue="SST:1, SST:2, SST:3 SD:000001"/>
+            </div>
+          </>}
+
+          {nf.id === 'smf' && <>
+            <div className="divider"/>
+            <div className="section-title">SMF — Session & UPF</div>
+            <div className="form-row grid-2">
+              <div className="form-group"><label className="form-label">UPF IP (PFCP)</label><input className="form-input" defaultValue="10.45.0.14"/></div>
+              <div className="form-group"><label className="form-label">UE IP Pool</label><input className="form-input" defaultValue="10.45.0.0/16"/></div>
+              <div className="form-group"><label className="form-label">DNN</label><input className="form-input" defaultValue="internet"/></div>
+              <div className="form-group"><label className="form-label">DNS Server</label><input className="form-input" defaultValue="8.8.8.8"/></div>
+            </div>
+          </>}
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={onClose}>Apply Config</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Slices Page ───────────────────────────────────────────
+function SliceManager({ slices, setSlices }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [newSlice, setNewSlice] = useState({
+    name:'', sst:'1', sd:'', dnn:'internet', qos:'5QI-9',
+    ul:'100', dl:'300', nfs:['amf','smf','upf','ausf','udm','udr','pcf'],
+  });
+
+  const allNFs = NF_DEFS.core.map(n=>n.id);
+  const sstColors = {'1':'sst1','2':'sst2','3':'sst3'};
+  const sstNames  = {'1':'eMBB','2':'URLLC','3':'mMTC'};
+
+  const createSlice = () => {
+    const s = {
+      id: `s${Date.now()}`,
+      name: newSlice.name || `Slice-SST${newSlice.sst}`,
+      sst: parseInt(newSlice.sst),
+      sd: newSlice.sd || '000000',
+      nfs: newSlice.nfs,
+      dnn: newSlice.dnn,
+      qos: newSlice.qos,
+      ues: 0,
+      ul: `${newSlice.ul} Mbps`,
+      dl: `${newSlice.dl} Mbps`,
+      active: true,
+    };
+    setSlices(sl => [...sl, s]);
+    setShowCreate(false);
+    setNewSlice({name:'',sst:'1',sd:'',dnn:'internet',qos:'5QI-9',ul:'100',dl:'300',nfs:['amf','smf','upf','ausf','udm','udr','pcf']});
+  };
+
+  const toggleNF = (id) => {
+    setNewSlice(s => ({...s,
+      nfs: s.nfs.includes(id) ? s.nfs.filter(n=>n!==id) : [...s.nfs,id]
+    }));
+  };
+
+  return (
+    <div className="fade-in">
+      <div className="flex justify-between items-center mb-4">
+        <div/>
+        <button className="btn btn-primary" onClick={()=>setShowCreate(true)}>
+          <Icon name="plus" size={12}/> Create Slice
+        </button>
+      </div>
+
+      {slices.map(s => (
+        <div key={s.id} className="slice-card">
+          <div className={`slice-stripe ${sstColors[s.sst]||'sst1'}`}/>
+          <div className="slice-header">
+            <div>
+              <div className="slice-name">{s.name}</div>
+              <div className="slice-nssai">SST:{s.sst} {s.sd?`/ SD:${s.sd}`:''} — {sstNames[s.sst]||'Custom'}</div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:10,color:'var(--muted)',fontFamily:'var(--font-mono)'}}>UEs</div>
+                <div style={{fontSize:18,fontFamily:'var(--font-head)',color:'var(--accent)'}}>{s.ues}</div>
+              </div>
+              <span className={`badge ${s.active?'badge-success':'badge-muted'}`}>{s.active?'ACTIVE':'INACTIVE'}</span>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setSlices(sl=>sl.filter(x=>x.id!==s.id))}>
+                <Icon name="trash" size={12}/>
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-4 mb-3" style={{gap:12}}>
+            {[['DNN',s.dnn],['QoS Profile',s.qos],['UL Limit',s.ul],['DL Limit',s.dl]].map(([l,v])=>(
+              <div key={l}>
+                <div style={{fontSize:9,color:'var(--muted)',letterSpacing:1.5,fontFamily:'var(--font-head)',marginBottom:3}}>{l}</div>
+                <div style={{fontSize:12,color:'var(--text)',fontFamily:'var(--font-mono)'}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div style={{fontSize:9,color:'var(--muted)',letterSpacing:1.5,fontFamily:'var(--font-head)',marginBottom:6}}>ASSIGNED NFS</div>
+            <div className="slice-nfs">
+              {s.nfs.map(n=>(
+                <span key={n} className={`nf-chip ${s.active?'up':''}`}>{n.toUpperCase()}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {showCreate && (
+        <div className="modal-overlay" onClick={()=>setShowCreate(false)}>
+          <div className="modal" style={{width:620}} onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">CREATE NETWORK SLICE</span>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setShowCreate(false)}><Icon name="close" size={14}/></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-row grid-2">
+                <div className="form-group">
+                  <label className="form-label">Slice Name</label>
+                  <input className="form-input" placeholder="e.g. Video Streaming eMBB"
+                    value={newSlice.name} onChange={e=>setNewSlice({...newSlice,name:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Slice/Service Type (SST)</label>
+                  <select className="form-input" value={newSlice.sst} onChange={e=>setNewSlice({...newSlice,sst:e.target.value})}>
+                    <option value="1">SST 1 — eMBB (Enhanced Mobile Broadband)</option>
+                    <option value="2">SST 2 — URLLC (Ultra-Reliable Low Latency)</option>
+                    <option value="3">SST 3 — mMTC (Massive IoT)</option>
+                    <option value="4">SST 4 — V2X (Vehicle-to-Everything)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Slice Differentiator (SD hex)</label>
+                  <input className="form-input" placeholder="000000"
+                    value={newSlice.sd} onChange={e=>setNewSlice({...newSlice,sd:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">DNN (Data Network Name)</label>
+                  <input className="form-input" placeholder="internet"
+                    value={newSlice.dnn} onChange={e=>setNewSlice({...newSlice,dnn:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">QoS Profile (5QI)</label>
+                  <select className="form-input" value={newSlice.qos} onChange={e=>setNewSlice({...newSlice,qos:e.target.value})}>
+                    <option value="5QI-1">5QI-1: Conversational Voice (100ms)</option>
+                    <option value="5QI-2">5QI-2: Conversational Video (150ms)</option>
+                    <option value="5QI-3">5QI-3: Real-time Gaming (50ms)</option>
+                    <option value="5QI-5">5QI-5: IMS Signalling (100ms)</option>
+                    <option value="5QI-9">5QI-9: Non-RT Video TCP (300ms)</option>
+                    <option value="5QI-65">5QI-65: Mission Critical Data (200ms)</option>
+                    <option value="5QI-82">5QI-82: Discrete Automation (10ms)</option>
+                    <option value="5QI-83">5QI-83: Intelligent Transport (10ms)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">UL Bandwidth Limit (Mbps)</label>
+                  <input className="form-input" type="number" value={newSlice.ul}
+                    onChange={e=>setNewSlice({...newSlice,ul:e.target.value})}/>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">DL Bandwidth Limit (Mbps)</label>
+                  <input className="form-input" type="number" value={newSlice.dl}
+                    onChange={e=>setNewSlice({...newSlice,dl:e.target.value})}/>
+                </div>
+              </div>
+
+              <div className="divider"/>
+              <div className="section-title">Select Core Network Functions for this Slice</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:8}}>
+                {allNFs.map(id => {
+                  const sel = newSlice.nfs.includes(id);
+                  return (
+                    <div key={id} onClick={()=>toggleNF(id)}
+                      style={{
+                        padding:'8px 12px', borderRadius:4, cursor:'pointer',
+                        border:`1px solid ${sel?'var(--accent)':'var(--border)'}`,
+                        background: sel?'rgba(0,200,255,.08)':'var(--bg3)',
+                        display:'flex', alignItems:'center', gap:6, transition:'all .15s'
+                      }}>
+                      <div style={{width:8,height:8,borderRadius:2,background:sel?'var(--accent)':'var(--border2)',transition:'all .15s'}}/>
+                      <span style={{fontFamily:'var(--font-head)',fontSize:10,color:sel?'var(--accent)':'var(--text2)',letterSpacing:1}}>
+                        {id.toUpperCase()}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p style={{fontSize:10,color:'var(--muted)',marginTop:8,fontFamily:'var(--font-mono)'}}>
+                ⚡ AMF + SMF + UPF required for data plane. AUSF+UDM+UDR required for auth.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={()=>setShowCreate(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={createSlice}>Create Slice</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Subscriptions Page ────────────────────────────────────
+function Subscriptions({ subs, setSubs }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [newSub, setNewSub] = useState({
+    imsi:'001010000000004', key:'', opc:'',
+    dnn:'internet', sst:'1', sd:'000000',
+  });
+
+  const addSub = () => {
+    setSubs(s=>[...s,{...newSub, state:'IDLE'}]);
+    setShowAdd(false);
+    setNewSub({imsi:'',key:'',opc:'',dnn:'internet',sst:'1',sd:'000000'});
+  };
+
+  const genKey = () => {
+    const hex = ()=>[...Array(32)].map(()=>Math.floor(Math.random()*16).toString(16)).join('');
+    setNewSub(s=>({...s,key:hex(),opc:hex()}));
+  };
+
+  return (
+    <div className="fade-in">
+      <div className="flex justify-between items-center mb-4">
+        <div style={{fontSize:11,color:'var(--muted)',fontFamily:'var(--font-mono)'}}>
+          {subs.length} subscribers — {subs.filter(s=>s.state==='REGISTERED').length} registered
+        </div>
+        <button className="btn btn-primary" onClick={()=>setShowAdd(true)}>
+          <Icon name="plus" size={12}/> Add Subscriber
+        </button>
+      </div>
+
+      <div className="card">
+        <div className="card-body" style={{padding:0}}>
+          <table className="data-table w-full">
+            <thead>
+              <tr><th>IMSI</th><th>DNN</th><th>S-NSSAI</th><th>K / OPc</th><th>State</th><th>Actions</th></tr>
+            </thead>
+            <tbody>
+              {subs.map((s,i)=>(
+                <tr key={i}>
+                  <td style={{color:'var(--accent)',fontFamily:'var(--font-mono)'}}>{s.imsi}</td>
+                  <td>{s.dnn}</td>
+                  <td>SST:{s.sst}{s.sd?' SD:'+s.sd:''}</td>
+                  <td style={{fontSize:10}}>
+                    <span style={{color:'var(--muted)'}}>K:</span> {s.key.substring(0,8)}···
+                    <span style={{color:'var(--muted)',marginLeft:8}}>OPc:</span> {s.opc.substring(0,8)}···
+                  </td>
+                  <td><span className={`badge badge-${s.state==='REGISTERED'?'success':'muted'}`}>{s.state}</span></td>
+                  <td>
+                    <div className="flex gap-2">
+                      <button className="btn btn-xs btn-ghost"><Icon name="edit" size={10}/></button>
+                      <button className="btn btn-xs btn-danger" onClick={()=>setSubs(sb=>sb.filter((_,j)=>j!==i))}>
+                        <Icon name="trash" size={10}/>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showAdd && (
+        <div className="modal-overlay" onClick={()=>setShowAdd(false)}>
+          <div className="modal" onClick={e=>e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">ADD SUBSCRIBER</span>
+              <button className="btn btn-ghost btn-sm" onClick={()=>setShowAdd(false)}><Icon name="close" size={14}/></button>
+            </div>
+            <div className="modal-body">
+              <div className="form-row grid-2">
+                {[['imsi','IMSI (15 digits)'],['dnn','DNN'],['sst','SST'],['sd','SD (hex)']].map(([k,l])=>(
+                  <div key={k} className="form-group">
+                    <label className="form-label">{l}</label>
+                    <input className="form-input" value={newSub[k]} onChange={e=>setNewSub({...newSub,[k]:e.target.value})}/>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-between items-center mb-2">
+                <div className="section-title" style={{margin:0}}>Security Credentials</div>
+                <button className="btn btn-ghost btn-sm" onClick={genKey}>⚡ Auto-generate K / OPc</button>
+              </div>
+              <div className="form-group mb-3">
+                <label className="form-label">K — Authentication Key (128-bit hex)</label>
+                <input className="form-input" placeholder="32 hex chars" value={newSub.key}
+                  onChange={e=>setNewSub({...newSub,key:e.target.value})}/>
+              </div>
+              <div className="form-group">
+                <label className="form-label">OPc — Operator Key (128-bit hex)</label>
+                <input className="form-input" placeholder="32 hex chars" value={newSub.opc}
+                  onChange={e=>setNewSub({...newSub,opc:e.target.value})}/>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={()=>setShowAdd(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={addSub}>Add Subscriber</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Topology Page ─────────────────────────────────────────
+function Topology({ nfStatus }) {
+  const nodes = [
+    {id:'ue',   label:'UE',   x:50,  y:220, type:'ue',  running:nfStatus.nrue==='running'},
+    {id:'gnb',  label:'gNB',  x:160, y:220, type:'ran', running:nfStatus.gnb==='running'},
+    {id:'amf',  label:'AMF',  x:300, y:130, type:'cp',  running:nfStatus.amf==='running'},
+    {id:'smf',  label:'SMF',  x:420, y:130, type:'cp',  running:nfStatus.smf==='running'},
+    {id:'upf',  label:'UPF',  x:300, y:310, type:'up',  running:nfStatus.upf==='running'},
+    {id:'ausf', label:'AUSF', x:520, y:60,  type:'cp',  running:nfStatus.ausf==='running'},
+    {id:'udm',  label:'UDM',  x:620, y:60,  type:'cp',  running:nfStatus.udm==='running'},
+    {id:'udr',  label:'UDR',  x:720, y:60,  type:'cp',  running:nfStatus.udr==='running'},
+    {id:'pcf',  label:'PCF',  x:520, y:200, type:'cp',  running:nfStatus.pcf==='running'},
+    {id:'nrf',  label:'NRF',  x:620, y:200, type:'cp',  running:nfStatus.nrf==='running'},
+    {id:'nssf', label:'NSSF', x:720, y:200, type:'cp',  running:nfStatus.nssf==='running'},
+    {id:'dn',   label:'DN',   x:300, y:400, type:'dn',  running:true},
+  ];
+  const edges = [
+    {from:'ue',to:'gnb',label:'Uu'},
+    {from:'gnb',to:'amf',label:'N2'},
+    {from:'gnb',to:'upf',label:'N3'},
+    {from:'amf',to:'smf',label:'N11'},
+    {from:'smf',to:'upf',label:'N4'},
+    {from:'upf',to:'dn', label:'N6'},
+    {from:'amf',to:'ausf',label:'N12'},
+    {from:'ausf',to:'udm',label:'N13'},
+    {from:'udm',to:'udr', label:'N35'},
+    {from:'amf',to:'pcf', label:'N15'},
+    {from:'smf',to:'pcf', label:'N7'},
+    {from:'amf',to:'nrf', label:'Nnrf'},
+    {from:'smf',to:'nrf', label:'Nnrf'},
+  ];
+
+  const W=800,H=480;
+  const getNode = id => nodes.find(n=>n.id===id);
+  const typeColors = {ue:'var(--accent3)',ran:'var(--warn)',cp:'var(--accent)',up:'#a78bfa',dn:'var(--muted)'};
+
+  return (
+    <div className="fade-in">
+      <div className="card">
+        <div className="card-header"><span className="card-title">5G ARCHITECTURE — LIVE TOPOLOGY</span></div>
+        <div className="card-body" style={{padding:12}}>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%',height:'auto',background:'var(--bg3)',borderRadius:6}}>
+            <defs>
+              <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="var(--border2)"/>
+              </marker>
+            </defs>
+            {edges.map((e,i)=>{
+              const a=getNode(e.from),b=getNode(e.to);
+              if(!a||!b)return null;
+              const mx=(a.x+b.x)/2+28, my=(a.y+b.y)/2+20;
+              return (
+                <g key={i}>
+                  <line x1={a.x+28} y1={a.y+20} x2={b.x+28} y2={b.y+20}
+                    stroke="var(--border2)" strokeWidth="1" markerEnd="url(#arr)" opacity=".7"/>
+                  <text x={mx} y={my} fill="var(--muted)" fontSize="9" fontFamily="var(--font-mono)"
+                    textAnchor="middle">{e.label}</text>
+                </g>
+              );
+            })}
+            {nodes.map(n=>{
+              const c = typeColors[n.type]||'var(--accent)';
+              return (
+                <g key={n.id} style={{cursor:'pointer'}}>
+                  <rect x={n.x} y={n.y} width={56} height={36} rx={4}
+                    fill={n.running?'rgba(10,21,37,0.9)':'rgba(10,21,37,0.5)'}
+                    stroke={n.running?c:'var(--border)'}
+                    strokeWidth={n.running?1.5:1}
+                    style={{filter:n.running?`drop-shadow(0 0 6px ${c}44)`:'none'}}/>
+                  <text x={n.x+28} y={n.y+22} fill={n.running?c:'var(--text3)'}
+                    fontSize="10" fontFamily="var(--font-head)" fontWeight="700"
+                    textAnchor="middle" letterSpacing="1">{n.label}</text>
+                  {n.running && <circle cx={n.x+50} cy={n.y+6} r={3} fill="var(--success)"
+                    style={{filter:'drop-shadow(0 0 4px var(--success))'}}/>}
+                </g>
+              );
+            })}
+          </svg>
+        </div>
+      </div>
+      <div className="flex gap-3 mt-3" style={{flexWrap:'wrap'}}>
+        {Object.entries({ue:'UE',ran:'RAN',cp:'Control Plane',up:'User Plane',dn:'Data Network'}).map(([k,l])=>(
+          <div key={k} className="flex items-center gap-2">
+            <div style={{width:12,height:12,borderRadius:2,background:typeColors[k]||'var(--accent)',opacity:.8}}/>
+            <span style={{fontSize:10,color:'var(--muted)',fontFamily:'var(--font-mono)'}}>{l}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Logs Page ─────────────────────────────────────────────
+function LogsPage() {
+  const [filter, setFilter] = useState('');
+  const [lvl, setLvl] = useState('all');
+  const allLogs = [...LOGS, ...LOGS.map(l=>({...l,ts:'10:'+Math.floor(Math.random()*60).toString().padStart(2,'0')+':'+Math.floor(Math.random()*60).toString().padStart(2,'0')}))];
+  const filtered = allLogs.filter(l=>{
+    if(lvl!=='all' && l.lvl!==lvl) return false;
+    if(filter && !l.msg.toLowerCase().includes(filter.toLowerCase()) && !l.nf.toLowerCase().includes(filter.toLowerCase())) return false;
+    return true;
+  });
+
+  return (
+    <div className="fade-in">
+      <div className="flex gap-3 mb-4">
+        <input className="form-input" style={{flex:1}} placeholder="Filter logs..." value={filter} onChange={e=>setFilter(e.target.value)}/>
+        <select className="form-input" style={{width:120}} value={lvl} onChange={e=>setLvl(e.target.value)}>
+          <option value="all">All levels</option>
+          <option value="ok">OK</option>
+          <option value="info">INFO</option>
+          <option value="warn">WARN</option>
+          <option value="err">ERROR</option>
+        </select>
+      </div>
+      <div className="card">
+        <div className="card-body" style={{padding:0}}>
+          <div className="log-viewer" style={{height:'calc(100vh - 280px)',borderRadius:0,border:'none'}}>
+            {filtered.map((l,i)=>(
+              <div key={i} className={`log-line ${l.lvl}`}>
+                <span className="log-ts">{l.ts}</span>
+                <span className="log-nf">[{l.nf}]</span>
+                {l.msg}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tracing Page ──────────────────────────────────────────
+const IFACE_DEFS = [
+  { id:'n2',  label:'N2 / NGAP',    desc:'SCTP 38412 — gNB ↔ AMF signaling',  color:'var(--accent3)' },
+  { id:'n3',  label:'N3 / GTP-U',   desc:'UDP 2152 — User plane tunnels',       color:'var(--accent)'  },
+  { id:'n4',  label:'N4 / PFCP',    desc:'UDP 8805 — SMF ↔ UPF session rules', color:'var(--warn)'    },
+  { id:'sbi', label:'SBI / HTTP2',  desc:'TCP 7777 — NF service interfaces',    color:'#a78bfa'        },
+  { id:'all', label:'All traffic',  desc:'No BPF filter (excludes MongoDB)',     color:'var(--muted)'   },
+];
+
+const LOG_NFS = ['nrf','scp','amf','smf','upf','ausf','udm','udr','pcf','bsf','nssf','gnb','nrue'];
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+function fmtElapsed(s) {
+  return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+}
+
+function Tracing() {
+  const [label,         setLabel]         = useState('');
+  const [selIfaces,     setSelIfaces]     = useState(['n2','n3','n4']);
+  const [customFilter,  setCustomFilter]  = useState('');
+  const [activeSession, setActiveSession] = useState(null);
+  const [sessions,      setSessions]      = useState([]);
+  const [pcapFiles,     setPcapFiles]     = useState([]);
+  const [elapsed,       setElapsed]       = useState(0);
+  const [loading,       setLoading]       = useState(false);
+  const [statusMsg,     setStatusMsg]     = useState('');
+
+  // Elapsed timer while a session is active
+  useEffect(() => {
+    if (!activeSession) return;
+    setElapsed(0);
+    const t = setInterval(() => setElapsed(e => e + 1), 1000);
+    return () => clearInterval(t);
+  }, [activeSession]);
+
+  // Refresh file list on load and after stop
+  const refreshFiles = async () => {
+    const data = await apiFetch('/trace/files');
+    if (data) setPcapFiles(data);
+  };
+  useEffect(() => { refreshFiles(); }, []);
+
+  const toggleIface = (id) => {
+    if (activeSession) return;
+    if (id === 'all') { setSelIfaces(s => s.includes('all') ? [] : ['all']); return; }
+    setSelIfaces(s => {
+      const without = s.filter(x => x !== 'all');
+      return without.includes(id) ? without.filter(x => x !== id) : [...without, id];
+    });
+  };
+
+  const startCapture = async () => {
+    if (selIfaces.length === 0) { setStatusMsg('Select at least one interface.'); return; }
+    setLoading(true);
+    setStatusMsg('Starting capture — installing tcpdump if needed (~10s first run)…');
+    const data = await apiFetch('/trace/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: label || `trace-${Date.now()}`, interfaces: selIfaces, filter: customFilter }),
+    });
+    setLoading(false);
+    if (data && data.captures && data.captures.length > 0) {
+      setActiveSession(data);
+      setStatusMsg('');
+    } else {
+      setStatusMsg('Failed to start: ' + (data?.errors?.map(e => e.error).join(', ') || 'API unavailable'));
+    }
+  };
+
+  const stopCapture = async () => {
+    if (!activeSession) return;
+    setLoading(true);
+    setStatusMsg('Stopping — flushing PCAP buffer…');
+    const data = await apiFetch(`/trace/stop/${activeSession.sessionId}`, { method: 'POST' });
+    setLoading(false);
+    setStatusMsg('');
+    if (data) {
+      setSessions(s => [data, ...s]);
+      setActiveSession(null);
+      await refreshFiles();
+    }
+  };
+
+  const downloadFile  = (fn) => window.open(`/api/trace/download/${encodeURIComponent(fn)}`, '_blank');
+  const downloadLogs  = (sid) => window.open(`/api/trace/logs/${encodeURIComponent(sid)}`, '_blank');
+  const downloadAllLogs = () => window.open('/api/trace/logs/now', '_blank');
+
+  const deleteFile = async (fn) => {
+    await apiFetch(`/trace/files/${encodeURIComponent(fn)}`, { method: 'DELETE' });
+    await refreshFiles();
+  };
+
+  // Style helpers
+  const card    = {background:'var(--bg2)', border:'1px solid var(--border)', borderRadius:6, marginBottom:16};
+  const cardHdr = {padding:'10px 16px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'space-between'};
+  const cardBdy = {padding:'16px'};
+  const mono    = {fontFamily:'var(--font-mono)'};
+  const head    = {fontFamily:'var(--font-head)', letterSpacing:1};
+
+  return (
+    <div className="fade-in">
+
+      {/* ── Capture Controls ─────────────────────────────── */}
+      <div style={card}>
+        <div style={cardHdr}>
+          <span style={{...head, fontSize:11, color:'var(--accent)'}}>PACKET CAPTURE</span>
+          {activeSession && (
+            <div className="flex items-center gap-2">
+              <span style={{width:8, height:8, borderRadius:'50%', background:'var(--success)',
+                display:'inline-block', animation:'pulse 1.2s ease-in-out infinite'}}/>
+              <span style={{...mono, fontSize:11, color:'var(--success)'}}>
+                CAPTURING — {fmtElapsed(elapsed)} — {activeSession.captures?.length} interface(s)
+              </span>
+            </div>
+          )}
+        </div>
+        <div style={cardBdy}>
+
+          {/* Session label */}
+          <div className="form-group mb-4">
+            <label className="form-label">Session Label</label>
+            <input className="form-input" style={{maxWidth:320}}
+              placeholder="e.g. ue-registration-test"
+              value={label} onChange={e => setLabel(e.target.value)}
+              disabled={!!activeSession || loading}/>
+          </div>
+
+          {/* Interface selection */}
+          <div style={{...head, fontSize:9, color:'var(--muted)', letterSpacing:2, marginBottom:10}}>
+            SELECT INTERFACES TO CAPTURE
+          </div>
+          <div style={{display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8, marginBottom:16}}>
+            {IFACE_DEFS.map(iface => {
+              const sel = selIfaces.includes(iface.id);
+              return (
+                <div key={iface.id} onClick={() => toggleIface(iface.id)} style={{
+                  padding:'10px 14px', borderRadius:4,
+                  cursor: (activeSession || loading) ? 'default' : 'pointer',
+                  border:`1px solid ${sel ? iface.color : 'var(--border)'}`,
+                  background: sel ? `color-mix(in srgb, ${iface.color} 8%, var(--bg3))` : 'var(--bg3)',
+                  opacity: (activeSession || loading) ? 0.55 : 1,
+                  transition:'all .15s',
+                }}>
+                  <div className="flex items-center gap-2" style={{marginBottom:4}}>
+                    <div style={{width:8, height:8, borderRadius:2, flexShrink:0,
+                      background: sel ? iface.color : 'var(--border2)', transition:'all .15s'}}/>
+                    <span style={{...head, fontSize:10, color: sel ? iface.color : 'var(--text2)'}}>
+                      {iface.label}
+                    </span>
+                  </div>
+                  <div style={{...mono, fontSize:9, color:'var(--muted)', paddingLeft:16}}>
+                    {iface.desc}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Custom BPF filter */}
+          <div className="form-group mb-4">
+            <label className="form-label">
+              Custom BPF Filter&nbsp;
+              <span style={{color:'var(--muted)', fontWeight:'normal', fontSize:10}}>
+                (optional — overrides interface defaults)
+              </span>
+            </label>
+            <input className="form-input" style={{maxWidth:480, ...mono, fontSize:12}}
+              placeholder="e.g. host 10.45.0.12 and port 7777"
+              value={customFilter} onChange={e => setCustomFilter(e.target.value)}
+              disabled={!!activeSession || loading}/>
+          </div>
+
+          {/* Buttons */}
+          <div className="flex items-center gap-3">
+            <button className="btn btn-success" style={{padding:'8px 22px'}}
+              disabled={!!activeSession || loading || selIfaces.length === 0}
+              onClick={startCapture}>
+              <Icon name="play" size={13}/>&nbsp; Start Capture
+            </button>
+            <button className="btn btn-danger" style={{padding:'8px 22px'}}
+              disabled={!activeSession || loading}
+              onClick={stopCapture}>
+              <Icon name="stop" size={13}/>&nbsp; Stop Capture
+            </button>
+            {loading && <span style={{...mono, fontSize:10, color:'var(--muted)'}}>Working…</span>}
+          </div>
+
+          {/* Status / error message */}
+          {statusMsg && (
+            <div style={{marginTop:12, padding:'8px 12px', borderRadius:4, ...mono, fontSize:11,
+              background:'rgba(251,191,36,.08)', border:'1px solid rgba(251,191,36,.25)', color:'var(--warn)'}}>
+              {statusMsg}
+            </div>
+          )}
+
+          {/* Errors from last start */}
+          {activeSession?.errors?.length > 0 && (
+            <div style={{marginTop:10, padding:'8px 12px', borderRadius:4,
+              background:'rgba(239,68,68,.08)', border:'1px solid rgba(239,68,68,.25)'}}>
+              {activeSession.errors.map((e,i) => (
+                <div key={i} style={{...mono, fontSize:10, color:'var(--danger)'}}>
+                  ⚠ {e.iface} ({e.container}): {e.error}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Completed Session Downloads ───────────────────── */}
+      {sessions.length > 0 && (
+        <div style={card}>
+          <div style={cardHdr}>
+            <span style={{...head, fontSize:11, color:'var(--accent)'}}>CAPTURE SESSION FILES</span>
+          </div>
+          <div style={{padding:0}}>
+            <table className="data-table w-full">
+              <thead>
+                <tr>
+                  <th>Label</th><th>Started</th><th>Duration</th>
+                  <th>PCAP Files</th><th>Logs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s,i) => (
+                  <tr key={i}>
+                    <td style={{color:'var(--accent)', ...mono}}>{s.label}</td>
+                    <td style={{...mono, fontSize:11}}>{new Date(s.startTime).toLocaleTimeString()}</td>
+                    <td style={{...mono, fontSize:11}}>{s.duration || '—'}</td>
+                    <td>
+                      <div className="flex gap-2" style={{flexWrap:'wrap'}}>
+                        {(s.files||[]).map((f,j) => (
+                          <button key={j} className="btn btn-xs btn-ghost"
+                            onClick={() => downloadFile(f.filename)}
+                            style={{...mono, fontSize:9}}>
+                            <Icon name="download" size={10}/> {f.label}.pcap
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                    <td>
+                      <button className="btn btn-xs btn-ghost" onClick={() => downloadLogs(s.sessionId)}
+                        style={{fontSize:10}}>
+                        <Icon name="download" size={10}/> Logs bundle
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── All PCAP files on disk ────────────────────────── */}
+      <div style={card}>
+        <div style={cardHdr}>
+          <span style={{...head, fontSize:11, color:'var(--accent)'}}>PCAP FILES ON DISK</span>
+          <button className="btn btn-ghost btn-sm" onClick={refreshFiles} style={{fontSize:10}}>↻ Refresh</button>
+        </div>
+        {pcapFiles.length === 0
+          ? <div style={{...cardBdy, ...mono, fontSize:11, color:'var(--muted)'}}>No PCAP files yet — start a capture above.</div>
+          : (
+            <div style={{padding:0}}>
+              <table className="data-table w-full">
+                <thead>
+                  <tr><th>Filename</th><th>Size</th><th>Modified</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {pcapFiles.map((f,i) => (
+                    <tr key={i}>
+                      <td style={{...mono, fontSize:10, color:'var(--text2)'}}>{f.filename}</td>
+                      <td style={{...mono, fontSize:11}}>{fmtBytes(f.size)}</td>
+                      <td style={{...mono, fontSize:11}}>{new Date(f.mtime).toLocaleString()}</td>
+                      <td>
+                        <div className="flex gap-2">
+                          <button className="btn btn-xs btn-ghost" onClick={() => downloadFile(f.filename)}>
+                            <Icon name="download" size={10}/> Download
+                          </button>
+                          <button className="btn btn-xs btn-danger" onClick={() => deleteFile(f.filename)}>
+                            <Icon name="trash" size={10}/>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </div>
+
+      {/* ── NF Log Downloads ─────────────────────────────── */}
+      <div style={card}>
+        <div style={cardHdr}>
+          <span style={{...head, fontSize:11, color:'var(--accent)'}}>NF LOG DOWNLOAD</span>
+        </div>
+        <div style={cardBdy}>
+          <div style={{...mono, fontSize:10, color:'var(--muted)', marginBottom:12}}>
+            Download the current live logs from any NF container (last 500 lines).
+          </div>
+          <div className="flex gap-2 mb-4" style={{flexWrap:'wrap'}}>
+            {LOG_NFS.map(nf => (
+              <button key={nf} className="btn btn-ghost btn-sm"
+                onClick={() => window.open(`/api/nf/${nf}/logs?download=1`, '_blank')}
+                style={{...head, fontSize:10, letterSpacing:1}}>
+                <Icon name="download" size={10}/> {nf.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-primary" onClick={downloadAllLogs}
+            style={{fontSize:11}}>
+            <Icon name="download" size={12}/>&nbsp; All NFs — Single Bundle (.txt)
+          </button>
+          <div style={{...mono, fontSize:9, color:'var(--muted)', marginTop:8}}>
+            Bundle includes last 500 log lines from every NF. Open in any text editor or grep for NGAP/NAS/GTP keywords.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+// ── Throughput Test Page ───────────────────────────────────
+function ThroughputTest() {
+  const [ueStatus, setUeStatus]     = useState({ue1:{running:false,tunIp:null,ready:false},ue2:{running:false,tunIp:null,ready:false}});
+  const [selUe, setSelUe]           = useState('ue1');
+  const [direction, setDirection]   = useState('dl');
+  const [duration, setDuration]     = useState(10);
+  const [parallel, setParallel]     = useState(1);
+  const [target, setTarget]         = useState('10.45.0.200');
+  const [running, setRunning]       = useState(false);
+  const [result, setResult]         = useState(null);
+  const [error, setError]           = useState('');
+  const [history, setHistory]       = useState([]);
+  const [elapsed, setElapsed]       = useState(0);
+
+  const mono = {fontFamily:'var(--font-mono)'};
+  const head = {fontFamily:'var(--font-head)'};
+
+  // Poll UE status every 5s
+  React.useEffect(() => {
+    const poll = () => apiFetch('/iperf3/status').then(d => d && setUeStatus(d)).catch(()=>{});
+    poll();
+    const iv = setInterval(poll, 5000);
+    return ()=>clearInterval(iv);
+  }, []);
+
+  // Load history
+  React.useEffect(() => {
+    apiFetch('/iperf3/history').then(d => d && setHistory(d)).catch(()=>{});
+  }, []);
+
+  // Elapsed timer while test runs
+  React.useEffect(() => {
+    if (!running) { setElapsed(0); return; }
+    const iv = setInterval(() => setElapsed(e => e + 1), 1000);
+    return () => clearInterval(iv);
+  }, [running]);
+
+  function fmtBps(bps) {
+    if (!bps) return '—';
+    if (bps >= 1e9) return (bps/1e9).toFixed(2) + ' Gbps';
+    if (bps >= 1e6) return (bps/1e6).toFixed(1) + ' Mbps';
+    if (bps >= 1e3) return (bps/1e3).toFixed(0) + ' Kbps';
+    return bps.toFixed(0) + ' bps';
+  }
+
+  function dirLabel(d) { return {dl:'DL ↓',ul:'UL ↑',bidir:'BiDir ↕'}[d] || d; }
+
+  async function runTest() {
+    setError(''); setResult(null); setRunning(true);
+    try {
+      const data = await apiFetch('/iperf3/run', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ ue: selUe, direction, duration: Number(duration), parallel: Number(parallel), target }),
+      });
+      if (data?.error) { setError(data.error); }
+      else { setResult(data); setHistory(h => [data, ...h.slice(0,49)]); }
+    } catch(e) { setError(e.message); }
+    setRunning(false);
+  }
+
+  const ue = ueStatus[selUe] || {};
+  const canRun = ue.ready && !running;
+
+  const barMax = result ? Math.max(result.summary?.dl_bps||0, result.summary?.ul_bps||1) : 1;
+  function barPct(bps) { return Math.min(100, Math.round(bps/barMax*100)); }
+
+  return (
+    <div className="fade-in" style={{padding:'0 0 32px'}}>
+
+      {/* ── UE Status Banner ── */}
+      <div className="grid grid-2 mb-4" style={{gap:12}}>
+        {['ue1','ue2'].map(id=>{
+          const u = ueStatus[id]||{};
+          return (
+            <div key={id} className="card" style={{cursor:'pointer', border: selUe===id?'1px solid var(--accent)':'1px solid var(--border)', background: selUe===id?'rgba(0,200,255,.05)':'var(--panel)'}}
+              onClick={()=>setSelUe(id)}>
+              <div className="card-body" style={{display:'flex',alignItems:'center',gap:12}}>
+                <div className={`status-dot ${u.running?(u.ready?'':'warn'):'off'}`}/>
+                <div>
+                  <div style={{...head,fontSize:12,letterSpacing:2,color:'var(--accent)'}}>{id.toUpperCase()}</div>
+                  <div style={{...mono,fontSize:10,color:'var(--text2)',marginTop:2}}>
+                    {u.running ? (u.ready ? `PDU: ${u.tunIp}` : 'Registered — no PDU session') : 'Container stopped'}
+                  </div>
+                </div>
+                <div style={{marginLeft:'auto'}}>
+                  <span className={`badge ${u.ready?'badge-success':u.running?'badge-warn':'badge-muted'}`}>
+                    {u.ready?'READY':u.running?'NO PDU':'DOWN'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-2" style={{gap:16,alignItems:'start'}}>
+
+        {/* ── Test Config Panel ── */}
+        <div className="card">
+          <div className="card-header">TEST CONFIGURATION</div>
+          <div className="card-body">
+
+            {/* Direction */}
+            <div className="form-group mb-3">
+              <label className="form-label">Direction</label>
+              <div className="flex gap-2">
+                {[['dl','▼ Downlink (DL)','Server → UE'],['ul','▲ Uplink (UL)','UE → Server'],['bidir','↕ BiDirectional','Both simultaneously']].map(([v,l,d])=>(
+                  <div key={v} onClick={()=>setDirection(v)}
+                    style={{flex:1,padding:'8px 10px',border:`1px solid ${direction===v?'var(--accent)':'var(--border)'}`,borderRadius:6,cursor:'pointer',
+                      background:direction===v?'rgba(0,200,255,.1)':'var(--bg3)',textAlign:'center'}}>
+                    <div style={{...head,fontSize:10,letterSpacing:1,color:direction===v?'var(--accent)':'var(--text2)'}}>{l}</div>
+                    <div style={{...mono,fontSize:9,color:'var(--muted)',marginTop:3}}>{d}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Duration + Parallel */}
+            <div className="form-row grid-2 mb-3">
+              <div className="form-group">
+                <label className="form-label">Duration (seconds)</label>
+                <div className="flex gap-1">
+                  {[5,10,30,60].map(d=>(
+                    <button key={d} className={`btn btn-sm ${duration===d?'btn-primary':'btn-ghost'}`}
+                      style={{flex:1,...mono,fontSize:11}} onClick={()=>setDuration(d)}>{d}s</button>
+                  ))}
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Parallel Streams</label>
+                <div className="flex gap-1">
+                  {[1,2,4,8].map(p=>(
+                    <button key={p} className={`btn btn-sm ${parallel===p?'btn-primary':'btn-ghost'}`}
+                      style={{flex:1,...mono,fontSize:11}} onClick={()=>setParallel(p)}>{p}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Target + UE selector */}
+            <div className="form-row grid-2 mb-3">
+              <div className="form-group">
+                <label className="form-label">Target (iPerf3 Server IP)</label>
+                <input className="form-input" value={target} onChange={e=>setTarget(e.target.value)}
+                  style={mono} placeholder="10.45.0.200"/>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Source UE</label>
+                <div className="flex gap-2">
+                  {['ue1','ue2'].map(id=>{
+                    const u=ueStatus[id]||{};
+                    return (
+                      <button key={id} onClick={()=>setSelUe(id)}
+                        className={`btn btn-sm ${selUe===id?'btn-primary':'btn-ghost'}`}
+                        style={{flex:1,...mono,fontSize:11}} disabled={!u.running}>
+                        {id.toUpperCase()} {u.ready?'✓':u.running?'⚠':'✗'}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Run button */}
+            <button className="btn btn-success" style={{width:'100%',padding:'10px',fontSize:13,...head,letterSpacing:2}}
+              disabled={!canRun} onClick={runTest}>
+              {running ? `RUNNING… ${elapsed}/${duration}s` : <><Icon name="speed" size={14}/>&nbsp; RUN IPERF3 TEST</>}
+            </button>
+            {!ue.ready && !running && (
+              <div style={{...mono,fontSize:10,color:'var(--warn)',marginTop:8,textAlign:'center'}}>
+                {ue.running ? '⚠ UE is up but no PDU session — check subscriber config' : '✗ UE container is not running'}
+              </div>
+            )}
+            {error && <div style={{...mono,fontSize:11,color:'var(--danger)',marginTop:8,padding:'8px',background:'rgba(255,59,92,.08)',borderRadius:4,wordBreak:'break-word'}}>{error}</div>}
+          </div>
+        </div>
+
+        {/* ── Live Results Panel ── */}
+        <div className="card">
+          <div className="card-header">LAST TEST RESULT</div>
+          <div className="card-body">
+            {running && (
+              <div style={{textAlign:'center',padding:'24px 0'}}>
+                <div style={{...head,fontSize:13,color:'var(--accent)',letterSpacing:2,marginBottom:8}}>TEST IN PROGRESS</div>
+                <div style={{...mono,fontSize:11,color:'var(--text2)'}}>Direction: {dirLabel(direction)} · Duration: {duration}s · UE: {selUe.toUpperCase()}</div>
+                <div style={{height:4,background:'var(--border)',borderRadius:2,margin:'16px 0',overflow:'hidden'}}>
+                  <div style={{height:'100%',background:'var(--accent)',width:`${Math.round(elapsed/duration*100)}%`,transition:'width 1s linear',borderRadius:2}}/>
+                </div>
+                <div style={{...mono,fontSize:11,color:'var(--muted)'}}>{elapsed}s / {duration}s</div>
+              </div>
+            )}
+            {!running && result && (() => {
+              const s = result.summary || {};
+              const mainBps = direction==='ul' ? s.ul_bps : s.dl_bps;
+              const mainMbps = direction==='ul' ? s.ul_mbps : s.dl_mbps;
+              return (
+                <div>
+                  {/* Big throughput number */}
+                  <div style={{textAlign:'center',padding:'8px 0 16px'}}>
+                    <div style={{...head,fontSize:36,fontWeight:900,color:'var(--accent)',textShadow:'var(--glow)'}}>
+                      {mainMbps || '0'}
+                    </div>
+                    <div style={{...head,fontSize:12,color:'var(--text2)',letterSpacing:2}}>Mbps · {dirLabel(direction)}</div>
+                  </div>
+                  {/* DL / UL bars */}
+                  {(direction==='bidir' || direction==='dl') && (
+                    <div className="mb-3">
+                      <div className="flex justify-between mb-1">
+                        <span style={{...mono,fontSize:10,color:'var(--accent3)'}}>▼ DL (Server→UE)</span>
+                        <span style={{...mono,fontSize:10,color:'var(--accent3)'}}>{fmtBps(s.dl_bps)}</span>
+                      </div>
+                      <div style={{height:8,background:'var(--border)',borderRadius:4,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${barPct(s.dl_bps)}%`,background:'var(--accent3)',borderRadius:4,transition:'width .5s'}}/>
+                      </div>
+                    </div>
+                  )}
+                  {(direction==='bidir' || direction==='ul') && (
+                    <div className="mb-3">
+                      <div className="flex justify-between mb-1">
+                        <span style={{...mono,fontSize:10,color:'var(--accent)'}}>▲ UL (UE→Server)</span>
+                        <span style={{...mono,fontSize:10,color:'var(--accent)'}}>{fmtBps(s.ul_bps)}</span>
+                      </div>
+                      <div style={{height:8,background:'var(--border)',borderRadius:4,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${barPct(s.ul_bps)}%`,background:'var(--accent)',borderRadius:4,transition:'width .5s'}}/>
+                      </div>
+                    </div>
+                  )}
+                  {/* Stats grid */}
+                  <div className="grid grid-4 mt-3" style={{gap:8}}>
+                    {[['Retransmits',s.retransmits,'var(--warn)'],['CPU Host',`${s.cpu_host}%`,'var(--muted)'],['CPU Remote',`${s.cpu_remote}%`,'var(--muted)'],['UE TunIP',result.tunIp,'var(--text3)']].map(([l,v,c])=>(
+                      <div key={l} style={{background:'var(--bg3)',borderRadius:6,padding:'8px 10px',textAlign:'center'}}>
+                        <div style={{...mono,fontSize:16,fontWeight:700,color:c}}>{v}</div>
+                        <div style={{...mono,fontSize:9,color:'var(--muted)',marginTop:2}}>{l}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+            {!running && !result && (
+              <div style={{textAlign:'center',padding:'40px 0',color:'var(--muted)'}}>
+                <Icon name="speed" size={32}/>
+                <div style={{...mono,fontSize:11,marginTop:12}}>No test run yet.<br/>Configure and click RUN IPERF3 TEST.</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Test History Table ── */}
+      {history.length > 0 && (
+        <div className="card mt-4">
+          <div className="card-header">TEST HISTORY (last {history.length})</div>
+          <div className="card-body" style={{padding:0}}>
+            <table className="table">
+              <thead><tr>
+                <th>Time</th><th>UE</th><th>Dir</th><th>DL</th><th>UL</th><th>Retx</th><th>Duration</th><th>Parallel</th>
+              </tr></thead>
+              <tbody>
+                {history.map((r,i)=>{
+                  const s = r.summary||{};
+                  return (
+                    <tr key={r.id||i}>
+                      <td style={{...mono,fontSize:10}}>{new Date(r.startTime).toLocaleTimeString()}</td>
+                      <td><span className="badge badge-muted">{(r.ue||'').toUpperCase()}</span></td>
+                      <td><span style={{...head,fontSize:10,color:'var(--accent)',letterSpacing:1}}>{dirLabel(r.direction)}</span></td>
+                      <td style={{...mono,fontSize:11,color:'var(--accent3)'}}>{fmtBps(s.dl_bps)}</td>
+                      <td style={{...mono,fontSize:11,color:'var(--accent)'}}>{fmtBps(s.ul_bps)}</td>
+                      <td style={{...mono,fontSize:11,color:s.retransmits>0?'var(--warn)':'var(--text2)'}}>{s.retransmits}</td>
+                      <td style={{...mono,fontSize:11}}>{r.duration}s</td>
+                      <td style={{...mono,fontSize:11}}>{r.parallel}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quick reference ── */}
+      <div className="card mt-4">
+        <div className="card-header">HOW IT WORKS</div>
+        <div className="card-body">
+          <div className="grid grid-3" style={{gap:16}}>
+            {[
+              ['Data Path', 'UE → uesimtun0 → GTP-U → UPF N3 → iPerf3 server (10.45.0.200)'],
+              ['UE2 Setup', 'Start UE2: make ue2-up  (adds 2nd subscriber, same IMSI 001010000000002)'],
+              ['Manual CLI', 'docker exec ueransim-ue1 iperf3 -c 10.45.0.200 -t 10 -B $(tunIP)'],
+            ].map(([t,d])=>(
+              <div key={t} style={{padding:'12px',background:'var(--bg3)',borderRadius:6,borderLeft:'3px solid var(--accent2)'}}>
+                <div style={{...head,fontSize:10,letterSpacing:2,color:'var(--accent)',marginBottom:6}}>{t}</div>
+                <div style={{...mono,fontSize:10,color:'var(--text2)',lineHeight:1.6}}>{d}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── IDS Monitor Page ──────────────────────────────────────
+function SecurityIDS() {
+  const SEV_COLOR = {
+    CRITICAL: 'var(--danger)',
+    HIGH:     '#ff7020',
+    MEDIUM:   'var(--warn)',
+    LOW:      'var(--accent)',
+    INFO:     'var(--muted)',
+  };
+  const SEV_RGB = { CRITICAL:'255,59,92', HIGH:'255,112,32', MEDIUM:'255,184,0', LOW:'0,200,255', INFO:'74,112,144' };
+
+  const [engines, setEngines] = useState({
+    'zeek-ids':  { label:'Zeek (Control Plane)',  running:false, status:'unknown', startedAt:null },
+    'scapy-ids': { label:'Scapy (Data Plane)',    running:false, status:'unknown', startedAt:null },
+  });
+  const [totals,   setTotals]   = useState({ zeekAlerts:0, scapyAlerts:0, totalAlerts:0 });
+  const [alerts,   setAlerts]   = useState([]);
+  const [stats,    setStats]    = useState({ total:0, bySeverity:{}, byType:{} });
+  const [sevFilter, setSevFilter] = useState('ALL');
+  const [actionMsg, setActionMsg] = useState('');
+  const [busy,     setBusy]     = useState(false);
+  const [clearing, setClearing] = useState(false);
+
+  const head = { fontFamily:'var(--font-head)', letterSpacing:2 };
+  const mono = { fontFamily:'var(--font-mono)' };
+
+  const fetchStatus = async () => {
+    const d = await apiFetch('/ids/status');
+    if (d) { setEngines(d.engines || {}); setTotals({ zeekAlerts:d.zeekAlerts||0, scapyAlerts:d.scapyAlerts||0, totalAlerts:d.totalAlerts||0 }); }
+  };
+  const fetchAlerts = async () => {
+    const qs = sevFilter !== 'ALL' ? `?severity=${sevFilter}` : '';
+    const d = await apiFetch(`/ids/alerts${qs}`);
+    if (d) setAlerts(d);
+  };
+  const fetchStats = async () => {
+    const d = await apiFetch('/ids/stats');
+    if (d) setStats(d);
+  };
+
+  useEffect(() => {
+    fetchStatus(); fetchAlerts(); fetchStats();
+    const t = setInterval(() => { fetchStatus(); fetchAlerts(); fetchStats(); }, 5000);
+    return () => clearInterval(t);
+  }, [sevFilter]);
+
+  const startIDS = async () => {
+    setBusy(true); setActionMsg('Starting IDS engines...');
+    await apiFetch('/ids/start', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    setTimeout(() => { setBusy(false); setActionMsg(''); fetchStatus(); }, 2500);
+  };
+  const stopIDS = async () => {
+    setBusy(true); setActionMsg('Stopping IDS engines...');
+    await apiFetch('/ids/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    setTimeout(() => { setBusy(false); setActionMsg(''); fetchStatus(); }, 2500);
+  };
+  const clearAlerts = async () => {
+    setClearing(true);
+    await apiFetch('/ids/alerts', { method:'DELETE' });
+    setAlerts([]); setStats({ total:0, bySeverity:{}, byType:{} });
+    setTimeout(() => setClearing(false), 600);
+  };
+
+  const allRunning = Object.values(engines).length > 0 && Object.values(engines).every(e => e.running);
+  const anyRunning = Object.values(engines).some(e => e.running);
+  const maxTypeCnt = Math.max(1, ...Object.values(stats.byType || {}));
+
+  return (
+    <div style={{padding:'16px 24px',display:'flex',flexDirection:'column',gap:14,height:'100%',overflowY:'auto'}}>
+
+      {/* ── Engine status cards ─────────────────────────── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+        {Object.entries(engines).map(([id, eng]) => {
+          const isZeek = id === 'zeek-ids';
+          const color  = eng.running ? 'var(--success)' : 'var(--danger)';
+          return (
+            <div key={id} style={{padding:'14px 16px',background:'var(--panel)',border:`1px solid ${eng.running?'rgba(0,230,118,.3)':'var(--border)'}`,borderRadius:8,display:'flex',flexDirection:'column',gap:8,boxShadow:eng.running?'0 0 14px rgba(0,230,118,.1)':'none'}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <span style={{...head,fontSize:11,color:'var(--accent)'}}>
+                  {isZeek ? 'ZEEK IDS' : 'SCAPY IDS'}
+                </span>
+                <span style={{...mono,fontSize:10,color,fontWeight:700}}>
+                  {eng.running ? '● ACTIVE' : '○ STOPPED'}
+                </span>
+              </div>
+              <div style={{...mono,fontSize:11,color:'var(--text2)'}}>{eng.label}</div>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginTop:2}}>
+                <span style={{fontSize:9,color:'var(--muted)',...mono,textTransform:'uppercase'}}>
+                  {isZeek ? 'SBI / N2' : 'N3 / N4'}
+                </span>
+                <span style={{fontSize:9,color:'var(--text3)',...mono}}>
+                  {eng.status || '—'}
+                </span>
+              </div>
+              {eng.startedAt && eng.running && (
+                <div style={{...mono,fontSize:9,color:'var(--muted)'}}>
+                  up since {new Date(eng.startedAt).toLocaleTimeString()}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Stats card */}
+        <div style={{padding:'14px 16px',background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,display:'flex',flexDirection:'column',gap:6}}>
+          <div style={{...head,fontSize:10,color:'var(--accent)',marginBottom:2}}>ALERT COUNTS</div>
+          {['CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(s => (
+            <div key={s} style={{display:'flex',alignItems:'center',gap:8}}>
+              <span style={{...mono,fontSize:9,color:SEV_COLOR[s],minWidth:58}}>{s}</span>
+              <div style={{flex:1,height:3,background:'var(--bg3)',borderRadius:2,overflow:'hidden'}}>
+                <div style={{width:`${((stats.bySeverity[s]||0)/Math.max(1,stats.total))*100}%`,height:'100%',background:SEV_COLOR[s],borderRadius:2,transition:'width .4s'}}/>
+              </div>
+              <span style={{...mono,fontSize:10,color:'var(--text2)',minWidth:24,textAlign:'right',fontWeight:700}}>{stats.bySeverity[s]||0}</span>
+            </div>
+          ))}
+          <div style={{...mono,fontSize:10,color:'var(--muted)',marginTop:4,borderTop:'1px solid var(--border)',paddingTop:4}}>
+            Total: {stats.total} &nbsp;·&nbsp; Zeek: {totals.zeekAlerts} &nbsp;·&nbsp; Scapy: {totals.scapyAlerts}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Controls row ───────────────────────────────────── */}
+      <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
+        <button onClick={startIDS} disabled={busy||allRunning}
+          style={{padding:'7px 18px',background:allRunning?'var(--bg3)':'rgba(0,230,118,.1)',border:`1px solid ${allRunning?'var(--border)':'var(--success)'}`,borderRadius:6,color:allRunning?'var(--muted)':'var(--success)',cursor:busy||allRunning?'not-allowed':'pointer',...mono,fontSize:12,fontWeight:700,letterSpacing:1}}>
+          ▶ Start IDS
+        </button>
+        <button onClick={stopIDS} disabled={busy||!anyRunning}
+          style={{padding:'7px 18px',background:!anyRunning?'var(--bg3)':'rgba(255,59,92,.1)',border:`1px solid ${!anyRunning?'var(--border)':'var(--danger)'}`,borderRadius:6,color:!anyRunning?'var(--muted)':'var(--danger)',cursor:busy||!anyRunning?'not-allowed':'pointer',...mono,fontSize:12,fontWeight:700,letterSpacing:1}}>
+          ■ Stop IDS
+        </button>
+        {actionMsg && <span style={{...mono,fontSize:11,color:'var(--accent)',marginLeft:4}}>{actionMsg}</span>}
+        <div style={{flex:1}}/>
+        <button onClick={clearAlerts} disabled={clearing||stats.total===0}
+          style={{padding:'6px 14px',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,color:stats.total===0?'var(--text3)':'var(--muted)',cursor:'pointer',...mono,fontSize:11}}>
+          {clearing ? 'Clearing…' : 'Clear Alerts'}
+        </button>
+      </div>
+
+      {/* ── Severity filter tabs ────────────────────────────── */}
+      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+        {['ALL','CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(s => {
+          const active = sevFilter === s;
+          const col    = SEV_COLOR[s] || 'var(--accent)';
+          const rgb    = SEV_RGB[s]   || '0,200,255';
+          return (
+            <button key={s} onClick={() => setSevFilter(s)}
+              style={{padding:'4px 13px',borderRadius:4,border:`1px solid ${active?col:'var(--border)'}`,background:active?`rgba(${rgb},.12)`:'transparent',color:active?col:'var(--muted)',cursor:'pointer',...mono,fontSize:11,fontWeight:active?700:400,transition:'all .15s'}}>
+              {s}
+              {s !== 'ALL' && (stats.bySeverity[s]||0) > 0 &&
+                <span style={{marginLeft:5,background:`rgba(${rgb},.2)`,padding:'1px 5px',borderRadius:3}}>{stats.bySeverity[s]}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Alert feed ─────────────────────────────────────── */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',gap:6,overflowY:'auto',minHeight:200}}>
+        {alerts.length === 0 ? (
+          <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:10,opacity:.4,padding:'40px 0'}}>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+            <div style={{...mono,fontSize:12,color:'var(--muted)'}}>{!anyRunning ? 'Start IDS engines to begin monitoring' : 'No alerts detected'}</div>
+          </div>
+        ) : alerts.map((a, i) => {
+          const col = SEV_COLOR[a.severity] || 'var(--muted)';
+          const rgb = SEV_RGB[a.severity]   || '74,112,144';
+          return (
+            <div key={a.id||i} style={{padding:'10px 14px',background:'var(--panel)',border:`1px solid rgba(${rgb},.2)`,borderLeft:`3px solid ${col}`,borderRadius:6,display:'flex',gap:12,alignItems:'flex-start'}}>
+              {/* Severity badge */}
+              <div style={{minWidth:64,paddingTop:2}}>
+                <span style={{...mono,fontSize:9,background:`rgba(${rgb},.15)`,color:col,padding:'3px 7px',borderRadius:3,fontWeight:700,display:'block',textAlign:'center',letterSpacing:1}}>
+                  {a.severity}
+                </span>
+              </div>
+              {/* Content */}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:4}}>
+                  <span style={{...mono,fontSize:10,background:'var(--bg3)',color:a.engine==='zeek'?'var(--accent)':'var(--accent3)',padding:'1px 7px',borderRadius:3,letterSpacing:.5}}>
+                    {(a.engine||'').toUpperCase()}
+                  </span>
+                  <span style={{...head,fontSize:10,color:'var(--text2)',letterSpacing:1}}>{a.type}</span>
+                  <span style={{...mono,fontSize:10,color:'var(--text3)',marginLeft:'auto'}}>{(a.timestamp||'').slice(11,19)} UTC</span>
+                </div>
+                <div style={{...mono,fontSize:11,color:'var(--text)',lineHeight:1.6}}>{a.message}</div>
+                {a.source && a.source !== 'unknown' && (
+                  <div style={{...mono,fontSize:10,color:'var(--text3)',marginTop:3}}>src: {a.source}</div>
+                )}
+                {a.details && Object.keys(a.details).filter(k => a.details[k] != null && a.details[k] !== '' && a.details[k] !== 0).length > 0 && (
+                  <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:5}}>
+                    {Object.entries(a.details).filter(([,v]) => v != null && v !== '' && v !== 0).map(([k,v]) => (
+                      <span key={k} style={{...mono,fontSize:9,background:'var(--bg3)',color:'var(--muted)',padding:'2px 7px',borderRadius:3}}>
+                        {k}: {typeof v === 'object' ? JSON.stringify(v).slice(0,50) : String(v).slice(0,50)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Top alert types bar chart ──────────────────────── */}
+      {Object.keys(stats.byType||{}).length > 0 && (
+        <div style={{padding:'12px 16px',background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8}}>
+          <div style={{...head,fontSize:9,color:'var(--muted)',marginBottom:10}}>TOP ALERT TYPES</div>
+          <div style={{display:'flex',flexDirection:'column',gap:5}}>
+            {Object.entries(stats.byType||{}).sort(([,a],[,b])=>b-a).slice(0,6).map(([type,cnt]) => (
+              <div key={type} style={{display:'flex',alignItems:'center',gap:10}}>
+                <span style={{...mono,fontSize:10,color:'var(--text2)',minWidth:160,flexShrink:0}}>{type}</span>
+                <div style={{flex:1,height:4,background:'var(--bg3)',borderRadius:2,overflow:'hidden'}}>
+                  <div style={{width:`${(cnt/maxTypeCnt)*100}%`,height:'100%',background:'var(--accent2)',borderRadius:2,transition:'width .4s'}}/>
+                </div>
+                <span style={{...mono,fontSize:10,color:'var(--accent)',minWidth:24,textAlign:'right'}}>{cnt}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Coverage info panel ────────────────────────────── */}
+      <div style={{padding:'12px 16px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8}}>
+        <div style={{...head,fontSize:9,color:'var(--muted)',marginBottom:8}}>IDS COVERAGE</div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+          {[
+            ['ZEEK — Control Plane (SBI / N2)',
+             'SBI auth failures (HTTP 4xx bursts) · NRF registration floods · NF 5xx error spikes · N2 NGAP connection floods'],
+            ['SCAPY — Data Plane (N3 / N4)',
+             'GTP-U packet rate flood · High-volume GTP tunnel (>100 MB) · Inner-GTP port scan detection · PFCP session establishment floods'],
+          ].map(([t,d]) => (
+            <div key={t} style={{padding:10,background:'var(--bg3)',borderRadius:6,borderLeft:'2px solid var(--accent2)'}}>
+              <div style={{...head,fontSize:9,color:'var(--accent)',marginBottom:4}}>{t}</div>
+              <div style={{...mono,fontSize:10,color:'var(--text3)',lineHeight:1.6}}>{d}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{...mono,fontSize:10,color:'var(--text3)',marginTop:10}}>
+          Both engines run with <code style={{color:'var(--accent2)'}}>network_mode: host</code> to see all Docker bridge traffic.
+          Start with <code style={{color:'var(--accent2)'}}>make ids-up</code> or the button above.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────
+function App() {
+  const [page, setPage] = useState('dashboard');
+  const [nfStatus, setNfStatus] = useState(INIT_STATUS);
+  const [apiOk, setApiOk] = useState(false);
+  const [slices, setSlices] = useState(INIT_SLICES);
+  const [subs, setSubs] = useState(INIT_SUBS);
+  const [time, setTime] = useState(new Date().toLocaleTimeString());
+
+  // Clock
+  useEffect(()=>{
+    const t = setInterval(()=>setTime(new Date().toLocaleTimeString()),1000);
+    return ()=>clearInterval(t);
+  },[]);
+
+  // Poll real container status from API every 5 s
+  useEffect(()=>{
+    const poll = async () => {
+      const data = await apiFetch('/status');
+      if (data) {
+        setApiOk(true);
+        setNfStatus(prev => ({...prev, ...data}));
+      } else {
+        setApiOk(false);
+      }
+    };
+    poll();
+    const t = setInterval(poll, 5000);
+    return ()=>clearInterval(t);
+  },[]);
+
+  const runningCount = Object.values(nfStatus).filter(s=>s==='running').length;
+  const totalCount = Object.keys(nfStatus).length;
+
+  const nav = [
+    {id:'dashboard', label:'Dashboard',   icon:'dashboard', group:'overview'},
+    {id:'core',      label:'Core NFs',    icon:'core',      group:'network'},
+    {id:'ran',       label:'RAN',         icon:'ran',       group:'network'},
+    {id:'slices',    label:'Slices',      icon:'slice',     group:'network'},
+    {id:'subs',      label:'Subscribers', icon:'sub',       group:'data'},
+    {id:'topo',      label:'Topology',    icon:'topo',      group:'data'},
+    {id:'tracing',    label:'Tracing',     icon:'trace',     group:'ops'},
+    {id:'throughput', label:'Throughput',  icon:'speed',     group:'ops'},
+    {id:'logs',       label:'Logs',        icon:'logs',      group:'ops'},
+    {id:'grafana',    label:'Dashboards',  icon:'chart',     group:'obs', external: `http://${location.hostname}:3001`},
+    {id:'ids',        label:'IDS Monitor', icon:'shield',    group:'security'},
+  ];
+
+  const groups = {overview:'Overview', network:'Network', data:'Data Plane', ops:'Operations', obs:'Observability', security:'Security'};
+  const pageInfo = {
+    dashboard:  ['DASHBOARD',      'System overview and real-time metrics'],
+    core:       ['CORE NETWORK',   'Open5GS NF management and configuration'],
+    ran:        ['RAN / OAI',      'gNB and nrUE simulator control'],
+    slices:     ['NETWORK SLICES', '5G slice management — create, configure, assign NFs'],
+    subs:       ['SUBSCRIBERS',    'UE subscription data and credential management'],
+    topo:       ['TOPOLOGY',       'Live 5G architecture visualization'],
+    tracing:    ['TRACING',        'Packet capture (PCAP) + log download — start, stop, download'],
+    throughput: ['THROUGHPUT TEST','iPerf3 DL / UL / BiDir tests through live PDU session'],
+    logs:       ['SYSTEM LOGS',    'Aggregated logs from all NFs'],
+    grafana:    ['GRAFANA',        'Opens Grafana dashboards in a new tab'],
+    ids:        ['IDS MONITOR',    'Zeek + Scapy intrusion detection — SBI/N2 control plane + N3/N4 data plane'],
+  };
+
+  return (
+    <React.Fragment>
+      <div className="topbar">
+        <div className="logo">
+          <div className="logo-icon">
+            <svg viewBox="0 0 32 32" fill="none">
+              <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="var(--accent)" strokeWidth="1.5" fill="none"/>
+              <circle cx="16" cy="16" r="4" fill="var(--accent)" opacity=".8"/>
+              <line x1="16" y1="8" x2="16" y2="12" stroke="var(--accent)" strokeWidth="1.5"/>
+              <line x1="16" y1="20" x2="16" y2="24" stroke="var(--accent)" strokeWidth="1.5"/>
+              <line x1="8" y1="12" x2="12" y2="14" stroke="var(--accent)" strokeWidth="1.5"/>
+              <line x1="20" y1="18" x2="24" y2="20" stroke="var(--accent)" strokeWidth="1.5"/>
+            </svg>
+          </div>
+          <span className="logo-text">5G TESTBED</span>
+        </div>
+        <div className="topbar-status">
+          <div className="status-pill"><span className="status-dot"/>{runningCount}/{totalCount} NFs UP</div>
+          <div className="status-pill"><span className="status-dot"/>{slices.filter(s=>s.active).length} Slices Active</div>
+          <div className="status-pill"><span className={`status-dot ${nfStatus.gnb==='running'?'':'off'}`}/>gNB {nfStatus.gnb==='running'?'Online':'Offline'}</div>
+          <div className="status-pill"><span className={`status-dot ${apiOk?'':'warn'}`}/>{apiOk?'Live':'Simulated'}</div>
+          <div className="topbar-time">{time}</div>
+        </div>
+      </div>
+      <div className="layout">
+        <div className="sidebar">
+          {Object.entries(groups).map(([gId, gLabel])=>{
+            const items = nav.filter(n=>n.group===gId);
+            if(!items.length) return null;
+            return (
+              <div key={gId} className="nav-section">
+                <div className="nav-label">{gLabel}</div>
+                {items.map(n=>(
+                  <div key={n.id} className={`nav-item ${page===n.id?'active':''}`}
+                    onClick={()=>{ if(n.external){ window.open(n.external,'_blank'); } else { setPage(n.id); } }}
+                    title={n.external?`Open ${n.label} ↗`:''}
+                  >
+                    <span className="nav-icon"><Icon name={n.icon} size={15}/></span>
+                    {n.label}{n.external && <span style={{fontSize:9,marginLeft:'auto',opacity:.5}}>↗</span>}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          <div className="sidebar-footer">
+            <div className="version-tag">OAI + Open5GS v2.7</div>
+            <div className="version-tag" style={{marginTop:2}}>Docker / K3s</div>
+          </div>
+        </div>
+        <div className="main">
+          <div className="main-header">
+            <div className="page-title">{(pageInfo[page]||[''])[0]}</div>
+            <div className="page-sub">{(pageInfo[page]||['',''])[1]}</div>
+          </div>
+          <div className="main-content">
+            {page === 'dashboard' && <Dashboard nfStatus={nfStatus}/>}
+            {(page === 'core' || page === 'ran') && <CoreNFs nfStatus={nfStatus} setNfStatus={setNfStatus}/>}
+            {page === 'slices'    && <SliceManager slices={slices} setSlices={setSlices}/>}
+            {page === 'subs'      && <Subscriptions subs={subs} setSubs={setSubs}/>}
+            {page === 'topo'      && <Topology nfStatus={nfStatus}/>}
+            {page === 'tracing'    && <Tracing/>}
+            {page === 'throughput' && <ThroughputTest/>}
+            {page === 'logs'       && <LogsPage/>}
+            {page === 'ids'        && <SecurityIDS/>}
+          </div>
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

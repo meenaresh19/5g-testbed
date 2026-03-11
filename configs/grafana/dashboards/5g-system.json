@@ -1,0 +1,148 @@
+{
+  "title": "5G System Resources",
+  "uid": "5g-system-v1",
+  "description": "Container CPU, memory, network I/O and health for all 5G testbed services",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "graphTooltip": 1,
+  "tags": ["5g", "system", "resources"],
+  "editable": true,
+  "templating": {
+    "list": [
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+        "query": "label_values(container_last_seen{name=~\"(open5gs|oai|5g)-.*\"}, name)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "(open5gs|oai|5g)-.*",
+        "current": {"selected": true, "text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "panels": [
+
+    {"type":"row","id":1,"title":"Container CPU","gridPos":{"x":0,"y":0,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 2, "title": "CPU Usage — Core NFs",
+      "gridPos": {"x": 0, "y": 1, "w": 12, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_cpu_usage_seconds_total{name=~\"open5gs-.*\"}[1m]) * 100", "refId": "A", "legendFormat": "{{name}}"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"right","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":1,"fillOpacity":10,"gradientMode":"none","spanNulls":false,"showPoints":"never"},"unit":"percent","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "timeseries", "id": 3, "title": "CPU Usage — RAN + Infra",
+      "gridPos": {"x": 12, "y": 1, "w": 12, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_cpu_usage_seconds_total{name=~\"oai-.*|5g-.*|open5gs-mongodb|open5gs-webui\"}[1m]) * 100", "refId": "A", "legendFormat": "{{name}}"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"right","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":1,"fillOpacity":10,"gradientMode":"none","spanNulls":false,"showPoints":"never"},"unit":"percent","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":4,"title":"Container Memory","gridPos":{"x":0,"y":10,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 5, "title": "Memory — Core NFs",
+      "gridPos": {"x": 0, "y": 11, "w": 12, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_memory_working_set_bytes{name=~\"open5gs-.*\"} / 1048576", "refId": "A", "legendFormat": "{{name}}"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"right","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":1,"fillOpacity":10,"gradientMode":"none","spanNulls":false,"showPoints":"never"},"unit":"MiB","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "timeseries", "id": 6, "title": "Memory — RAN + Infra",
+      "gridPos": {"x": 12, "y": 11, "w": 12, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_memory_working_set_bytes{name=~\"oai-.*|5g-.*|open5gs-mongodb|open5gs-webui\"} / 1048576", "refId": "A", "legendFormat": "{{name}}"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"right","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":1,"fillOpacity":10,"gradientMode":"none","spanNulls":false,"showPoints":"never"},"unit":"MiB","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":7,"title":"Network I/O","gridPos":{"x":0,"y":20,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 8, "title": "Network RX — All 5G Containers",
+      "gridPos": {"x": 0, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_receive_bytes_total{name=~\"open5gs-.*|oai-.*\"}[1m]) * 8", "refId": "A", "legendFormat": "{{name}}"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"right","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":1,"fillOpacity":8,"gradientMode":"none","spanNulls":false,"showPoints":"never"},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "timeseries", "id": 9, "title": "Network TX — All 5G Containers",
+      "gridPos": {"x": 12, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_transmit_bytes_total{name=~\"open5gs-.*|oai-.*\"}[1m]) * 8", "refId": "A", "legendFormat": "{{name}}"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"right","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":1,"fillOpacity":8,"gradientMode":"none","spanNulls":false,"showPoints":"never"},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":10,"title":"Container Health Summary","gridPos":{"x":0,"y":29,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "table", "id": 11, "title": "Container Status & Resources",
+      "gridPos": {"x": 0, "y": 30, "w": 24, "h": 10},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_tasks_state{name=~\"open5gs-.*|oai-.*|5g-.*\", state=\"running\"}", "instant": true, "refId": "A", "legendFormat": "{{name}}"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_cpu_usage_seconds_total{name=~\"open5gs-.*|oai-.*|5g-.*\"}[5m]) * 100", "instant": true, "refId": "B", "legendFormat": "{{name}}"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "container_memory_working_set_bytes{name=~\"open5gs-.*|oai-.*|5g-.*\"} / 1048576", "instant": true, "refId": "C", "legendFormat": "{{name}}"}
+      ],
+      "transformations": [
+        {"id":"labelsToFields","options":{"mode":"rows","valueLabel":"Value"}},
+        {"id":"organize","options":{"renameByName":{"name":"Container","Value":"Running","Value #B":"CPU %","Value #C":"Memory MiB"}}}
+      ],
+      "options": {"sortBy":[{"displayName":"Container","desc":false}],"footer":{"show":false}},
+      "fieldConfig": {"defaults": {"custom":{"align":"left","displayMode":"auto"}}, "overrides": [
+        {"matcher":{"id":"byName","options":"Running"},"properties":[
+          {"id":"custom.displayMode","value":"color-background"},
+          {"id":"mappings","value":[{"type":"value","options":{"0":{"text":"STOPPED","color":"red"},"1":{"text":"RUNNING","color":"green"}}}]}
+        ]},
+        {"matcher":{"id":"byName","options":"CPU %"},"properties":[
+          {"id":"unit","value":"percent"},
+          {"id":"custom.displayMode","value":"gradient-gauge"},
+          {"id":"thresholds","value":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":50},{"color":"red","value":80}]}}
+        ]},
+        {"matcher":{"id":"byName","options":"Memory MiB"},"properties":[
+          {"id":"unit","value":"MiB"},
+          {"id":"custom.displayMode","value":"gradient-gauge"},
+          {"id":"thresholds","value":{"mode":"absolute","steps":[{"color":"green","value":null},{"color":"yellow","value":512},{"color":"red","value":1024}]}}
+        ]}
+      ]}
+    },
+
+    {"type":"row","id":12,"title":"All Container Logs (Loki)","gridPos":{"x":0,"y":40,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "logs", "id": 13, "title": "All 5G Testbed Logs",
+      "gridPos": {"x": 0, "y": 41, "w": 24, "h": 10},
+      "datasource": {"type": "loki", "uid": "loki-ds"},
+      "targets": [{"datasource":{"type":"loki","uid":"loki-ds"}, "expr": "{type=~\"5gc|ran|mgmt\"}", "refId": "A"}],
+      "options": {"dedupStrategy":"none","enableLogDetails":true,"prettifyLogMessage":false,"showCommonLabels":false,"showLabels":true,"showTime":true,"sortOrder":"Descending","wrapLogMessage":false}
+    }
+
+  ]
+}

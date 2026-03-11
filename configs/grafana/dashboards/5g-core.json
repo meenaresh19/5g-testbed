@@ -1,0 +1,154 @@
+{
+  "title": "5G Core Network",
+  "uid": "5g-core-v1",
+  "description": "Open5GS 5GC KPIs — registered UEs, PDU sessions, NF health, UPF throughput",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": {"from": "now-30m", "to": "now"},
+  "timezone": "browser",
+  "graphTooltip": 1,
+  "tags": ["5g", "open5gs", "core"],
+  "editable": true,
+  "panels": [
+
+    {"type":"row","id":1,"title":"5GC Key Performance Indicators","gridPos":{"x":0,"y":0,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "stat", "id": 2, "title": "Registered UEs",
+      "gridPos": {"x": 0, "y": 1, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "fivegs_amf_registered_ue_nbr or vector(0)", "instant": true, "refId": "A"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area","orientation":"auto","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"blue","value":null},{"color":"green","value":1}]},"unit":"short","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "stat", "id": 3, "title": "Active PDU Sessions",
+      "gridPos": {"x": 4, "y": 1, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "fivegs_amf_session_nbr or vector(0)", "instant": true, "refId": "A"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area","orientation":"auto","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"blue","value":null},{"color":"green","value":1}]},"unit":"short","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "stat", "id": 4, "title": "Connected gNBs",
+      "gridPos": {"x": 8, "y": 1, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "fivegs_amf_gnb_nbr or vector(0)", "instant": true, "refId": "A"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area","orientation":"auto","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]},"unit":"short","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "stat", "id": 5, "title": "NFs Online",
+      "gridPos": {"x": 12, "y": 1, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "count(up{job=~\"open5gs-.*\"} == 1) or vector(0)", "instant": true, "refId": "A", "legendFormat": "Online"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none","orientation":"auto","textMode":"auto"},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"yellow","value":5},{"color":"green","value":9}]},"unit":"short","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "gauge", "id": 6, "title": "NF Health %",
+      "gridPos": {"x": 16, "y": 1, "w": 8, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "100 * count(up{job=~\"open5gs-.*\"} == 1) / count(up{job=~\"open5gs-.*\"})", "instant": true, "refId": "A", "legendFormat": "Health"}],
+      "options": {"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"auto","showThresholdLabels":false,"showThresholdMarkers":true,"minVizWidth":75},
+      "fieldConfig": {"defaults": {"color":{"mode":"thresholds"},"thresholds":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"yellow","value":70},{"color":"green","value":90}]},"unit":"percent","min":0,"max":100},"overrides":[]}
+    },
+
+    {"type":"row","id":7,"title":"Network Function Status","gridPos":{"x":0,"y":5,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "table", "id": 8, "title": "NF Status",
+      "gridPos": {"x": 0, "y": 6, "w": 24, "h": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [{"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "up{job=~\"open5gs-.*\"}", "instant": true, "refId": "A", "legendFormat": "{{job}}"}],
+      "options": {"sortBy":[{"displayName":"NF","desc":false}],"footer":{"show":false}},
+      "transformations": [
+        {"id":"labelsToFields","options":{"mode":"rows","valueLabel":"Status"}},
+        {"id":"organize","options":{"renameByName":{"job":"Network Function","instance":"Metrics Endpoint","Value":"Status","nf":"NF ID","plane":"Plane"},"excludeByName":{"Time":true,"__name__":true}}}
+      ],
+      "fieldConfig": {"defaults": {"custom":{"align":"left","displayMode":"auto"},"unit":"short"},"overrides": [
+        {"matcher":{"id":"byName","options":"Status"},"properties":[
+          {"id":"custom.displayMode","value":"color-background"},
+          {"id":"mappings","value":[{"type":"value","options":{"0":{"text":"DOWN","color":"red","index":0},"1":{"text":"UP","color":"green","index":1}}}]},
+          {"id":"thresholds","value":{"mode":"absolute","steps":[{"color":"red","value":null},{"color":"green","value":1}]}}
+        ]}
+      ]}
+    },
+
+    {"type":"row","id":9,"title":"Registration & Session Activity","gridPos":{"x":0,"y":11,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 10, "title": "Registered UE Count",
+      "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "fivegs_amf_registered_ue_nbr or vector(0)", "refId": "A", "legendFormat": "Registered UEs"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "fivegs_amf_session_nbr or vector(0)", "refId": "B", "legendFormat": "Active Sessions"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":15,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"short","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "timeseries", "id": 11, "title": "SMF Session Count",
+      "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "fivegs_smf_session_nbr or vector(0)", "refId": "A", "legendFormat": "SMF Sessions"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "fivegs_amf_gnb_nbr or vector(0)", "refId": "B", "legendFormat": "Connected gNBs"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["lastNotNull","max"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":15,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"short","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":12,"title":"User Plane (UPF N3 Data Path)","gridPos":{"x":0,"y":20,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "timeseries", "id": 13, "title": "N3 GTP-U Throughput (UPF container)",
+      "gridPos": {"x": 0, "y": 21, "w": 14, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_receive_bytes_total{name=\"open5gs-upf\"}[1m]) * 8", "refId": "A", "legendFormat": "UL ← (UE→Internet)"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_transmit_bytes_total{name=\"open5gs-upf\"}[1m]) * 8", "refId": "B", "legendFormat": "DL → (Internet→UE)"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":20,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {
+      "type": "timeseries", "id": 14, "title": "AMF SBI / N2 Traffic",
+      "gridPos": {"x": 14, "y": 21, "w": 10, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus-ds"},
+      "targets": [
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_receive_bytes_total{name=\"open5gs-amf\"}[1m]) * 8", "refId": "A", "legendFormat": "AMF RX"},
+        {"datasource":{"type":"prometheus","uid":"prometheus-ds"}, "expr": "rate(container_network_transmit_bytes_total{name=\"open5gs-amf\"}[1m]) * 8", "refId": "B", "legendFormat": "AMF TX"}
+      ],
+      "options": {"tooltip":{"mode":"multi","sort":"desc"},"legend":{"calcs":["mean","max"],"displayMode":"table","placement":"bottom","showLegend":true}},
+      "fieldConfig": {"defaults": {"color":{"mode":"palette-classic"},"custom":{"drawStyle":"line","lineInterpolation":"smooth","lineWidth":2,"fillOpacity":15,"gradientMode":"opacity","spanNulls":false,"showPoints":"never"},"unit":"bps","min":0},"overrides":[]}
+    },
+
+    {"type":"row","id":15,"title":"Core NF Logs (via Loki)","gridPos":{"x":0,"y":29,"w":24,"h":1},"collapsed":false},
+
+    {
+      "type": "logs", "id": 16, "title": "AMF Logs",
+      "gridPos": {"x": 0, "y": 30, "w": 12, "h": 9},
+      "datasource": {"type": "loki", "uid": "loki-ds"},
+      "targets": [{"datasource":{"type":"loki","uid":"loki-ds"}, "expr": "{nf=\"amf\"}", "refId": "A"}],
+      "options": {"dedupStrategy":"none","enableLogDetails":true,"prettifyLogMessage":false,"showCommonLabels":false,"showLabels":true,"showTime":true,"sortOrder":"Descending","wrapLogMessage":false}
+    },
+
+    {
+      "type": "logs", "id": 17, "title": "SMF / UPF Logs",
+      "gridPos": {"x": 12, "y": 30, "w": 12, "h": 9},
+      "datasource": {"type": "loki", "uid": "loki-ds"},
+      "targets": [{"datasource":{"type":"loki","uid":"loki-ds"}, "expr": "{nf=~\"smf|upf\"}", "refId": "A"}],
+      "options": {"dedupStrategy":"none","enableLogDetails":true,"prettifyLogMessage":false,"showCommonLabels":false,"showLabels":true,"showTime":true,"sortOrder":"Descending","wrapLogMessage":false}
+    }
+
+  ]
+}

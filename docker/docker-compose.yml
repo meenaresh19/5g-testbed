@@ -1,0 +1,698 @@
+version: "3.8"
+
+# ============================================================
+# 5G Testbed: OAI RAN + Open5GS Core + Management UI
+# Run from project root:
+#   docker compose -f docker/docker-compose.yml --project-directory . up -d
+# Or simply:  make up
+# ============================================================
+
+networks:
+  5g-core-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.45.0.0/16
+  ran-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.70.0/24
+  mgmt-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24
+
+volumes:
+  mongo-data:
+  api-node-modules:   # cache npm packages across container restarts
+  prometheus-data:    # Prometheus TSDB (7d retention)
+  grafana-data:       # Grafana state, plugins, user data
+  loki-data:          # Loki log chunks
+  ids-data:           # Zeek + Scapy IDS alerts/logs (shared with API)
+  # Note: ./traces is a host bind-mount (not a named volume) so PCAP files
+  # persist and are accessible for download even after containers restart.
+
+# ============================================================
+# OPEN5GS CORE NETWORK FUNCTIONS
+# ============================================================
+services:
+
+  # MongoDB — Subscriber data store
+  mongodb:
+    image: mongo:6.0
+    container_name: open5gs-mongodb
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.2
+      mgmt-net:
+        ipv4_address: 172.22.0.2
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: open5gs
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      com.5g-testbed.nf: "mongodb"
+      com.5g-testbed.type: "database"
+
+  # NRF — Network Repository Function (service discovery hub)
+  open5gs-nrf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-nrf
+    command: open5gs-nrfd -c /etc/open5gs/nrf.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.10
+    volumes:
+      - ./configs/open5gs/nrf.yaml:/etc/open5gs/nrf.yaml:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7777/nnrf-nfm/v1/nf-instances || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    labels:
+      com.5g-testbed.nf: "nrf"
+      com.5g-testbed.type: "5gc"
+
+  # SCP — Service Communication Proxy
+  open5gs-scp:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-scp
+    command: open5gs-scpd -c /etc/open5gs/scp.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.11
+    volumes:
+      - ./configs/open5gs/scp.yaml:/etc/open5gs/scp.yaml:ro
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    labels:
+      com.5g-testbed.nf: "scp"
+      com.5g-testbed.type: "5gc"
+
+  # AMF — Access and Mobility Management Function
+  # cap_add NET_ADMIN: needed for tcpdump (N2/SBI captures)
+  open5gs-amf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-amf
+    command: open5gs-amfd -c /etc/open5gs/amf.yaml
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.12
+      ran-net:
+        ipv4_address: 192.168.70.12
+    volumes:
+      - ./configs/open5gs/amf.yaml:/etc/open5gs/amf.yaml:ro
+      - ./traces:/traces                                       # PCAP output
+    ports:
+      - "38412:38412/sctp"   # NGAP (N2)
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+      open5gs-scp:
+        condition: service_started
+    labels:
+      com.5g-testbed.nf: "amf"
+      com.5g-testbed.type: "5gc"
+
+  # SMF — Session Management Function
+  open5gs-smf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-smf
+    command: open5gs-smfd -c /etc/open5gs/smf.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.13
+    volumes:
+      - ./configs/open5gs/smf.yaml:/etc/open5gs/smf.yaml:ro
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+      open5gs-scp:
+        condition: service_started
+    labels:
+      com.5g-testbed.nf: "smf"
+      com.5g-testbed.type: "5gc"
+
+  # UPF — User Plane Function (data path)
+  # Privileged: needed for GTP tunnel + tcpdump (N3/N4 captures)
+  open5gs-upf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-upf
+    command: open5gs-upfd -c /etc/open5gs/upf.yaml
+    restart: unless-stopped
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.14
+    volumes:
+      - ./configs/open5gs/upf.yaml:/etc/open5gs/upf.yaml:ro
+      - ./traces:/traces                                       # PCAP output
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    labels:
+      com.5g-testbed.nf: "upf"
+      com.5g-testbed.type: "5gc-up"
+
+  # AUSF — Authentication Server Function
+  open5gs-ausf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-ausf
+    command: open5gs-ausfd -c /etc/open5gs/ausf.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.15
+    volumes:
+      - ./configs/open5gs/ausf.yaml:/etc/open5gs/ausf.yaml:ro
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    labels:
+      com.5g-testbed.nf: "ausf"
+      com.5g-testbed.type: "5gc"
+
+  # UDM — Unified Data Management
+  open5gs-udm:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-udm
+    command: open5gs-udmd -c /etc/open5gs/udm.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.16
+    volumes:
+      - ./configs/open5gs/udm.yaml:/etc/open5gs/udm.yaml:ro
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    labels:
+      com.5g-testbed.nf: "udm"
+      com.5g-testbed.type: "5gc"
+
+  # UDR — Unified Data Repository
+  open5gs-udr:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-udr
+    command: open5gs-udrd -c /etc/open5gs/udr.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.17
+    volumes:
+      - ./configs/open5gs/udr.yaml:/etc/open5gs/udr.yaml:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      open5gs-nrf:
+        condition: service_healthy
+    labels:
+      com.5g-testbed.nf: "udr"
+      com.5g-testbed.type: "5gc"
+
+  # PCF — Policy Control Function
+  open5gs-pcf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-pcf
+    command: open5gs-pcfd -c /etc/open5gs/pcf.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.18
+    volumes:
+      - ./configs/open5gs/pcf.yaml:/etc/open5gs/pcf.yaml:ro
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+      open5gs-udr:
+        condition: service_started
+    labels:
+      com.5g-testbed.nf: "pcf"
+      com.5g-testbed.type: "5gc"
+
+  # BSF — Binding Support Function
+  open5gs-bsf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-bsf
+    command: open5gs-bsfd -c /etc/open5gs/bsf.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.19
+    volumes:
+      - ./configs/open5gs/bsf.yaml:/etc/open5gs/bsf.yaml:ro
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    labels:
+      com.5g-testbed.nf: "bsf"
+      com.5g-testbed.type: "5gc"
+
+  # NSSF — Network Slice Selection Function
+  open5gs-nssf:
+    image: gradiant/open5gs:2.7.0
+    container_name: open5gs-nssf
+    command: open5gs-nssfd -c /etc/open5gs/nssf.yaml
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.20
+    volumes:
+      - ./configs/open5gs/nssf.yaml:/etc/open5gs/nssf.yaml:ro
+    depends_on:
+      open5gs-nrf:
+        condition: service_healthy
+    labels:
+      com.5g-testbed.nf: "nssf"
+      com.5g-testbed.type: "5gc"
+
+  # Open5GS WebUI — Subscriber management
+  open5gs-webui:
+    image: gradiant/open5gs-webui:2.7.0
+    container_name: open5gs-webui
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.30
+      mgmt-net:
+        ipv4_address: 172.22.0.30
+    environment:
+      DB_URI: mongodb://10.45.0.2/open5gs
+      NODE_ENV: production
+    ports:
+      - "9999:9999"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    labels:
+      com.5g-testbed.nf: "webui"
+      com.5g-testbed.type: "mgmt"
+
+  # ============================================================
+  # UERANSIM RAN — lightweight gNB + UE simulator (DEFAULT)
+  # OAI still available via:  docker compose --profile oai up -d
+  # ============================================================
+
+  # UERANSIM gNB — 5G Base Station simulator
+  ueransim-gnb:
+    image: towards5gs/ueransim:v3.2.6
+    container_name: ueransim-gnb
+    command: nr-gnb -c /etc/ueransim/gnb.yaml
+    restart: on-failure:5
+    networks:
+      ran-net:
+        ipv4_address: 192.168.70.20
+      5g-core-net:
+        ipv4_address: 10.45.0.50
+    volumes:
+      - ./configs/ueransim/gnb.yaml:/etc/ueransim/gnb.yaml:ro
+    depends_on:
+      - open5gs-amf
+    labels:
+      com.5g-testbed.nf: "gnb"
+      com.5g-testbed.type: "ran"
+
+  # UERANSIM UE1 — Primary UE (always starts with default stack)
+  ueransim-ue1:
+    image: towards5gs/ueransim:v3.2.6
+    container_name: ueransim-ue1
+    command: nr-ue -c /etc/ueransim/ue.yaml
+    restart: on-failure:5
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      ran-net:
+        ipv4_address: 192.168.70.30
+    volumes:
+      - ./configs/ueransim/ue.yaml:/etc/ueransim/ue.yaml:ro
+    depends_on:
+      - ueransim-gnb
+    labels:
+      com.5g-testbed.nf: "ue1"
+      com.5g-testbed.type: "ue"
+
+  # UERANSIM UE2 — Second UE for multi-UE / load testing
+  # Start with:  docker compose --profile multi-ue up -d ueransim-ue2
+  ueransim-ue2:
+    image: towards5gs/ueransim:v3.2.6
+    container_name: ueransim-ue2
+    command: nr-ue -c /etc/ueransim/ue2.yaml
+    profiles: [multi-ue]
+    restart: on-failure:5
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      ran-net:
+        ipv4_address: 192.168.70.31
+    volumes:
+      - ./configs/ueransim/ue2.yaml:/etc/ueransim/ue2.yaml:ro
+    depends_on:
+      - ueransim-gnb
+    labels:
+      com.5g-testbed.nf: "ue2"
+      com.5g-testbed.type: "ue"
+
+  # ============================================================
+  # iPerf3 SERVER — data plane throughput target
+  # Reachable from UE PDU sessions (via UPF) at 10.45.0.200:5201
+  # UI test: POST /iperf3/run  {ue:"ue1", direction:"dl", duration:10}
+  # ============================================================
+  iperf3-server:
+    image: networkstatic/iperf3:latest
+    container_name: iperf3-server
+    command: iperf3 -s -p 5201 --forceflush
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.200
+    labels:
+      com.5g-testbed.nf: "iperf3"
+      com.5g-testbed.type: "test"
+
+  # ============================================================
+  # OAI RAN (opt-in legacy) — docker compose --profile oai up -d
+  # ============================================================
+
+  # OAI gNB — 5G Base Station (RF simulator mode)
+  oai-gnb:
+    image: oaisoftwarealliance/oai-gnb:develop
+    container_name: oai-gnb
+    profiles: [oai]
+    restart: on-failure:5
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    networks:
+      ran-net:
+        ipv4_address: 192.168.70.20
+      5g-core-net:
+        ipv4_address: 10.45.0.50
+    volumes:
+      - ./configs/oai/gnb.conf:/opt/oai-gnb/etc/gnb.conf:ro
+    environment:
+      TZ: UTC
+      USE_SA_TDD_MONO: "yes"
+      GNB_NAME: "OAI-gNB-1"
+      MCC: "001"
+      MNC: "01"
+      MNC_LENGTH: "2"
+      TAC: "1"
+      NSSAI_SST: "1"
+      AMF_IP_ADDRESS: "10.45.0.12"
+      GNB_NGA_IF_NAME: "eth1"
+      GNB_NGA_IP_ADDRESS: "10.45.0.50"
+      GNB_NGU_IF_NAME: "eth1"
+      GNB_NGU_IP_ADDRESS: "10.45.0.50"
+    depends_on:
+      - open5gs-amf
+    labels:
+      com.5g-testbed.nf: "gnb-oai"
+      com.5g-testbed.type: "ran"
+
+  # OAI nrUE — 5G User Equipment simulator
+  oai-nrue:
+    image: oaisoftwarealliance/oai-nr-ue:develop
+    container_name: oai-nrue
+    profiles: [oai]
+    restart: on-failure:5
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    networks:
+      ran-net:
+        ipv4_address: 192.168.70.30
+    volumes:
+      - ./configs/oai/ue.conf:/opt/oai-nr-ue/etc/ue.conf:ro
+    environment:
+      TZ: UTC
+      RFSIMULATOR: "192.168.70.20"
+      USE_ADDITIONAL_OPTIONS: "--sa -r 106 --numerology 1 -C 3619200000 --nokrnmod"
+      IMSI: "001010000000001"
+      KEY: "fec86ba6eb707ed08905757b1bb44b8f"
+      OPC: "C42449363BBAD02B66D16BC975D77CC1"
+      DNN: "internet"
+      NSSAI_SST: "1"
+    depends_on:
+      - oai-gnb
+    labels:
+      com.5g-testbed.nf: "nrue-oai"
+      com.5g-testbed.type: "ue"
+
+  # ============================================================
+  # 5G TESTBED MANAGEMENT UI
+  # ============================================================
+
+  # Nginx — serves the React SPA and proxies API/WebUI
+  testbed-ui:
+    image: nginx:alpine
+    container_name: 5g-testbed-ui
+    restart: unless-stopped
+    networks:
+      mgmt-net:
+        ipv4_address: 172.22.0.100
+    ports:
+      - "3000:80"
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - testbed-api
+    labels:
+      com.5g-testbed.nf: "mgmt-ui"
+      com.5g-testbed.type: "mgmt"
+
+  # Node.js API — Docker socket bridge for container status/control
+  testbed-api:
+    image: node:20-alpine
+    container_name: 5g-testbed-api
+    restart: unless-stopped
+    working_dir: /app
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.100
+      mgmt-net:
+        ipv4_address: 172.22.0.101
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./api:/app
+      - api-node-modules:/app/node_modules
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./configs:/configs:ro
+      - ./traces:/traces                                       # serve PCAP downloads
+      - ids-data:/ids                                          # IDS alert files (read-only for API)
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      DOCKER_SOCKET: /var/run/docker.sock
+    command: sh -c "npm install --prefer-offline --no-fund --no-audit 2>&1 | tail -3 && node server.js"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    labels:
+      com.5g-testbed.nf: "api"
+      com.5g-testbed.type: "mgmt"
+
+  # ============================================================
+  # OBSERVABILITY STACK
+  # ============================================================
+
+  # Prometheus — scrapes metrics from all Open5GS NFs + cAdvisor
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: 5g-prometheus
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.80   # must reach NF :9090 metric endpoints
+      mgmt-net:
+        ipv4_address: 172.22.0.80
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    labels:
+      com.5g-testbed.nf: "prometheus"
+      com.5g-testbed.type: "obs"
+
+  # Grafana — dashboards for Core + RAN + System metrics
+  grafana:
+    image: grafana/grafana:latest
+    container_name: 5g-grafana
+    restart: unless-stopped
+    networks:
+      mgmt-net:
+        ipv4_address: 172.22.0.81
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./configs/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: "/var/lib/grafana/dashboards/5g-core.json"
+      GF_USERS_DEFAULT_THEME: "dark"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    depends_on:
+      - prometheus
+      - loki
+    labels:
+      com.5g-testbed.nf: "grafana"
+      com.5g-testbed.type: "obs"
+
+  # cAdvisor — container-level CPU/memory/network metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: 5g-cadvisor
+    restart: unless-stopped
+    privileged: true
+    networks:
+      mgmt-net:
+        ipv4_address: 172.22.0.82
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    command:
+      - '--housekeeping_interval=10s'
+      - '--docker_only=true'
+      - '--store_container_labels=true'
+      - '--disable_metrics=disk,tcp,udp,percpu,sched,process'
+    labels:
+      com.5g-testbed.nf: "cadvisor"
+      com.5g-testbed.type: "obs"
+
+  # Loki — log aggregation store
+  loki:
+    image: grafana/loki:latest
+    container_name: 5g-loki
+    restart: unless-stopped
+    networks:
+      mgmt-net:
+        ipv4_address: 172.22.0.83
+    volumes:
+      - ./configs/loki.yml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/config.yaml
+    labels:
+      com.5g-testbed.nf: "loki"
+      com.5g-testbed.type: "obs"
+
+  # Promtail — Docker log shipper → Loki
+  promtail:
+    image: grafana/promtail:latest
+    container_name: 5g-promtail
+    restart: unless-stopped
+    networks:
+      mgmt-net:
+        ipv4_address: 172.22.0.84
+    volumes:
+      - ./configs/promtail.yml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yaml
+    depends_on:
+      - loki
+    labels:
+      com.5g-testbed.nf: "promtail"
+      com.5g-testbed.type: "obs"
+
+  # ============================================================
+  # IDS ENGINES — Intrusion Detection System
+  # network_mode: host → sees all Docker bridge traffic (N2/SBI/N3/N4)
+  # Start manually:  docker compose up -d zeek-ids scapy-ids
+  #                  make ids-up
+  # ============================================================
+
+  # Zeek IDS — Control-plane monitor: SBI (HTTP/2) + N2 (NGAP)
+  # Detects: SBI auth failures, NF registration floods, N2 NGAP floods
+  zeek-ids:
+    image: zeek/zeek:latest
+    container_name: 5g-zeek-ids
+    profiles: [ids]
+    restart: on-failure:3
+    network_mode: host              # Must see Docker bridge traffic
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./configs/zeek:/etc/zeek/site:ro
+      - ids-data:/ids
+    command: >
+      sh -c "mkdir -p /ids/zeek &&
+             cd /ids/zeek &&
+             exec zeek -C -i any /etc/zeek/site/local.zeek 'LogAscii::use_json=T'"
+    labels:
+      com.5g-testbed.nf: "zeek-ids"
+      com.5g-testbed.type: "ids"
+
+  # Scapy IDS — Data-plane monitor: N3 (GTP-U) + N4 (PFCP)
+  # Detects: GTP flood, high-throughput tunnel, inner port scan, PFCP sess flood
+  scapy-ids:
+    image: python:3.11-slim
+    container_name: 5g-scapy-ids
+    profiles: [ids]
+    restart: on-failure:3
+    network_mode: host              # Must see Docker bridge traffic
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - ./configs/ids/scapy_ids.py:/app/scapy_ids.py:ro
+      - ids-data:/ids
+    command: >
+      sh -c "pip install scapy --quiet --no-cache-dir 2>&1 | tail -2 &&
+             exec python /app/scapy_ids.py"
+    labels:
+      com.5g-testbed.nf: "scapy-ids"
+      com.5g-testbed.type: "ids"

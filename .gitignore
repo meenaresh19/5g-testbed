@@ -1,0 +1,52 @@
+# ── Generated configs (created at runtime by gen-configs.sh) ──
+configs/open5gs/
+configs/oai/
+configs/ueransim/
+# Static IDS + Grafana + observability configs ARE committed — do not ignore them
+# (configs/zeek/, configs/ids/, configs/grafana/, configs/prometheus.yml, etc.)
+
+# ── PCAP / log captures ───────────────────────────────────────
+traces/*.pcap
+traces/*.txt
+# Keep the traces directory itself tracked
+!traces/.gitignore
+!traces/.gitkeep
+
+# ── IDS runtime alert files (root-level only, populated at runtime) ──────
+/ids/
+
+# ── Node.js ───────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log
+.npm
+
+# ── Docker / runtime state ────────────────────────────────────
+*.pid
+docker-compose.override.yml
+
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ── OS files ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor files ──────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Secrets / environment overrides ──────────────────────────
+.env
+.env.local
+*.key
+*.pem
+*.crt
