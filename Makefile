@@ -6,7 +6,7 @@
 COMPOSE = docker compose -f docker/docker-compose.yml --project-directory .
 PROJECT = 5g-testbed
 
-.PHONY: help up down restart logs status pull gen-config clean info ue2-up ue2-down oai-up oai-down iperf-ping ids-up ids-down ids-status ids-clear
+.PHONY: help up down restart logs status pull gen-config clean info ue2-up ue2-down oai-up oai-down iperf-ping ids-up ids-down ids-status ids-clear nef-up nef-down nef-status
 
 help:
 	@echo ""
@@ -32,6 +32,10 @@ help:
 	@echo "  ids-down      Stop IDS engines"
 	@echo "  ids-status    Show IDS engine status + alert counts"
 	@echo "  ids-clear     Clear all IDS alert files"
+	@echo "  ─────────────────────────────────────────────────"
+	@echo "  nef-up        Start NEF (Free5GC Network Exposure Function)"
+	@echo "  nef-down      Stop NEF"
+	@echo "  nef-status    Show NEF status + Northbound API URL"
 	@echo ""
 
 up:
@@ -132,3 +136,27 @@ ids-status:
 
 ids-clear:
 	@docker exec 5g-testbed-api sh -c 'truncate -s0 /ids/zeek/notice.log /ids/scapy_alerts.jsonl 2>/dev/null; echo "IDS alerts cleared"'
+
+# ── NEF — Network Exposure Function (Free5GC) ─────────────
+nef-up:
+	@bash scripts/gen-configs.sh 2>/dev/null || true
+	$(COMPOSE) --profile nef up -d free5gc-nef
+	@echo ""
+	@echo "NEF (Free5GC) starting..."
+	@echo "  SBI          : http://10.45.0.25:8000"
+	@echo "  NRF          : http://10.45.0.10:7777"
+	@echo "  Northbound   : http://localhost:5000/nef-api/nnef-eventexposure/v1/"
+	@echo "  UI           : http://localhost:3000  → NEF tab"
+	@echo ""
+
+nef-down:
+	$(COMPOSE) --profile nef stop free5gc-nef
+	@echo "NEF stopped"
+
+nef-status:
+	@echo "=== NEF (Free5GC) Status ==="
+	@docker inspect 5g-nef --format '  State   : {{.State.Status}}' 2>/dev/null || echo "  State   : not running (run: make nef-up)"
+	@docker inspect 5g-nef --format '  Started : {{.State.StartedAt}}' 2>/dev/null || true
+	@echo "  SBI     : http://10.45.0.25:8000"
+	@echo "  NRF     : http://10.45.0.10:7777"
+	@echo "  Proxy   : http://localhost:5000/nef-api/*"

@@ -16,6 +16,7 @@ Ubuntu 22.04 / 24.04 · Docker Compose · Kubernetes (K3s)
 │  ueransim-gnb │  NRF  SCP  AMF  SMF      │  Testbed UI     :3000         │
 │  ueransim-ue1 │  UPF  AUSF UDM  UDR      │  Open5GS WebUI  :9999         │
 │  ueransim-ue2 │  PCF  BSF  NSSF          │  API Server     :5000         │
+│               │  NEF (Free5GC) :8000     │  Grafana        :3001         │
 │  (optional)   │                          │  Grafana        :3001         │
 │               │  iPerf3 server           │  Prometheus     :9090         │
 │  OAI gNB+UE   │  (10.45.0.200)           │  Loki + Promtail              │
@@ -108,6 +109,33 @@ Both engines run with `network_mode: host` to see all Docker bridge traffic.
 
 ---
 
+## NEF — Network Exposure Function (Free5GC)
+
+Open5GS does not ship a NEF. This testbed integrates **Free5GC's NEF** (`free5gc/nef:v3.4.3`) as an optional add-on that registers with the Open5GS NRF and exposes the full Nnef Northbound API to Application Functions.
+
+```bash
+make nef-up      # generate config + pull image + start NEF
+make nef-down    # stop NEF
+make nef-status  # show container state + API URLs
+```
+
+| Nnef Service | 3GPP TS | Description |
+|---|---|---|
+| **nnef-eventexposure** | 29.508 | Subscribe to UE events (connectivity, location, PDU session) |
+| **nnef-pfdmanagement** | 29.551 | Register Packet Flow Descriptions for application traffic detection |
+| **nnef-trafficinfluence** | 29.522 | Request UE traffic routing to specific DNAI / server endpoints |
+
+**Access:**
+| Endpoint | URL |
+|---|---|
+| NEF SBI (internal) | `http://10.45.0.25:8000` |
+| Northbound API proxy | `http://localhost:5000/nef-api/*` |
+| Management UI | `http://localhost:3000` → **NEF tab** |
+
+**UI Tabs:** Event Exposure · PFD Management · Traffic Influence · API Explorer (interactive Northbound API tester with request templates)
+
+---
+
 ## RAN Options
 
 ```bash
@@ -172,6 +200,7 @@ PCAP files are written to `./traces/` and downloadable via the UI or `GET /trace
 | SMF | core | 10.45.0.13 |
 | UPF | core | 10.45.0.14 |
 | AUSF/UDM/UDR/PCF/BSF/NSSF | core | 10.45.0.15–20 |
+| NEF (Free5GC) | core | 10.45.0.25 |
 | UERANSIM gNB | ran + core | 192.168.70.20 · 10.45.0.50 |
 | UERANSIM UE1 | ran | 192.168.70.30 |
 | UERANSIM UE2 | ran | 192.168.70.31 |
@@ -226,6 +255,10 @@ make ids-up          Start Zeek + Scapy IDS engines
 make ids-down        Stop IDS engines
 make ids-status      Show IDS engine state + alert counts
 make ids-clear       Clear alert files
+
+make nef-up          Start Free5GC NEF (Network Exposure Function)
+make nef-down        Stop NEF
+make nef-status      Show NEF state + Northbound API URL
 ```
 
 ---

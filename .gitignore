@@ -2,6 +2,7 @@
 configs/open5gs/
 configs/oai/
 configs/ueransim/
+configs/free5gc/
 # Static IDS + Grafana + observability configs ARE committed — do not ignore them
 # (configs/zeek/, configs/ids/, configs/grafana/, configs/prometheus.yml, etc.)
 

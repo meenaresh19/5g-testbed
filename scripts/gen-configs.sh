@@ -543,9 +543,43 @@ uicc0 = {
 };
 EOF
 
+# ── Free5GC NEF ───────────────────────────────────────────
+# NEF (Network Exposure Function) — opt-in via: make nef-up
+NEF_IP="${NEF_IP:-10.45.0.25}"
+mkdir -p "$CONF_DIR/free5gc"
+
+cat > "$CONF_DIR/free5gc/nef.yaml" <<EOF
+info:
+  version: 1.0.7
+  description: NEF local configuration
+
+configuration:
+  nefName: NEF
+
+  sbi:
+    scheme: http
+    registerIPv4: ${NEF_IP}
+    bindingIPv4: 0.0.0.0
+    port: 8000
+
+  serviceNameList:
+    - nnef-pfdmanagement
+    - nnef-eventexposure
+    - nnef-trafficinfluence
+
+  nrfUri: http://${NRF_IP}:7777
+  mongoDBUrl: mongodb://${MONGO_IP}:27017
+  mongoDBName: free5gc
+
+  # Disable TLS for testbed/research use (plain HTTP between NFs)
+  locationReportingEventSubscriptionList: []
+  onlySupportHTTPBasedMSG: true
+EOF
+
 echo "✓ Configs generated in $CONF_DIR"
 echo "  Open5GS NFs  : $CONF_DIR/open5gs/"
 echo "  UERANSIM RAN : $CONF_DIR/ueransim/  (gnb.yaml, ue.yaml, ue2.yaml)"
 echo "  OAI RAN      : $CONF_DIR/oai/  (--profile oai)"
 echo "  IDS (Zeek)   : $CONF_DIR/zeek/local.zeek"
 echo "  IDS (Scapy)  : $CONF_DIR/ids/scapy_ids.py"
+echo "  NEF (Free5GC): $CONF_DIR/free5gc/nef.yaml  (make nef-up)"

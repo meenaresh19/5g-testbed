@@ -696,3 +696,35 @@ services:
     labels:
       com.5g-testbed.nf: "scapy-ids"
       com.5g-testbed.type: "ids"
+
+  # ============================================================
+  # NEF — Network Exposure Function (Free5GC)
+  # Provides Nnef Northbound API for Application Functions:
+  #   nnef-eventexposure  : UE event subscriptions
+  #   nnef-pfdmanagement  : Packet Flow Description rules
+  #   nnef-trafficinfluence: Traffic routing policies
+  # Start: make nef-up  |  Stop: make nef-down
+  # SBI  : http://10.45.0.25:8000
+  # ============================================================
+  free5gc-nef:
+    image: free5gc/nef:v3.4.3
+    container_name: 5g-nef
+    command: ["./nef", "-c", "/etc/free5gc/nef.yaml"]
+    volumes:
+      - ./configs/free5gc/nef.yaml:/etc/free5gc/nef.yaml:ro
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.25
+    depends_on:
+      - open5gs-nrf
+      - open5gs-mongodb
+    profiles: [nef]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/nnef-pfdmanagement/v1/ 2>/dev/null || true"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.5g-testbed.nf: "nef"
+      com.5g-testbed.type: "core"

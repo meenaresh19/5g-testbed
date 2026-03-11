@@ -46,6 +46,8 @@ const NAME_TO_NF = {
   // IDS engines
   '5g-zeek-ids':  'zeek-ids',
   '5g-scapy-ids': 'scapy-ids',
+  // NEF (Free5GC)
+  '5g-nef':       'nef',
   // Management
   '5g-testbed-ui':   'ui',
   '5g-testbed-api':  'api',
@@ -407,7 +409,7 @@ app.delete('/trace/files/:filename', (req, res) => {
 app.get('/trace/logs/:sessionId', async (req, res) => {
   const ts    = new Date().toISOString();
   const label = req.params.sessionId;
-  const nfs   = ['nrf','scp','amf','smf','upf','ausf','udm','udr','pcf','bsf','nssf','gnb','ue1','ue2'];
+  const nfs   = ['nrf','scp','amf','smf','upf','ausf','udm','udr','pcf','bsf','nssf','nef','gnb','ue1','ue2'];
 
   let bundle = `5G Testbed — Log Bundle\n`;
   bundle    += `Session : ${label}\n`;
@@ -706,6 +708,71 @@ app.delete('/ids/alerts', (req, res) => {
     res.json({ cleared: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// NEF — Network Exposure Function (Free5GC) Northbound API
+// ═══════════════════════════════════════════════════════════
+const NEF_BASE = process.env.NEF_URL || 'http://10.45.0.25:8000';
+
+// GET /nef/status — NEF container state + NRF registration probe
+app.get('/nef/status', async (req, res) => {
+  try {
+    const containers = await docker.listContainers({ all: true });
+    const nef        = containers.find(c => c.Names.some(n => n.includes('5g-nef')));
+    const running    = nef?.State === 'running';
+
+    // Probe NEF SBI to check if it's actually responding (registered with NRF)
+    let reachable = false;
+    if (running) {
+      try {
+        const r = await fetch(`${NEF_BASE}/nnef-pfdmanagement/v1/`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        reachable = r.status < 500;
+      } catch { /* not yet up */ }
+    }
+
+    res.json({
+      running,
+      reachable,
+      container : nef ? containerState(nef) : 'stopped',
+      image     : nef?.Image || 'free5gc/nef:v3.4.3',
+      ip        : '10.45.0.25',
+      port      : 8000,
+      nrfUri    : 'http://10.45.0.10:7777',
+      services  : ['nnef-pfdmanagement', 'nnef-eventexposure', 'nnef-trafficinfluence'],
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ALL /nef-api/* — Northbound API proxy → Free5GC NEF SBI
+// Allows the UI (and external AFs) to call NEF APIs through the management API.
+app.all('/nef-api/*', async (req, res) => {
+  const nefPath = req.url.replace('/nef-api', '') || '/';
+  const opts    = {
+    method : req.method,
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    signal : AbortSignal.timeout(10000),
+  };
+  if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && Object.keys(req.body).length) {
+    opts.body = JSON.stringify(req.body);
+  }
+  try {
+    const upstream = await fetch(`${NEF_BASE}${nefPath}`, opts);
+    const ct       = upstream.headers.get('content-type') || '';
+    let body;
+    try {
+      body = ct.includes('json') ? await upstream.json() : await upstream.text();
+    } catch {
+      body = {};
+    }
+    res.status(upstream.status).json(body);
+  } catch (err) {
+    res.status(503).json({ error: 'NEF unreachable', detail: err.message, nefUrl: `${NEF_BASE}${nefPath}` });
   }
 });
 

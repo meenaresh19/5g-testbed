@@ -336,6 +336,7 @@ function Icon({ name, size=16 }) {
     chart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>,
     speed: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2C6.48 2 2 6.48 2 12"/><path d="M12 2c5.52 0 10 4.48 10 10"/><path d="M12 12l-4-4"/><circle cx="12" cy="12" r="2"/><path d="M2 12h2M20 12h2M12 2v2M12 20v2"/></svg>,
     shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>,
+    nef:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12,2 22,7 22,17 12,22 2,17 2,7"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="7" x2="22" y2="7"/><line x1="2" y1="17" x2="22" y2="17"/></svg>,
   };
   return icons[name] || null;
 }
@@ -1956,6 +1957,498 @@ function SecurityIDS() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════
+// NEF PAGE — Free5GC Network Exposure Function
+// Northbound API: event exposure, PFD mgmt, traffic influence
+// ═══════════════════════════════════════════════════════════
+function NEFPage() {
+  const [status,    setStatus]    = useState({ running: false, reachable: false, container:'stopped' });
+  const [tab,       setTab]       = useState('events');
+  const [busy,      setBusy]      = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
+
+  // Event Exposure
+  const [evSubs,    setEvSubs]    = useState([]);
+  const [evLoading, setEvLoading] = useState(false);
+  const [newEvForm, setNewEvForm] = useState({ supi:'001010000000001', event:'CONNECTIVITY_STATE', notifUri:'http://10.45.0.100:5000/nef/callback' });
+
+  // PFD Management
+  const [pfdApps,   setPfdApps]   = useState([]);
+  const [pfdLoading,setPfdLoading]= useState(false);
+  const [newPfdForm,setNewPfdForm]= useState({ appId:'app-001', flowDesc:'permit out ip from any to assigned' });
+
+  // Traffic Influence
+  const [tiSubs,    setTiSubs]    = useState([]);
+  const [tiLoading, setTiLoading] = useState(false);
+  const [newTiForm, setNewTiForm] = useState({ supi:'001010000000001', dnn:'internet', sst:'1', dnai:'dnai-1', routeToLoc:'10.45.0.200' });
+
+  // API Explorer
+  const [apiPath,   setApiPath]   = useState('/nnef-eventexposure/v1/subscriptions');
+  const [apiMethod, setApiMethod] = useState('GET');
+  const [apiBody,   setApiBody]   = useState('');
+  const [apiResp,   setApiResp]   = useState(null);
+  const [apiLoading,setApiLoading]= useState(false);
+
+  const NEF_TEMPLATES = [
+    { label:'List Event Subscriptions',   method:'GET',    path:'/nnef-eventexposure/v1/subscriptions', body:'' },
+    { label:'List PFD Applications',      method:'GET',    path:'/nnef-pfdmanagement/v1/applications',  body:'' },
+    { label:'List Traffic Influence Subs',method:'GET',    path:'/nnef-trafficinfluence/v1/subscriptions', body:'' },
+    { label:'Create Event Subscription',  method:'POST',   path:'/nnef-eventexposure/v1/subscriptions',
+      body: JSON.stringify({ supi:'imsi-001010000000001', anyUeInd:false, eventsSubs:[{ event:'CONNECTIVITY_STATE' }],
+        eventsNotification:{ notifId:'notif-001', notifEvents:[] }, notificationUri:'http://10.45.0.100:5000/nef/callback',
+        supportedFeatures:'0' }, null, 2) },
+    { label:'Create PFD Rule',            method:'PUT',    path:'/nnef-pfdmanagement/v1/applications/app-001',
+      body: JSON.stringify({ externalAppId:'app-001', pfds:[{ pfdId:'pfd-1', flowDescriptions:['permit out ip from any to assigned'] }] }, null, 2) },
+    { label:'Create Traffic Influence',   method:'POST',   path:'/nnef-trafficinfluence/v1/subscriptions',
+      body: JSON.stringify({ afServiceId:'af-svc-01', supi:'imsi-001010000000001', dnn:'internet',
+        snssai:{ sst:1 }, notificationDestination:'http://10.45.0.100:5000/nef/callback',
+        trafficFilters:[{ flowId:1, flowDescriptions:['permit out ip from any to assigned'] }] }, null, 2) },
+  ];
+
+  const SEV_COLOR = { running:'#00c896', stopped:'#ef4444', starting:'#f59e0b' };
+
+  const loadStatus = async () => {
+    const d = await apiFetch('/nef/status');
+    if (d) setStatus(d);
+  };
+
+  const loadTab = async (t) => {
+    if (!status.reachable) return;
+    if (t === 'events') {
+      setEvLoading(true);
+      const d = await apiFetch('/nef-api/nnef-eventexposure/v1/subscriptions');
+      setEvSubs(Array.isArray(d) ? d : (d && typeof d === 'object' ? Object.values(d) : []));
+      setEvLoading(false);
+    } else if (t === 'pfd') {
+      setPfdLoading(true);
+      const d = await apiFetch('/nef-api/nnef-pfdmanagement/v1/applications');
+      setPfdApps(Array.isArray(d) ? d : (d && typeof d === 'object' ? Object.values(d) : []));
+      setPfdLoading(false);
+    } else if (t === 'traffic') {
+      setTiLoading(true);
+      const d = await apiFetch('/nef-api/nnef-trafficinfluence/v1/subscriptions');
+      setTiSubs(Array.isArray(d) ? d : (d && typeof d === 'object' ? Object.values(d) : []));
+      setTiLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadStatus();
+    const t = setInterval(loadStatus, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => { loadTab(tab); }, [tab, status.reachable]);
+
+  const startNEF = async () => {
+    setBusy(true); setActionMsg('Starting NEF...');
+    const r = await apiFetch('/nf/nef/start', { method:'POST' });
+    setActionMsg(r ? 'NEF started — waiting for NRF registration...' : 'Failed to start NEF');
+    setTimeout(() => { loadStatus(); setActionMsg(''); setBusy(false); }, 3000);
+  };
+
+  const stopNEF = async () => {
+    setBusy(true); setActionMsg('Stopping NEF...');
+    const r = await apiFetch('/nf/nef/stop', { method:'POST' });
+    setActionMsg(r ? 'NEF stopped.' : 'Failed to stop NEF');
+    setTimeout(() => { loadStatus(); setActionMsg(''); setBusy(false); }, 2000);
+  };
+
+  const createEvSub = async () => {
+    const body = {
+      supi: `imsi-${newEvForm.supi}`, anyUeInd: false,
+      eventsSubs: [{ event: newEvForm.event }],
+      eventsNotification: { notifId: `notif-${Date.now()}`, notifEvents: [] },
+      notificationUri: newEvForm.notifUri, supportedFeatures: '0',
+    };
+    setEvLoading(true);
+    await apiFetch('/nef-api/nnef-eventexposure/v1/subscriptions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    loadTab('events');
+  };
+
+  const deleteEvSub = async (id) => {
+    await apiFetch(`/nef-api/nnef-eventexposure/v1/subscriptions/${id}`, { method:'DELETE' });
+    loadTab('events');
+  };
+
+  const createPfd = async () => {
+    const body = { externalAppId: newPfdForm.appId, pfds: [{ pfdId:`pfd-${Date.now()}`, flowDescriptions:[newPfdForm.flowDesc] }] };
+    setPfdLoading(true);
+    await apiFetch(`/nef-api/nnef-pfdmanagement/v1/applications/${newPfdForm.appId}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    loadTab('pfd');
+  };
+
+  const deletePfd = async (appId) => {
+    await apiFetch(`/nef-api/nnef-pfdmanagement/v1/applications/${appId}`, { method:'DELETE' });
+    loadTab('pfd');
+  };
+
+  const createTiSub = async () => {
+    const body = {
+      afServiceId: `af-${Date.now()}`, supi: `imsi-${newTiForm.supi}`,
+      dnn: newTiForm.dnn, snssai: { sst: parseInt(newTiForm.sst) },
+      notificationDestination: `http://10.45.0.100:5000/nef/callback`,
+      trafficFilters: [{ flowId:1, flowDescriptions:['permit out ip from any to assigned'] }],
+      trafficRoutes: [{ dnai: newTiForm.dnai, routeToLocation: { transTunelServerEndPointList: [newTiForm.routeToLoc] } }],
+    };
+    setTiLoading(true);
+    await apiFetch('/nef-api/nnef-trafficinfluence/v1/subscriptions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    loadTab('traffic');
+  };
+
+  const deleteTiSub = async (id) => {
+    await apiFetch(`/nef-api/nnef-trafficinfluence/v1/subscriptions/${id}`, { method:'DELETE' });
+    loadTab('traffic');
+  };
+
+  const sendApiExplorer = async () => {
+    setApiLoading(true); setApiResp(null);
+    const opts = { method: apiMethod, headers:{'Content-Type':'application/json','Accept':'application/json'} };
+    if (['POST','PUT','PATCH'].includes(apiMethod) && apiBody.trim()) opts.body = apiBody;
+    const r = await apiFetch(`/nef-api${apiPath}`, opts);
+    setApiResp(r);
+    setApiLoading(false);
+  };
+
+  const C  = { bg:'#0d1117', card:'#161b22', border:'#30363d', text:'#e6edf3', muted:'#8b949e', accent:'#00c896' };
+  const tabStyle = (t) => ({ padding:'6px 16px', borderRadius:4, cursor:'pointer', fontSize:12, fontWeight:600,
+    background: tab===t ? C.accent : 'transparent', color: tab===t ? '#000' : C.muted, border:'none',
+    transition:'all .15s', marginRight:4 });
+  const inputSt = { background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:4, color:C.text, padding:'6px 10px', fontSize:12, width:'100%', boxSizing:'border-box' };
+  const btnPrimary = (disabled) => ({ padding:'6px 16px', background: disabled ? '#333' : C.accent, color: disabled ? C.muted : '#000',
+    border:'none', borderRadius:4, cursor: disabled ? 'not-allowed' : 'pointer', fontSize:12, fontWeight:700 });
+  const btnDanger = { padding:'4px 10px', background:'transparent', color:'#ef4444', border:'1px solid #ef4444', borderRadius:3, cursor:'pointer', fontSize:11 };
+
+  const statusColor = status.running ? (status.reachable ? C.accent : '#f59e0b') : '#ef4444';
+  const statusLabel = status.running ? (status.reachable ? 'Running & Registered' : 'Starting…') : 'Stopped';
+
+  return (
+    <div style={{color:C.text, fontSize:13}}>
+
+      {/* ── Status row ── */}
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:16}}>
+        {/* Container state */}
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>NEF Container</div>
+          <div style={{display:'flex', alignItems:'center', gap:8}}>
+            <span style={{width:10, height:10, borderRadius:'50%', background:statusColor, flexShrink:0, boxShadow:`0 0 6px ${statusColor}`}}/>
+            <span style={{fontWeight:700, fontSize:14}}>{statusLabel}</span>
+          </div>
+          <div style={{marginTop:8, color:C.muted, fontSize:11}}>Image: {status.image || 'free5gc/nef:v3.4.3'}</div>
+          <div style={{color:C.muted, fontSize:11}}>IP: {status.ip}:{status.port}</div>
+        </div>
+        {/* NRF */}
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>NRF Registration</div>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:6}}>
+            <span style={{width:10, height:10, borderRadius:'50%', background: status.reachable ? C.accent : '#ef4444', flexShrink:0}}/>
+            <span style={{fontWeight:700}}>{status.reachable ? 'Registered' : 'Not Registered'}</span>
+          </div>
+          <div style={{color:C.muted, fontSize:11}}>NRF: {status.nrfUri || 'http://10.45.0.10:7777'}</div>
+          <div style={{color:C.muted, fontSize:11}}>Protocol: HTTP/1.1 (SBI)</div>
+        </div>
+        {/* Services */}
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>Nnef Services</div>
+          {(status.services||['nnef-pfdmanagement','nnef-eventexposure','nnef-trafficinfluence']).map(s=>(
+            <div key={s} style={{display:'flex', alignItems:'center', gap:6, marginBottom:4}}>
+              <span style={{width:6, height:6, borderRadius:'50%', background: status.reachable ? C.accent : C.border}}/>
+              <span style={{fontSize:11, color: status.reachable ? C.text : C.muted}}>{s}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Controls ── */}
+      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:16}}>
+        <button onClick={startNEF} disabled={busy || status.running} style={btnPrimary(busy || status.running)}>
+          ▶ Start NEF
+        </button>
+        <button onClick={stopNEF} disabled={busy || !status.running}
+          style={{...btnPrimary(busy || !status.running), background: (busy||!status.running)?'#333':'#ef4444', color:(busy||!status.running)?C.muted:'#fff'}}>
+          ■ Stop NEF
+        </button>
+        {actionMsg && <span style={{color: C.accent, fontSize:12}}>{actionMsg}</span>}
+        {!status.running && (
+          <span style={{color:'#f59e0b', fontSize:11, marginLeft:'auto'}}>
+            ⚠ Run <code style={{background:'#1c2128', padding:'1px 5px', borderRadius:3}}>make nef-up</code> or click Start NEF
+          </span>
+        )}
+      </div>
+
+      {/* ── Tabs ── */}
+      <div style={{display:'flex', marginBottom:14, borderBottom:`1px solid ${C.border}`, paddingBottom:8}}>
+        {[['events','Event Exposure'],['pfd','PFD Management'],['traffic','Traffic Influence'],['explorer','API Explorer']].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={tabStyle(id)}>{label}</button>
+        ))}
+      </div>
+
+      {/* ── TAB: Event Exposure ── */}
+      {tab === 'events' && (
+        <div>
+          {!status.reachable && (
+            <div style={{background:'#1c1207', border:'1px solid #f59e0b44', borderRadius:6, padding:12, color:'#f59e0b', fontSize:12, marginBottom:12}}>
+              NEF is not reachable. Start NEF first to manage event subscriptions.
+            </div>
+          )}
+          {/* Create form */}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14, marginBottom:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>New Event Subscription</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr auto', gap:10, alignItems:'end'}}>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>SUPI (IMSI)</div>
+                <input style={inputSt} value={newEvForm.supi} onChange={e=>setNewEvForm(p=>({...p,supi:e.target.value}))}/>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Event Type</div>
+                <select style={inputSt} value={newEvForm.event} onChange={e=>setNewEvForm(p=>({...p,event:e.target.value}))}>
+                  <option value="CONNECTIVITY_STATE">CONNECTIVITY_STATE</option>
+                  <option value="REACHABILITY_FOR_DATA">REACHABILITY_FOR_DATA</option>
+                  <option value="LOCATION_REPORTING">LOCATION_REPORTING</option>
+                  <option value="PDU_SESSION_STATUS">PDU_SESSION_STATUS</option>
+                  <option value="UE_LOSS_OF_CONNECTIVITY">UE_LOSS_OF_CONNECTIVITY</option>
+                  <option value="UE_REACHABILITY_FOR_SMS">UE_REACHABILITY_FOR_SMS</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Notification URI</div>
+                <input style={inputSt} value={newEvForm.notifUri} onChange={e=>setNewEvForm(p=>({...p,notifUri:e.target.value}))}/>
+              </div>
+              <button onClick={createEvSub} disabled={!status.reachable || evLoading} style={btnPrimary(!status.reachable)}>
+                + Subscribe
+              </button>
+            </div>
+          </div>
+          {/* Subscription list */}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6}}>
+            <div style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase'}}>
+              Active Subscriptions {evLoading && '(loading…)'}
+            </div>
+            {evSubs.length === 0 ? (
+              <div style={{padding:24, textAlign:'center', color:C.muted, fontSize:12}}>
+                {status.reachable ? 'No subscriptions yet. Create one above.' : 'Start NEF to view subscriptions.'}
+              </div>
+            ) : evSubs.map((sub,i) => (
+              <div key={sub.subscriptionId||i} style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:12}}>
+                <span style={{background:'#00c89620', color:C.accent, padding:'2px 8px', borderRadius:3, fontSize:10, fontWeight:700, flexShrink:0}}>
+                  {sub.eventsSubs?.[0]?.event || 'EVENT'}
+                </span>
+                <span style={{color:C.muted, fontSize:11}}>SUPI: {sub.supi||sub.anyUeInd?'Any UE':'—'}</span>
+                <span style={{color:C.muted, fontSize:11}}>ID: {sub.subscriptionId||'—'}</span>
+                <span style={{color:C.muted, fontSize:11, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  → {sub.notificationUri||'—'}
+                </span>
+                <button onClick={()=>deleteEvSub(sub.subscriptionId)} style={btnDanger}>Delete</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: PFD Management ── */}
+      {tab === 'pfd' && (
+        <div>
+          {!status.reachable && (
+            <div style={{background:'#1c1207', border:'1px solid #f59e0b44', borderRadius:6, padding:12, color:'#f59e0b', fontSize:12, marginBottom:12}}>
+              NEF is not reachable. Start NEF first to manage PFD rules.
+            </div>
+          )}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14, marginBottom:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>New PFD Rule</div>
+            <div style={{display:'grid', gridTemplateColumns:'160px 1fr auto', gap:10, alignItems:'end'}}>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Application ID</div>
+                <input style={inputSt} value={newPfdForm.appId} onChange={e=>setNewPfdForm(p=>({...p,appId:e.target.value}))}/>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Flow Description</div>
+                <input style={inputSt} value={newPfdForm.flowDesc} onChange={e=>setNewPfdForm(p=>({...p,flowDesc:e.target.value}))}/>
+              </div>
+              <button onClick={createPfd} disabled={!status.reachable || pfdLoading} style={btnPrimary(!status.reachable)}>
+                + Add Rule
+              </button>
+            </div>
+          </div>
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6}}>
+            <div style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase'}}>
+              PFD Applications {pfdLoading && '(loading…)'}
+            </div>
+            {pfdApps.length === 0 ? (
+              <div style={{padding:24, textAlign:'center', color:C.muted, fontSize:12}}>
+                {status.reachable ? 'No PFD rules yet.' : 'Start NEF to view PFD applications.'}
+              </div>
+            ) : pfdApps.map((app,i) => (
+              <div key={app.externalAppId||i} style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:12}}>
+                <span style={{background:'#7c3aed20', color:'#a78bfa', padding:'2px 8px', borderRadius:3, fontSize:10, fontWeight:700}}>APP</span>
+                <span style={{fontWeight:600}}>{app.externalAppId}</span>
+                <span style={{color:C.muted, fontSize:11, flex:1}}>
+                  {app.pfds?.map(p => p.flowDescriptions?.join(', ')).join(' | ')}
+                </span>
+                <button onClick={()=>deletePfd(app.externalAppId)} style={btnDanger}>Delete</button>
+              </div>
+            ))}
+          </div>
+          {/* Info panel */}
+          <div style={{marginTop:14, background:'#0d1c18', border:`1px solid ${C.accent}22`, borderRadius:6, padding:12}}>
+            <div style={{fontSize:11, color:C.accent, fontWeight:700, marginBottom:6}}>About PFD Management (TS 29.551)</div>
+            <div style={{fontSize:11, color:C.muted, lineHeight:1.7}}>
+              Packet Flow Descriptions (PFDs) allow Application Functions to register traffic signatures for specific applications.
+              The NEF stores these rules and exposes them to the SMF/UPF for traffic detection and policy enforcement.
+              Flow descriptions use IETF-style access control rules (e.g., <code style={{background:'#1c2128', padding:'1px 4px', borderRadius:2}}>permit out ip from 8.8.8.8 to assigned</code>).
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: Traffic Influence ── */}
+      {tab === 'traffic' && (
+        <div>
+          {!status.reachable && (
+            <div style={{background:'#1c1207', border:'1px solid #f59e0b44', borderRadius:6, padding:12, color:'#f59e0b', fontSize:12, marginBottom:12}}>
+              NEF is not reachable. Start NEF first to manage traffic influence policies.
+            </div>
+          )}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14, marginBottom:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>New Traffic Influence Policy</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 80px 1fr 1fr auto', gap:10, alignItems:'end'}}>
+              {[
+                ['SUPI (IMSI)', 'supi'],
+                ['DNN', 'dnn'],
+                ['SST', 'sst'],
+                ['DNAI', 'dnai'],
+                ['Route Destination', 'routeToLoc'],
+              ].map(([label, key]) => (
+                <div key={key}>
+                  <div style={{fontSize:11, color:C.muted, marginBottom:4}}>{label}</div>
+                  <input style={inputSt} value={newTiForm[key]} onChange={e=>setNewTiForm(p=>({...p,[key]:e.target.value}))}/>
+                </div>
+              ))}
+              <button onClick={createTiSub} disabled={!status.reachable || tiLoading} style={btnPrimary(!status.reachable)}>
+                + Create
+              </button>
+            </div>
+          </div>
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6}}>
+            <div style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase'}}>
+              Traffic Influence Subscriptions {tiLoading && '(loading…)'}
+            </div>
+            {tiSubs.length === 0 ? (
+              <div style={{padding:24, textAlign:'center', color:C.muted, fontSize:12}}>
+                {status.reachable ? 'No traffic influence subscriptions yet.' : 'Start NEF to view subscriptions.'}
+              </div>
+            ) : tiSubs.map((sub,i) => (
+              <div key={sub.afTransId||i} style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:12}}>
+                <span style={{background:'#1d4ed820', color:'#60a5fa', padding:'2px 8px', borderRadius:3, fontSize:10, fontWeight:700}}>ROUTE</span>
+                <span style={{color:C.muted, fontSize:11}}>SUPI: {sub.supi||'—'}</span>
+                <span style={{color:C.muted, fontSize:11}}>DNN: {sub.dnn||'—'}</span>
+                <span style={{color:C.muted, fontSize:11}}>SST: {sub.snssai?.sst||'—'}</span>
+                <span style={{color:C.muted, fontSize:11, flex:1}}>ID: {sub.afTransId||sub.subscriptionId||'—'}</span>
+                <button onClick={()=>deleteTiSub(sub.afTransId||sub.subscriptionId)} style={btnDanger}>Delete</button>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:14, background:'#0d1419', border:'1px solid #60a5fa22', borderRadius:6, padding:12}}>
+            <div style={{fontSize:11, color:'#60a5fa', fontWeight:700, marginBottom:6}}>About Traffic Influence (TS 29.522)</div>
+            <div style={{fontSize:11, color:C.muted, lineHeight:1.7}}>
+              The Nnef_TrafficInfluence API lets Application Functions request that specific UE traffic be routed to a particular
+              Data Network Access Identifier (DNAI) or server endpoint. NEF translates these requests into PCF policies
+              that influence the SMF/UPF traffic routing decisions.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: API Explorer ── */}
+      {tab === 'explorer' && (
+        <div>
+          {/* Templates */}
+          <div style={{marginBottom:12, display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+            <span style={{fontSize:11, color:C.muted, flexShrink:0}}>Templates:</span>
+            {NEF_TEMPLATES.map((t,i)=>(
+              <button key={i} onClick={()=>{ setApiMethod(t.method); setApiPath(t.path); setApiBody(t.body); }}
+                style={{padding:'4px 10px', background:C.card, color:C.muted, border:`1px solid ${C.border}`,
+                  borderRadius:3, cursor:'pointer', fontSize:11, whiteSpace:'nowrap'}}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {/* Request bar */}
+          <div style={{display:'flex', gap:8, marginBottom:10, alignItems:'center'}}>
+            <select value={apiMethod} onChange={e=>setApiMethod(e.target.value)}
+              style={{...inputSt, width:90, fontWeight:700,
+                color: apiMethod==='GET'?'#60a5fa': apiMethod==='POST'?C.accent: apiMethod==='PUT'?'#f59e0b':'#ef4444'}}>
+              {['GET','POST','PUT','PATCH','DELETE'].map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+            <input style={{...inputSt, flex:1}} value={apiPath} onChange={e=>setApiPath(e.target.value)}
+              placeholder="/nnef-eventexposure/v1/subscriptions"/>
+            <button onClick={sendApiExplorer} disabled={apiLoading} style={btnPrimary(apiLoading)}>
+              {apiLoading ? 'Sending…' : '⚡ Send'}
+            </button>
+          </div>
+          {/* Body */}
+          {['POST','PUT','PATCH'].includes(apiMethod) && (
+            <div style={{marginBottom:10}}>
+              <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Request Body (JSON)</div>
+              <textarea value={apiBody} onChange={e=>setApiBody(e.target.value)} rows={8}
+                style={{...inputSt, fontFamily:'monospace', fontSize:11, lineHeight:1.5, resize:'vertical'}}
+                placeholder='{ "key": "value" }'/>
+            </div>
+          )}
+          {/* Response */}
+          {apiResp !== null && (
+            <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6}}>
+              <div style={{padding:'8px 14px', borderBottom:`1px solid ${C.border}`, fontSize:11, color:C.muted, fontWeight:700}}>Response</div>
+              <pre style={{margin:0, padding:14, fontSize:11, color: C.accent, lineHeight:1.5, overflow:'auto', maxHeight:360, whiteSpace:'pre-wrap', wordBreak:'break-all'}}>
+                {typeof apiResp === 'string' ? apiResp : JSON.stringify(apiResp, null, 2)}
+              </pre>
+            </div>
+          )}
+          {/* Endpoint reference */}
+          <div style={{marginTop:14, background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>Nnef Northbound API Reference</div>
+            {[
+              ['Event Exposure (TS 29.508)',   [
+                ['GET',    '/nnef-eventexposure/v1/subscriptions',      'List subscriptions'],
+                ['POST',   '/nnef-eventexposure/v1/subscriptions',      'Create subscription'],
+                ['DELETE', '/nnef-eventexposure/v1/subscriptions/{id}', 'Delete subscription'],
+              ]],
+              ['PFD Management (TS 29.551)',    [
+                ['GET',    '/nnef-pfdmanagement/v1/applications',          'List applications'],
+                ['PUT',    '/nnef-pfdmanagement/v1/applications/{appId}',  'Create/update PFD'],
+                ['DELETE', '/nnef-pfdmanagement/v1/applications/{appId}',  'Delete application'],
+              ]],
+              ['Traffic Influence (TS 29.522)', [
+                ['GET',    '/nnef-trafficinfluence/v1/subscriptions',      'List subscriptions'],
+                ['POST',   '/nnef-trafficinfluence/v1/subscriptions',      'Create subscription'],
+                ['PUT',    '/nnef-trafficinfluence/v1/subscriptions/{id}', 'Update subscription'],
+                ['DELETE', '/nnef-trafficinfluence/v1/subscriptions/{id}', 'Delete subscription'],
+              ]],
+            ].map(([section, routes]) => (
+              <div key={section} style={{marginBottom:14}}>
+                <div style={{fontSize:11, color:C.accent, fontWeight:700, marginBottom:6}}>{section}</div>
+                {routes.map(([method, path, desc]) => (
+                  <div key={path+method} onClick={()=>{ setApiMethod(method); setApiPath(path.replace(/{[^}]+}/g,'1')); setApiBody(''); }}
+                    style={{display:'flex', gap:10, alignItems:'center', padding:'4px 0', cursor:'pointer',
+                      borderBottom:`1px solid ${C.border}22`}}>
+                    <span style={{width:52, fontSize:10, fontWeight:700, textAlign:'center', padding:'2px 0', borderRadius:2,
+                      background: method==='GET'?'#1d3a6e': method==='POST'?'#1a3d2b': method==='DELETE'?'#3d1a1a':'#3d2d0a',
+                      color: method==='GET'?'#60a5fa': method==='POST'?C.accent: method==='DELETE'?'#f87171':'#f59e0b',
+                      flexShrink:0}}>
+                      {method}
+                    </span>
+                    <code style={{fontSize:11, color:C.muted, flex:1}}>{path}</code>
+                    <span style={{fontSize:11, color:'#555'}}>{desc}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('dashboard');
@@ -2002,6 +2495,7 @@ function App() {
     {id:'logs',       label:'Logs',        icon:'logs',      group:'ops'},
     {id:'grafana',    label:'Dashboards',  icon:'chart',     group:'obs', external: `http://${location.hostname}:3001`},
     {id:'ids',        label:'IDS Monitor', icon:'shield',    group:'security'},
+    {id:'nef',        label:'NEF',         icon:'nef',       group:'security'},
   ];
 
   const groups = {overview:'Overview', network:'Network', data:'Data Plane', ops:'Operations', obs:'Observability', security:'Security'};
@@ -2017,6 +2511,7 @@ function App() {
     logs:       ['SYSTEM LOGS',    'Aggregated logs from all NFs'],
     grafana:    ['GRAFANA',        'Opens Grafana dashboards in a new tab'],
     ids:        ['IDS MONITOR',    'Zeek + Scapy intrusion detection — SBI/N2 control plane + N3/N4 data plane'],
+    nef:        ['NEF — NETWORK EXPOSURE FUNCTION', 'Free5GC Northbound API — event exposure · PFD management · traffic influence'],
   };
 
   return (
@@ -2083,6 +2578,7 @@ function App() {
             {page === 'throughput' && <ThroughputTest/>}
             {page === 'logs'       && <LogsPage/>}
             {page === 'ids'        && <SecurityIDS/>}
+            {page === 'nef'        && <NEFPage/>}
           </div>
         </div>
       </div>
