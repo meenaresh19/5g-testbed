@@ -811,6 +811,204 @@ app.all('/camara-api/*', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════
+// UE MANAGER — simulated UE config + Open5GS subscriber reg
+// ═══════════════════════════════════════════════════════════
+
+const UE_STORE_PATH = process.env.UE_STORE || '/data/ues.json';
+
+function loadUeStore() {
+  try {
+    if (fs.existsSync(UE_STORE_PATH)) return JSON.parse(fs.readFileSync(UE_STORE_PATH, 'utf8'));
+  } catch (e) { console.error('[UE] store read error:', e.message); }
+  return [];
+}
+
+function saveUeStore(ues) {
+  try {
+    const dir = path.dirname(UE_STORE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(UE_STORE_PATH, JSON.stringify(ues, null, 2));
+  } catch (e) { console.error('[UE] store write error:', e.message); }
+}
+
+function ueDefaults(imsi) {
+  return {
+    imsi,
+    key:    'fec86ba6eb707ed08905757b1bb44b8f',
+    opc:    'C42449363BBAD02B66D16BC975D77CC1',
+    dnn:    'internet',
+    sst:    1,
+    sd:     '000000',
+    ambrDl: 1024,
+    ambrUl: 1024,
+    registered:  false,
+    createdAt:   new Date().toISOString(),
+  };
+}
+
+// IMSI → UERANSIM Docker container name (ue1/ue2 are pre-wired)
+const IMSI_TO_CONTAINER = {
+  '001010000000001': 'ueransim-ue1',
+  '001010000000002': 'ueransim-ue2',
+};
+
+// Build mongosh script to upsert a subscriber document
+function buildMongoInsert(ue) {
+  return `
+    var db = db.getSiblingDB('open5gs');
+    db.subscribers.deleteOne({ imsi: '${ue.imsi}' });
+    var r = db.subscribers.insertOne({
+      imsi: '${ue.imsi}',
+      msisdn: [], imeisv: '4301816488979312',
+      mme_host: [], mme_realm: [], purge_flag: [],
+      security: { k: '${ue.key}', op: null, opc: '${ue.opc}', amf: '8000', sqn: NumberLong(64) },
+      ambr: {
+        downlink: { value: ${ue.ambrDl || 1024}, unit: 3 },
+        uplink:   { value: ${ue.ambrUl || 1024}, unit: 3 }
+      },
+      slice: [{
+        sst: ${ue.sst}, sd: '0x${ue.sd || '000000'}', default_indicator: true,
+        session: [{
+          name: '${ue.dnn}', type: 3, pcc_rule: [],
+          ambr: {
+            downlink: { value: ${ue.ambrDl || 1024}, unit: 3 },
+            uplink:   { value: ${ue.ambrUl || 1024}, unit: 3 }
+          },
+          qos: { index: 9, arp: { priority_level: 8, pre_emption_capability: 1, pre_emption_vulnerability: 1 } },
+          ue: { addr: '0.0.0.0' }
+        }]
+      }],
+      access_restriction_data: 32, subscriber_status: 0,
+      network_access_mode: 0, subscribed_rau_tau_timer: 12, __v: 0
+    });
+    print(r.insertedId ? 'ok' : 'fail');
+  `;
+}
+
+// GET /ue — list all configured UEs
+app.get('/ue', (req, res) => res.json(loadUeStore()));
+
+// POST /ue — create UE (IMSI required, rest auto-filled)
+app.post('/ue', (req, res) => {
+  const ues = loadUeStore();
+  const { imsi } = req.body;
+  if (!imsi || !/^\d{15}$/.test(imsi))
+    return res.status(400).json({ error: 'imsi must be exactly 15 digits' });
+  if (ues.find(u => u.imsi === imsi))
+    return res.status(409).json({ error: 'IMSI already exists' });
+  const ue = { ...ueDefaults(imsi), ...req.body, imsi, registered: false };
+  ues.push(ue);
+  saveUeStore(ues);
+  res.json(ue);
+});
+
+// PUT /ue/:imsi — update editable UE fields
+app.put('/ue/:imsi', (req, res) => {
+  const ues = loadUeStore();
+  const idx = ues.findIndex(u => u.imsi === req.params.imsi);
+  if (idx === -1) return res.status(404).json({ error: 'UE not found' });
+  // Protect identity/lifecycle fields from being overwritten
+  const { imsi: _i, registered: _r, createdAt: _c, ...editable } = req.body;
+  ues[idx] = { ...ues[idx], ...editable, updatedAt: new Date().toISOString() };
+  saveUeStore(ues);
+  res.json(ues[idx]);
+});
+
+// DELETE /ue/:imsi — remove UE from local store
+app.delete('/ue/:imsi', (req, res) => {
+  let ues = loadUeStore();
+  const before = ues.length;
+  ues = ues.filter(u => u.imsi !== req.params.imsi);
+  if (ues.length === before) return res.status(404).json({ error: 'UE not found' });
+  saveUeStore(ues);
+  res.json({ ok: true });
+});
+
+// POST /ue/:imsi/register — insert subscriber into Open5GS MongoDB
+app.post('/ue/:imsi/register', async (req, res) => {
+  const ues = loadUeStore();
+  const ue = ues.find(u => u.imsi === req.params.imsi);
+  if (!ue) return res.status(404).json({ error: 'UE not found in store' });
+  try {
+    const mongo = docker.getContainer('open5gs-mongodb');
+    const out = await runExecOutput(mongo,
+      ['mongosh', '--quiet', '--eval', buildMongoInsert(ue)], 15000);
+    const idx = ues.findIndex(u => u.imsi === ue.imsi);
+    ues[idx].registered   = true;
+    ues[idx].registeredAt = new Date().toISOString();
+    saveUeStore(ues);
+    res.json({ ok: true, output: out.trim() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /ue/:imsi/register — remove subscriber from MongoDB (deregister)
+app.delete('/ue/:imsi/register', async (req, res) => {
+  const ues = loadUeStore();
+  const ue = ues.find(u => u.imsi === req.params.imsi);
+  if (!ue) return res.status(404).json({ error: 'UE not found' });
+  try {
+    const mongo = docker.getContainer('open5gs-mongodb');
+    const script = `db.getSiblingDB('open5gs').subscribers.deleteOne({ imsi: '${ue.imsi}' }); print('ok');`;
+    await runExecOutput(mongo, ['mongosh', '--quiet', '--eval', script], 10000);
+    const idx = ues.findIndex(u => u.imsi === ue.imsi);
+    ues[idx].registered = false;
+    saveUeStore(ues);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /ue/:imsi/status — tunnel IP + container state + MongoDB presence
+app.get('/ue/:imsi/status', async (req, res) => {
+  const ues = loadUeStore();
+  const ue = ues.find(u => u.imsi === req.params.imsi);
+  if (!ue) return res.status(404).json({ error: 'UE not found' });
+
+  const containerName = IMSI_TO_CONTAINER[ue.imsi] || null;
+  let tunIp = null, cState = 'none', cRunning = false;
+  if (containerName) {
+    try {
+      const info = await docker.getContainer(containerName).inspect();
+      cState   = info.State.Status;
+      cRunning = info.State.Running;
+      if (cRunning) tunIp = await getUeTunIp(docker.getContainer(containerName));
+    } catch {}
+  }
+
+  // Verify subscriber is in MongoDB
+  let inMongo = false;
+  try {
+    const mongo = docker.getContainer('open5gs-mongodb');
+    const out = await runExecOutput(mongo,
+      ['mongosh', '--quiet', '--eval',
+       `db.getSiblingDB('open5gs').subscribers.countDocuments({ imsi: '${ue.imsi}' })`], 5000);
+    inMongo = /^\s*1\s*/.test(out.trim());
+  } catch {}
+
+  res.json({
+    imsi: ue.imsi, registered: ue.registered, inMongo,
+    containerName, containerState: cState, containerRunning: cRunning,
+    tunIp: tunIp || null, hasPduSession: !!tunIp,
+  });
+});
+
+// POST /ue/:imsi/ping — ICMP ping via PDU session tunnel
+app.post('/ue/:imsi/ping', async (req, res) => {
+  const { target = '8.8.8.8', count = 4 } = req.body || {};
+  const containerName = IMSI_TO_CONTAINER[req.params.imsi];
+  if (!containerName)
+    return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
+  try {
+    const c = docker.getContainer(containerName);
+    const tunIp = await getUeTunIp(c);
+    if (!tunIp)
+      return res.status(400).json({ error: 'No PDU session tunnel active (uesimtun0 not found)' });
+    const out = await runExecOutput(c,
+      ['sh', '-c', `ping -c ${Math.min(Number(count), 10)} -W 2 -I ${tunIp} ${target} 2>&1`], 30000);
+    res.json({ ok: true, output: out, tunIp, target });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── 404 ───────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

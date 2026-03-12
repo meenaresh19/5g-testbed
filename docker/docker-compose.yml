@@ -32,6 +32,7 @@ volumes:
   loki-data:          # Loki log chunks
   ids-data:           # Zeek + Scapy IDS alerts/logs (shared with API)
   camara-node-modules: # CAMARA API server npm cache
+  ue-data:            # UE Manager persistent store (ues.json)
   # Note: ./traces is a host bind-mount (not a named volume) so PCAP files
   # persist and are accessible for download even after containers restart.
 
@@ -511,6 +512,7 @@ services:
       - ./configs:/configs:ro
       - ./traces:/traces                                       # serve PCAP downloads
       - ids-data:/ids                                          # IDS alert files (read-only for API)
+      - ue-data:/data                                          # UE manager persistent store (ues.json)
     environment:
       NODE_ENV: production
       PORT: "5000"

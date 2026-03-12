@@ -338,6 +338,7 @@ function Icon({ name, size=16 }) {
     shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>,
     nef:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12,2 22,7 22,17 12,22 2,17 2,7"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="7" x2="22" y2="7"/><line x1="2" y1="17" x2="22" y2="17"/></svg>,
     camara: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4"/><path d="M17.7 6.3a8 8 0 0 1 0 11.4"/><path d="M3.5 3.5a13.5 13.5 0 0 0 0 17"/><path d="M20.5 3.5a13.5 13.5 0 0 1 0 17"/></svg>,
+    sim:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M15 2l-6 5h6"/><rect x="8" y="12" width="3" height="3"/><rect x="13" y="12" width="3" height="3"/><rect x="8" y="16" width="3" height="3"/><rect x="13" y="16" width="3" height="3"/></svg>,
   };
   return icons[name] || null;
 }
@@ -2985,6 +2986,496 @@ function CamaraAPIs() {
   );
 }
 
+// ── UE Manager ────────────────────────────────────────────
+function UEManager() {
+  const C = { bg:'#0d1117', card:'#161b22', border:'#30363d', text:'#e6edf3', muted:'#8b949e', accent:'#00c896' };
+  const [tab,         setTab]         = useState('config');
+  const [ues,         setUes]         = useState([]);
+  const [busy,        setBusy]        = useState({});
+  const [msg,         setMsg]         = useState({ text:'', ok:true });
+  // Config tab
+  const [showAdd,     setShowAdd]     = useState(false);
+  const [editUe,      setEditUe]      = useState(null);
+  const [newImsi,     setNewImsi]     = useState('');
+  const [form,        setForm]        = useState({});
+  // Ops tab
+  const [ueStatus,    setUeStatus]    = useState({});
+  const [pingResult,  setPingResult]  = useState({});
+  const [pingTarget,  setPingTarget]  = useState('8.8.8.8');
+  const [expanded,    setExpanded]    = useState(null);
+
+  const DEF = { key:'fec86ba6eb707ed08905757b1bb44b8f', opc:'C42449363BBAD02B66D16BC975D77CC1',
+    dnn:'internet', sst:1, sd:'000000', ambrDl:1024, ambrUl:1024 };
+
+  const flash = (text, ok=true) => { setMsg({ text, ok }); setTimeout(()=>setMsg({text:'',ok:true}), 5000); };
+  const setBusyKey = (k, v) => setBusy(b=>({...b,[k]:v}));
+
+  const loadUes = async () => { const d = await apiFetch('/ue'); if (Array.isArray(d)) setUes(d); };
+  const loadStatus = async (imsi) => {
+    const d = await apiFetch(`/ue/${imsi}/status`);
+    if (d && !d.error) setUeStatus(p=>({...p,[imsi]:d}));
+  };
+
+  useEffect(() => { loadUes(); }, []);
+  useEffect(() => {
+    if (tab !== 'ops') return;
+    const reg = ues.filter(u=>u.registered);
+    reg.forEach(u=>loadStatus(u.imsi));
+    const t = setInterval(()=>reg.forEach(u=>loadStatus(u.imsi)), 5000);
+    return ()=>clearInterval(t);
+  }, [tab, ues]);
+
+  const genCreds = () => {
+    const hex32 = ()=>[...Array(32)].map(()=>Math.floor(Math.random()*16).toString(16)).join('');
+    setForm(f=>({...f, key:hex32(), opc:hex32()}));
+  };
+
+  const addUe = async () => {
+    if (!/^\d{15}$/.test(newImsi)) { flash('IMSI must be exactly 15 digits', false); return; }
+    setBusyKey('add', true);
+    const d = await apiFetch('/ue', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ imsi:newImsi, ...DEF, ...form }) });
+    if (d?.imsi) { setShowAdd(false); setNewImsi(''); setForm({}); await loadUes(); flash(`UE ${d.imsi} added`); }
+    else flash(d?.error || 'Failed to add UE', false);
+    setBusyKey('add', false);
+  };
+
+  const updateUe = async () => {
+    const d = await apiFetch(`/ue/${editUe.imsi}`, { method:'PUT',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(form) });
+    if (d?.imsi) { setEditUe(null); setForm({}); await loadUes(); flash('UE updated'); }
+    else flash(d?.error || 'Update failed', false);
+  };
+
+  const deleteUe = async (imsi) => {
+    if (!window.confirm(`Delete UE ${imsi} from local store?`)) return;
+    setBusyKey(imsi, 'del');
+    await apiFetch(`/ue/${imsi}`, { method:'DELETE' });
+    await loadUes();
+    setBusyKey(imsi, null);
+  };
+
+  const register = async (imsi) => {
+    setBusyKey(imsi, 'reg'); flash(`Registering ${imsi} in Open5GS…`);
+    const d = await apiFetch(`/ue/${imsi}/register`, { method:'POST' });
+    if (d?.ok) { flash(`✓ ${imsi} registered in Open5GS MongoDB`); await loadUes(); }
+    else flash(`✗ ${d?.error || 'Registration failed'}`, false);
+    setBusyKey(imsi, null);
+  };
+
+  const deregister = async (imsi) => {
+    setBusyKey(imsi, 'dereg');
+    const d = await apiFetch(`/ue/${imsi}/register`, { method:'DELETE' });
+    if (d?.ok) { flash(`${imsi} removed from Open5GS`); await loadUes(); }
+    else flash(d?.error || 'Deregister failed', false);
+    setBusyKey(imsi, null);
+  };
+
+  const doPing = async (imsi) => {
+    setBusyKey(`ping-${imsi}`, true); setPingResult(p=>({...p,[imsi]:null}));
+    const d = await apiFetch(`/ue/${imsi}/ping`, { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({target:pingTarget, count:4}) });
+    setPingResult(p=>({...p,[imsi]:d}));
+    setBusyKey(`ping-${imsi}`, false);
+  };
+
+  const regCount = ues.filter(u=>u.registered).length;
+
+  const tabSt = (t) => ({ padding:'9px 18px', cursor:'pointer', fontSize:13, fontWeight:600, background:'transparent',
+    color:tab===t?C.accent:C.muted, border:'none', borderBottom:tab===t?`2px solid ${C.accent}`:'2px solid transparent',
+    transition:'color .15s, border-color .15s', marginBottom:'-1px' });
+  const inputSt = { background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:4, color:C.text,
+    padding:'7px 10px', fontSize:12, width:'100%', boxSizing:'border-box' };
+  const btnP = (off) => ({ padding:'7px 16px', background:off?'#1c2128':C.accent, color:off?C.muted:'#000',
+    border:off?`1px solid ${C.border}`:'none', borderRadius:4, cursor:off?'not-allowed':'pointer', fontSize:12, fontWeight:700 });
+  const btnTiny = (color, off) => ({ padding:'4px 11px', background:`${color}22`, color:off?C.muted:color,
+    border:`1px solid ${off?C.border:color+'55'}`, borderRadius:3, cursor:off?'not-allowed':'pointer', fontSize:11, fontWeight:600 });
+  const modalBox = { position:'fixed', inset:0, background:'#000c', display:'flex', alignItems:'center',
+    justifyContent:'center', zIndex:9999 };
+  const modal = { background:'#161b22', border:`1px solid ${C.border}`, borderRadius:8, width:500, maxHeight:'88vh', overflowY:'auto' };
+
+  return (
+    <div style={{color:C.text, fontSize:13}}>
+
+      {/* Stats row */}
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:16}}>
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>Configured UEs</div>
+          <div style={{fontSize:28, fontWeight:700, color:C.accent}}>{ues.length}</div>
+          <div style={{fontSize:11, color:C.muted}}>Locally defined simulated devices</div>
+        </div>
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>Registered in Core</div>
+          <div style={{fontSize:28, fontWeight:700, color:regCount>0?C.accent:C.muted}}>{regCount}</div>
+          <div style={{fontSize:11, color:C.muted}}>Subscriber entries in Open5GS MongoDB</div>
+        </div>
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>UERANSIM Containers</div>
+          <div style={{display:'flex', gap:16, marginTop:6}}>
+            {[['001010000000001','UE1','ueransim-ue1'],['001010000000002','UE2','ueransim-ue2']].map(([imsi,label])=>{
+              const st = ueStatus[imsi] || {};
+              const color = st.hasPduSession ? C.accent : st.containerRunning ? '#f59e0b' : C.muted;
+              return (
+                <div key={label} style={{textAlign:'center'}}>
+                  <div style={{width:10,height:10,borderRadius:'50%',background:color,margin:'0 auto 4px',
+                    boxShadow:st.containerRunning?`0 0 6px ${color}`:undefined}}/>
+                  <div style={{fontSize:11,fontWeight:700,color}}>{label}</div>
+                  <div style={{fontSize:9,color:C.muted}}>{st.hasPduSession?'PDU up':st.containerRunning?'No PDU':'stopped'}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Feedback banner */}
+      {msg.text && (
+        <div style={{background:msg.ok?'#0d1c18':'#1c0707', border:`1px solid ${msg.ok?C.accent+'44':'#ef444444'}`,
+          borderRadius:6, padding:'9px 14px', color:msg.ok?C.accent:'#ef4444', fontSize:12, marginBottom:12}}>
+          {msg.text}
+        </div>
+      )}
+
+      {/* Tab bar */}
+      <div style={{display:'flex', borderBottom:`1px solid ${C.border}`, marginBottom:16}}>
+        <button onClick={()=>setTab('config')} style={tabSt('config')}>🔧 Config</button>
+        <button onClick={()=>setTab('ops')} style={tabSt('ops')}>
+          ⚙ Operations
+          {regCount>0 && <span style={{marginLeft:6, background:C.accent+'33', color:C.accent, borderRadius:10, padding:'1px 7px', fontSize:9, fontWeight:700}}>{regCount}</span>}
+        </button>
+      </div>
+
+      {/* ─────────────── CONFIG TAB ─────────────── */}
+      {tab==='config' && (
+        <div>
+          {/* UE table */}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, marginBottom:14}}>
+            <div style={{padding:'12px 16px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+              <span style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', letterSpacing:1}}>
+                Configured UEs ({ues.length})
+              </span>
+              <button onClick={()=>{setShowAdd(true);setForm({});setNewImsi('');}} style={btnP(false)}>+ Add UE</button>
+            </div>
+
+            {ues.length===0 ? (
+              <div style={{padding:36, textAlign:'center', color:C.muted}}>
+                No UEs configured yet.<br/>
+                <span style={{fontSize:11}}>Click <strong style={{color:C.text}}>+ Add UE</strong>, enter an IMSI — all other fields auto-fill from defaults.</span>
+              </div>
+            ) : (
+              <div style={{overflowX:'auto'}}>
+                <table style={{width:'100%', borderCollapse:'collapse', fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                      {['IMSI','K','OPc','DNN','S-NSSAI','AMBR ↓/↑','Core','Actions'].map(h=>(
+                        <th key={h} style={{padding:'8px 12px', textAlign:'left', fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', whiteSpace:'nowrap'}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ues.map(ue=>(
+                      <tr key={ue.imsi} style={{borderBottom:`1px solid ${C.border}22`}}>
+                        <td style={{padding:'10px 12px', fontFamily:'monospace', color:C.accent, fontWeight:600}}>{ue.imsi}</td>
+                        <td style={{padding:'10px 12px', fontFamily:'monospace', color:C.muted, fontSize:11}}>{(ue.key||'').slice(0,8)}···</td>
+                        <td style={{padding:'10px 12px', fontFamily:'monospace', color:C.muted, fontSize:11}}>{(ue.opc||'').slice(0,8)}···</td>
+                        <td style={{padding:'10px 12px'}}>{ue.dnn}</td>
+                        <td style={{padding:'10px 12px', color:C.muted, fontSize:11, whiteSpace:'nowrap'}}>SST:{ue.sst} SD:{ue.sd}</td>
+                        <td style={{padding:'10px 12px', color:C.muted, fontSize:11, whiteSpace:'nowrap'}}>{ue.ambrDl||1024}/{ue.ambrUl||1024} Mbps</td>
+                        <td style={{padding:'10px 12px'}}>
+                          <span style={{background:ue.registered?'#00c89620':'#ef444420', color:ue.registered?'#00c896':'#ef4444',
+                            border:`1px solid ${ue.registered?'#00c89644':'#ef444444'}`, padding:'2px 8px', borderRadius:3, fontSize:10, fontWeight:700, whiteSpace:'nowrap'}}>
+                            {ue.registered?'✓ In Core':'Not Registered'}
+                          </span>
+                        </td>
+                        <td style={{padding:'8px 12px'}}>
+                          <div style={{display:'flex', gap:5, flexWrap:'nowrap'}}>
+                            {!ue.registered
+                              ? <button onClick={()=>register(ue.imsi)} disabled={!!busy[ue.imsi]} style={btnTiny('#00c896',!!busy[ue.imsi])}>
+                                  {busy[ue.imsi]==='reg'?'…':'▶ Register'}
+                                </button>
+                              : <button onClick={()=>deregister(ue.imsi)} disabled={!!busy[ue.imsi]} style={btnTiny('#f59e0b',!!busy[ue.imsi])}>
+                                  {busy[ue.imsi]==='dereg'?'…':'✕ Deregister'}
+                                </button>
+                            }
+                            <button onClick={()=>{setEditUe(ue);setForm({key:ue.key,opc:ue.opc,dnn:ue.dnn,sst:ue.sst,sd:ue.sd,ambrDl:ue.ambrDl,ambrUl:ue.ambrUl});}}
+                              style={btnTiny('#60a5fa')}>Edit</button>
+                            <button onClick={()=>deleteUe(ue.imsi)} disabled={busy[ue.imsi]==='del'} style={btnTiny('#ef4444')}>Del</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* DNN & Slice defaults info */}
+          <div style={{background:'#0d1c18', border:`1px solid ${C.accent}22`, borderRadius:6, padding:14}}>
+            <div style={{fontSize:11, color:C.accent, fontWeight:700, marginBottom:10}}>Default DNN & Slice Configuration (auto-filled on Add)</div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(190px,1fr))', gap:8}}>
+              {[['DNN','internet','Default APN — internet routing'],
+                ['SST','1 — eMBB','Enhanced Mobile Broadband slice'],
+                ['SD','000000','Slice Differentiator (hexadecimal)'],
+                ['K / OPc','Test defaults','Change these for non-test environments'],
+                ['AMBR ↓/↑','1024/1024 Mbps','Max aggregate bitrate per UE'],
+                ['5QI','9 (Non-GBR)','Best-effort internet quality class'],
+              ].map(([k,v,d])=>(
+                <div key={k} style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:4, padding:'8px 10px'}}>
+                  <div style={{fontSize:10, color:C.muted, marginBottom:2}}>{k}</div>
+                  <div style={{fontSize:12, fontWeight:700, color:C.text}}>{v}</div>
+                  <div style={{fontSize:10, color:'#555', marginTop:3}}>{d}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────── OPERATIONS TAB ─────────────── */}
+      {tab==='ops' && (
+        <div>
+          {regCount===0 ? (
+            <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:40, textAlign:'center', color:C.muted}}>
+              No registered UEs.<br/>
+              <span style={{fontSize:11}}>Go to the <strong style={{color:C.text}}>Config</strong> tab and click <strong style={{color:'#00c896'}}>▶ Register</strong> on a UE to add it to Open5GS.</span>
+            </div>
+          ) : (<>
+            {/* Ping target bar */}
+            <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:14, background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'10px 14px'}}>
+              <span style={{fontSize:12, color:C.muted, fontWeight:600, whiteSpace:'nowrap'}}>Ping target:</span>
+              <input style={{...inputSt, width:170}} value={pingTarget} onChange={e=>setPingTarget(e.target.value)} placeholder="8.8.8.8"/>
+              <span style={{fontSize:11, color:C.muted}}>Used by all UE ping tests</span>
+            </div>
+
+            {ues.filter(u=>u.registered).map(ue=>{
+              const st   = ueStatus[ue.imsi] || {};
+              const pr   = pingResult[ue.imsi];
+              const open = expanded===ue.imsi;
+              const hasCont = !!st.containerName;
+              const stColor = st.hasPduSession?C.accent : st.containerRunning?'#f59e0b' : '#ef4444';
+
+              return (
+                <div key={ue.imsi} style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, marginBottom:12, overflow:'hidden'}}>
+                  {/* Header row (clickable to expand) */}
+                  <div style={{display:'flex', alignItems:'center', gap:12, padding:'12px 16px', cursor:'pointer'}}
+                    onClick={()=>setExpanded(open?null:ue.imsi)}>
+                    <span style={{width:10,height:10,borderRadius:'50%',flexShrink:0,background:stColor,boxShadow:`0 0 6px ${stColor}`}}/>
+                    <span style={{fontFamily:'monospace',fontWeight:700,color:C.accent,fontSize:14,flex:1}}>{ue.imsi}</span>
+                    <span style={{fontSize:10,background:'#00c89620',color:'#00c896',border:'1px solid #00c89644',padding:'2px 8px',borderRadius:3,fontWeight:700}}>✓ In Core</span>
+                    {hasCont && (
+                      <span style={{fontSize:10,background:st.containerRunning?'#60a5fa20':'#ef444420',
+                        color:st.containerRunning?'#60a5fa':'#ef4444',
+                        border:`1px solid ${st.containerRunning?'#60a5fa44':'#ef444444'}`,
+                        padding:'2px 8px',borderRadius:3,fontWeight:700}}>
+                        {st.containerName}: {st.containerState||'…'}
+                      </span>
+                    )}
+                    {st.hasPduSession
+                      ? <span style={{fontSize:11,fontFamily:'monospace',color:C.accent,whiteSpace:'nowrap'}}>⇆ {st.tunIp}</span>
+                      : <span style={{fontSize:10,color:'#f59e0b',whiteSpace:'nowrap'}}>○ No PDU session</span>
+                    }
+                    <span style={{fontSize:11,color:C.muted}}>{open?'▲':'▼'}</span>
+                  </div>
+
+                  {/* Expanded detail panel */}
+                  {open && (
+                    <div style={{borderTop:`1px solid ${C.border}`, padding:'14px 16px'}}>
+                      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:16}}>
+                        {/* Details column */}
+                        <div>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',marginBottom:10}}>UE Details</div>
+                          {[['IMSI',ue.imsi],['DNN',ue.dnn],['S-NSSAI',`SST:${ue.sst} SD:${ue.sd}`],
+                            ['Container',st.containerName||'—'],['State',st.containerState||'—'],
+                            ['Tunnel IP',st.tunIp||'No PDU session'],['In MongoDB',st.inMongo?'✓ Present':'✗ Not found'],
+                            ['Registered at',ue.registeredAt?new Date(ue.registeredAt).toLocaleString():'—'],
+                          ].map(([k,v])=>(
+                            <div key={k} style={{display:'flex',gap:8,padding:'4px 0',borderBottom:`1px solid ${C.border}22`}}>
+                              <span style={{fontSize:11,color:C.muted,width:120,flexShrink:0}}>{k}</span>
+                              <span style={{fontSize:11,color:['IMSI','Tunnel IP'].includes(k)?C.accent:C.text,
+                                fontFamily:['IMSI','Tunnel IP','Container'].includes(k)?'monospace':'inherit'}}>{v}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Operations column */}
+                        <div>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',marginBottom:10}}>Operations</div>
+                          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
+                            <button onClick={()=>doPing(ue.imsi)} disabled={!st.hasPduSession||busy[`ping-${ue.imsi}`]}
+                              style={btnP(!st.hasPduSession||busy[`ping-${ue.imsi}`])}>
+                              {busy[`ping-${ue.imsi}`]?'⏳ Pinging…':'🏓 Ping'}
+                            </button>
+                            <button onClick={()=>loadStatus(ue.imsi)} style={btnTiny('#60a5fa')}>↺ Refresh</button>
+                            <button onClick={()=>deregister(ue.imsi)} disabled={!!busy[ue.imsi]} style={btnTiny('#f59e0b',!!busy[ue.imsi])}>
+                              {busy[ue.imsi]==='dereg'?'…':'✕ Deregister'}
+                            </button>
+                            <button onClick={()=>register(ue.imsi)} disabled={!!busy[ue.imsi]} style={btnTiny('#00c896',!!busy[ue.imsi])}>
+                              {busy[ue.imsi]==='reg'?'…':'↺ Re-Register'}
+                            </button>
+                          </div>
+
+                          {!st.hasPduSession && hasCont && st.containerRunning && (
+                            <div style={{background:'#1c1207',border:'1px solid #f59e0b44',borderRadius:5,padding:10,fontSize:11,color:'#f59e0b',marginBottom:10}}>
+                              ⚠ Container running but no PDU session tunnel.<br/>
+                              Check: <code style={{background:C.bg,padding:'1px 5px',borderRadius:3}}>docker logs {st.containerName}</code>
+                            </div>
+                          )}
+
+                          {pr && (
+                            <div>
+                              <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:6}}>
+                                PING → {pr.target} via {pr.tunIp}
+                              </div>
+                              <pre style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:5,padding:'10px',
+                                fontSize:10.5,color:pr.ok?C.accent:'#ef4444',overflow:'auto',maxHeight:180,margin:0,lineHeight:1.5}}>
+                                {pr.output||pr.error}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>)}
+        </div>
+      )}
+
+      {/* ── Add UE Modal ── */}
+      {showAdd && (
+        <div style={modalBox} onClick={()=>setShowAdd(false)}>
+          <div style={modal} onClick={e=>e.stopPropagation()}>
+            <div style={{padding:'16px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:14,fontWeight:700}}>Add Simulated UE</span>
+              <button onClick={()=>setShowAdd(false)} style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:20}}>×</button>
+            </div>
+            <div style={{padding:'16px 20px'}}>
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:5}}>IMSI (15 digits) *</div>
+                <input style={{...inputSt, borderColor:newImsi.length>0&&newImsi.length!==15?'#ef4444':C.border}}
+                  value={newImsi} onChange={e=>setNewImsi(e.target.value.replace(/\D/g,'').slice(0,15))}
+                  placeholder="001010000000003" autoFocus/>
+                <div style={{fontSize:10,color:C.muted,marginTop:3}}>MCC(3) + MNC(2) + MSIN(10) — e.g. 001 01 0000000003</div>
+              </div>
+
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                <span style={{fontSize:11,color:C.muted,fontWeight:700}}>Security Credentials</span>
+                <button onClick={genCreds} style={{padding:'4px 10px',background:'#1c2128',border:`1px solid ${C.border}`,
+                  borderRadius:3,color:C.accent,cursor:'pointer',fontSize:11}}>⚡ Generate Random K/OPc</button>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:4}}>K — Authentication Key (32 hex chars)</div>
+                <input style={inputSt} value={form.key??DEF.key} onChange={e=>setForm(f=>({...f,key:e.target.value}))}/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:4}}>OPc — Operator Key (32 hex chars)</div>
+                <input style={inputSt} value={form.opc??DEF.opc} onChange={e=>setForm(f=>({...f,opc:e.target.value}))}/>
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:14}}>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>DNN</div>
+                  <input style={inputSt} value={form.dnn??DEF.dnn} onChange={e=>setForm(f=>({...f,dnn:e.target.value}))}/>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>SST (Slice Type)</div>
+                  <select style={inputSt} value={form.sst??DEF.sst} onChange={e=>setForm(f=>({...f,sst:parseInt(e.target.value)}))}>
+                    <option value={1}>1 — eMBB</option>
+                    <option value={2}>2 — URLLC</option>
+                    <option value={3}>3 — mIoT</option>
+                    <option value={4}>4 — V2X</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>SD (hex)</div>
+                  <input style={inputSt} value={form.sd??DEF.sd} onChange={e=>setForm(f=>({...f,sd:e.target.value}))} placeholder="000000"/>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>AMBR Downlink (Mbps)</div>
+                  <input style={inputSt} type="number" value={form.ambrDl??DEF.ambrDl} onChange={e=>setForm(f=>({...f,ambrDl:+e.target.value}))}/>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>AMBR Uplink (Mbps)</div>
+                  <input style={inputSt} type="number" value={form.ambrUl??DEF.ambrUl} onChange={e=>setForm(f=>({...f,ambrUl:+e.target.value}))}/>
+                </div>
+              </div>
+            </div>
+            <div style={{padding:'12px 20px',borderTop:`1px solid ${C.border}`,display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setShowAdd(false)} style={{padding:'7px 16px',background:'none',border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,cursor:'pointer',fontSize:12}}>Cancel</button>
+              <button onClick={addUe} disabled={busy.add||newImsi.length!==15} style={btnP(busy.add||newImsi.length!==15)}>
+                {busy.add?'Adding…':'Add UE'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit UE Modal ── */}
+      {editUe && (
+        <div style={modalBox} onClick={()=>setEditUe(null)}>
+          <div style={modal} onClick={e=>e.stopPropagation()}>
+            <div style={{padding:'16px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:14,fontWeight:700}}>Edit UE — <span style={{fontFamily:'monospace',color:C.accent}}>{editUe.imsi}</span></span>
+              <button onClick={()=>setEditUe(null)} style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:20}}>×</button>
+            </div>
+            <div style={{padding:'16px 20px'}}>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:4}}>K — Authentication Key</div>
+                <input style={inputSt} value={form.key||''} onChange={e=>setForm(f=>({...f,key:e.target.value}))}/>
+              </div>
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:4}}>OPc — Operator Key</div>
+                <input style={inputSt} value={form.opc||''} onChange={e=>setForm(f=>({...f,opc:e.target.value}))}/>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:14}}>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>DNN</div>
+                  <input style={inputSt} value={form.dnn||''} onChange={e=>setForm(f=>({...f,dnn:e.target.value}))}/>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>SST</div>
+                  <select style={inputSt} value={form.sst??1} onChange={e=>setForm(f=>({...f,sst:+e.target.value}))}>
+                    <option value={1}>1 — eMBB</option><option value={2}>2 — URLLC</option>
+                    <option value={3}>3 — mIoT</option><option value={4}>4 — V2X</option>
+                  </select>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>SD (hex)</div>
+                  <input style={inputSt} value={form.sd||''} onChange={e=>setForm(f=>({...f,sd:e.target.value}))}/>
+                </div>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>AMBR Downlink (Mbps)</div>
+                  <input style={inputSt} type="number" value={form.ambrDl||1024} onChange={e=>setForm(f=>({...f,ambrDl:+e.target.value}))}/>
+                </div>
+                <div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>AMBR Uplink (Mbps)</div>
+                  <input style={inputSt} type="number" value={form.ambrUl||1024} onChange={e=>setForm(f=>({...f,ambrUl:+e.target.value}))}/>
+                </div>
+              </div>
+              {editUe.registered && (
+                <div style={{marginTop:14,background:'#1c1207',border:'1px solid #f59e0b44',borderRadius:5,padding:10,fontSize:11,color:'#f59e0b'}}>
+                  ⚠ This UE is already registered. Click <strong>Re-Register</strong> in the Operations tab after saving to push changes to Open5GS.
+                </div>
+              )}
+            </div>
+            <div style={{padding:'12px 20px',borderTop:`1px solid ${C.border}`,display:'flex',gap:10,justifyContent:'flex-end'}}>
+              <button onClick={()=>setEditUe(null)} style={{padding:'7px 16px',background:'none',border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,cursor:'pointer',fontSize:12}}>Cancel</button>
+              <button onClick={updateUe} style={btnP(false)}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('dashboard');
@@ -3023,6 +3514,7 @@ function App() {
     {id:'dashboard', label:'Dashboard',   icon:'dashboard', group:'overview'},
     {id:'core',      label:'Core NFs',    icon:'core',      group:'network'},
     {id:'ran',       label:'RAN',         icon:'ran',       group:'network'},
+    {id:'uemanager', label:'UE Manager',  icon:'sim',       group:'network'},
     {id:'slices',    label:'Slices',      icon:'slice',     group:'network'},
     {id:'subs',      label:'Subscribers', icon:'sub',       group:'data'},
     {id:'topo',      label:'Topology',    icon:'topo',      group:'data'},
@@ -3040,6 +3532,7 @@ function App() {
     dashboard:  ['DASHBOARD',      'System overview and real-time metrics'],
     core:       ['CORE NETWORK',   'Open5GS NF management and configuration'],
     ran:        ['RAN / OAI',      'gNB and nrUE simulator control'],
+    uemanager:  ['UE MANAGER',     'Configure simulated UEs · register in Open5GS · ping · PDU session status'],
     slices:     ['NETWORK SLICES', '5G slice management — create, configure, assign NFs'],
     subs:       ['SUBSCRIBERS',    'UE subscription data and credential management'],
     topo:       ['TOPOLOGY',       'Live 5G architecture visualization'],
@@ -3109,6 +3602,7 @@ function App() {
           <div className="main-content">
             {page === 'dashboard' && <Dashboard nfStatus={nfStatus}/>}
             {(page === 'core' || page === 'ran') && <CoreNFs nfStatus={nfStatus} setNfStatus={setNfStatus}/>}
+            {page === 'uemanager'  && <UEManager/>}
             {page === 'slices'    && <SliceManager slices={slices} setSlices={setSlices}/>}
             {page === 'subs'      && <Subscriptions subs={subs} setSubs={setSubs}/>}
             {page === 'topo'      && <Topology nfStatus={nfStatus}/>}
