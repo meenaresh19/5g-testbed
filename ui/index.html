@@ -2461,9 +2461,15 @@ function CamaraAPIs() {
   const [msg,      setMsg]      = useState('');
 
   // Device Status tab
-  const [ueId,     setUeId]     = useState('ue1');
+  const [ueId,       setUeId]       = useState('ue1');
   const [connResult, setConnResult] = useState(null);
   const [connLoading, setConnLoading] = useState(false);
+  const [roamResult, setRoamResult] = useState(null);
+  const [locResult,  setLocResult]  = useState(null);
+  const [locLoading, setLocLoading] = useState(false);
+  const [locLat,     setLocLat]     = useState('48.8566');
+  const [locLon,     setLocLon]     = useState('2.3522');
+  const [locRadius,  setLocRadius]  = useState('50000');
 
   // QoD tab
   const [qodList,  setQodList]  = useState([]);
@@ -2527,10 +2533,27 @@ function CamaraAPIs() {
   }, [tab]);
 
   const checkDeviceStatus = async () => {
-    setConnLoading(true); setConnResult(null);
-    const d = await callCamara(`/device-status/v0/connectivity?ueId=${encodeURIComponent(ueId)}`);
-    setConnResult(d);
+    setConnLoading(true); setConnResult(null); setRoamResult(null);
+    const [conn, roam] = await Promise.all([
+      callCamara(`/device-status/v0/connectivity?ueId=${encodeURIComponent(ueId)}`),
+      callCamara(`/device-status/v0/roaming?ueId=${encodeURIComponent(ueId)}`),
+    ]);
+    setConnResult(conn);
+    setRoamResult(roam);
     setConnLoading(false);
+  };
+
+  const verifyLocation = async () => {
+    setLocLoading(true); setLocResult(null);
+    const body = {
+      device: { networkAccessIdentifier: ueId },
+      area: { areaType:'CIRCLE', center:{ latitude:parseFloat(locLat), longitude:parseFloat(locLon) }, radius:parseInt(locRadius) },
+    };
+    const d = await callCamara('/location-verification/v0/verify', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
+    });
+    setLocResult(d);
+    setLocLoading(false);
   };
 
   const createQodSession = async () => {
@@ -2591,11 +2614,12 @@ function CamaraAPIs() {
 
   const isUp      = health.status === 'UP';
   const C  = { bg:'#0d1117', card:'#161b22', border:'#30363d', text:'#e6edf3', muted:'#8b949e', accent:'#00c896' };
-  const tabStyle = (t) => ({ padding:'6px 16px', borderRadius:4, cursor:'pointer', fontSize:12, fontWeight:600,
-    background: tab===t ? C.accent : 'transparent', color: tab===t ? '#000' : C.muted, border:'none',
-    transition:'all .15s', marginRight:4 });
+  const tabStyle = (t) => ({ padding:'9px 16px', cursor:'pointer', fontSize:12, fontWeight:600, background:'transparent',
+    color: tab===t ? C.accent : C.muted, border:'none', borderBottom: tab===t ? `2px solid ${C.accent}` : '2px solid transparent',
+    transition:'color .15s, border-color .15s', marginBottom:'-1px', marginRight:2 });
+  const badge = (n, color) => n ? <span style={{marginLeft:5, background:(color||C.accent)+'33', color:color||C.accent, borderRadius:10, padding:'1px 7px', fontSize:9, fontWeight:700}}>{n}</span> : null;
   const inputSt  = { background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:4, color:C.text, padding:'6px 10px', fontSize:12, width:'100%', boxSizing:'border-box' };
-  const btnPrimary = (off) => ({ padding:'6px 16px', background: off ? '#333' : C.accent, color: off ? C.muted : '#000', border:'none', borderRadius:4, cursor: off ? 'not-allowed':'pointer', fontSize:12, fontWeight:700 });
+  const btnPrimary = (off) => ({ padding:'8px 18px', background: off ? '#1c2128' : C.accent, color: off ? C.muted : '#000', border: off ? `1px solid ${C.border}` : 'none', borderRadius:5, cursor: off ? 'not-allowed':'pointer', fontSize:12, fontWeight:700 });
   const btnDanger  = { padding:'4px 10px', background:'transparent', color:'#ef4444', border:'1px solid #ef4444', borderRadius:3, cursor:'pointer', fontSize:11 };
 
   const CAMARA_APIS = [
@@ -2639,70 +2663,152 @@ function CamaraAPIs() {
         </div>
       </div>
 
-      {/* Controls */}
-      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:16}}>
+      {/* Controls bar */}
+      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:16, padding:'12px 16px',
+        background: isUp ? '#0d1c18' : '#1c1207', border:`1px solid ${isUp ? C.accent+'33' : '#f59e0b33'}`, borderRadius:6}}>
         <button onClick={startCamara} disabled={busy || isUp} style={btnPrimary(busy || isUp)}>▶ Start CAMARA</button>
-        <button onClick={stopCamara}  disabled={busy || !isUp} style={{...btnPrimary(busy||!isUp), background:(busy||!isUp)?'#333':'#ef4444', color:(busy||!isUp)?C.muted:'#fff'}}>■ Stop</button>
-        {msg && <span style={{color:C.accent, fontSize:12}}>{msg}</span>}
-        {!isUp && <span style={{color:'#f59e0b', fontSize:11, marginLeft:'auto'}}>⚠ Run <code style={{background:'#1c2128', padding:'1px 5px', borderRadius:3}}>make camara-up</code> or click Start</span>}
+        <button onClick={stopCamara}  disabled={busy || !isUp} style={{...btnPrimary(busy||!isUp), background:(busy||!isUp)?'#1c2128':'#ef4444', color:(busy||!isUp)?C.muted:'#fff', border:(busy||!isUp)?`1px solid ${C.border}`:'none'}}>■ Stop</button>
+        <div style={{width:1, height:20, background:C.border, margin:'0 4px'}}/>
+        <span style={{fontSize:11, color: isUp ? C.accent : '#f59e0b', fontWeight:600}}>
+          {isUp ? '● CAMARA API Server running on :8081' : '○ CAMARA API Server stopped'}
+        </span>
+        {msg && <span style={{color:C.accent, fontSize:12, marginLeft:8}}>{msg}</span>}
+        {!isUp && <span style={{color:'#f59e0b', fontSize:11, marginLeft:'auto'}}>
+          ⚠ <code style={{background:'#0d1117', padding:'1px 6px', borderRadius:3}}>make camara-up</code>
+        </span>}
       </div>
 
       {/* Tabs */}
-      <div style={{display:'flex', marginBottom:14, borderBottom:`1px solid ${C.border}`, paddingBottom:8}}>
-        {[['status','Device Status'],['qod','QoD Sessions'],['subs','Reachability Subs'],['notifs','Notifications'],['catalog','API Catalog']].map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)} style={tabStyle(id)}>{label}</button>
-        ))}
+      <div style={{display:'flex', marginBottom:16, borderBottom:`1px solid ${C.border}`}}>
+        <button onClick={()=>setTab('status')} style={tabStyle('status')}>📶 Device Status</button>
+        <button onClick={()=>setTab('qod')}    style={tabStyle('qod')}>
+          ⚡ QoD Sessions{badge(qodList.length, '#00c896')}
+        </button>
+        <button onClick={()=>setTab('subs')}   style={tabStyle('subs')}>
+          🔔 Reachability{badge(subList.length, '#f59e0b')}
+        </button>
+        <button onClick={()=>setTab('notifs')} style={tabStyle('notifs')}>
+          📨 Notifications{badge(notifs.length, '#a78bfa')}
+        </button>
+        <button onClick={()=>setTab('catalog')} style={tabStyle('catalog')}>📋 API Catalog</button>
       </div>
 
       {/* ── TAB: Device Status ── */}
       {tab === 'status' && (
-        <div>
-          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14, marginBottom:14}}>
-            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>Check Device Connectivity</div>
-            <div style={{display:'flex', gap:10, alignItems:'end'}}>
-              <div style={{flex:1}}>
+        <div style={{display:'flex', flexDirection:'column', gap:14}}>
+          {/* Selector + Check button */}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:12}}>
+              Device Status Check — CAMARA device-status v0.6
+            </div>
+            <div style={{display:'flex', gap:10, alignItems:'end', marginBottom: connResult ? 14 : 0}}>
+              <div style={{flex:'0 0 260px'}}>
                 <div style={{fontSize:11, color:C.muted, marginBottom:4}}>UE Identifier</div>
-                <select style={inputSt} value={ueId} onChange={e=>setUeId(e.target.value)}>
+                <select style={inputSt} value={ueId} onChange={e=>{ setUeId(e.target.value); setConnResult(null); setRoamResult(null); }}>
                   <option value="ue1">ue1 — IMSI 001010000000001</option>
                   <option value="ue2">ue2 — IMSI 001010000000002</option>
                 </select>
               </div>
               <button onClick={checkDeviceStatus} disabled={!isUp || connLoading} style={btnPrimary(!isUp || connLoading)}>
-                {connLoading ? 'Checking…' : '⚡ Check Status'}
+                {connLoading ? '⏳ Checking…' : '⚡ Check Status'}
               </button>
+              {connResult && <button onClick={()=>{setConnResult(null);setRoamResult(null);}} style={{...btnDanger, marginLeft:'auto'}}>Clear</button>}
             </div>
             {connResult && (
-              <div style={{marginTop:14, display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
-                <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
-                  <div style={{fontSize:10, color:C.muted, marginBottom:6, fontWeight:700}}>CONNECTIVITY STATUS</div>
-                  <div style={{display:'flex', alignItems:'center', gap:10}}>
-                    <span style={{width:12, height:12, borderRadius:'50%', background: CONN_COLOR[connResult.connectivityStatus]||'#555', boxShadow:`0 0 8px ${CONN_COLOR[connResult.connectivityStatus]||'#555'}`}}/>
-                    <span style={{fontSize:18, fontWeight:700, color: CONN_COLOR[connResult.connectivityStatus]||C.muted}}>{connResult.connectivityStatus||'—'}</span>
+              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10}}>
+                {/* Connectivity */}
+                <div style={{background:'#0d1117', border:`1px solid ${CONN_COLOR[connResult.connectivityStatus]||'#555'}44`, borderRadius:6, padding:14}}>
+                  <div style={{fontSize:10, color:C.muted, marginBottom:8, fontWeight:700, textTransform:'uppercase'}}>Connectivity</div>
+                  <div style={{display:'flex', alignItems:'center', gap:8}}>
+                    <span style={{width:12, height:12, borderRadius:'50%', background:CONN_COLOR[connResult.connectivityStatus]||'#555', flexShrink:0,
+                      boxShadow:`0 0 8px ${CONN_COLOR[connResult.connectivityStatus]||'#555'}`}}/>
+                    <span style={{fontSize:15, fontWeight:700, color:CONN_COLOR[connResult.connectivityStatus]||C.muted}}>
+                      {connResult.connectivityStatus||'—'}
+                    </span>
                   </div>
-                  <div style={{marginTop:6, fontSize:11, color:C.muted}}>Last checked: {connResult.lastStatusTime ? new Date(connResult.lastStatusTime).toLocaleTimeString() : '—'}</div>
+                  <div style={{marginTop:6, fontSize:10, color:C.muted}}>
+                    {connResult.lastStatusTime ? new Date(connResult.lastStatusTime).toLocaleTimeString() : 'now'}
+                  </div>
                 </div>
+                {/* Roaming */}
                 <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
-                  <div style={{fontSize:10, color:C.muted, marginBottom:6, fontWeight:700}}>CAMARA API REQUEST</div>
-                  <code style={{fontSize:10, color:C.accent, lineHeight:1.6}}>
-                    GET /device-status/v0/connectivity<br/>
-                    ?ueId={ueId}<br/>
-                    → {JSON.stringify(connResult)}
+                  <div style={{fontSize:10, color:C.muted, marginBottom:8, fontWeight:700, textTransform:'uppercase'}}>Roaming</div>
+                  {roamResult ? (<>
+                    <div style={{display:'flex', alignItems:'center', gap:8}}>
+                      <span style={{width:12, height:12, borderRadius:'50%', background: roamResult.roaming ? '#f59e0b' : '#00c896', flexShrink:0,
+                        boxShadow:`0 0 8px ${roamResult.roaming ? '#f59e0b' : '#00c896'}`}}/>
+                      <span style={{fontSize:15, fontWeight:700, color: roamResult.roaming ? '#f59e0b' : '#00c896'}}>
+                        {roamResult.roaming ? 'ROAMING' : 'HOME'}
+                      </span>
+                    </div>
+                    <div style={{marginTop:6, fontSize:10, color:C.muted}}>Country: {roamResult.countryCode||'001'} · MCC/MNC: 001/01</div>
+                  </>) : <div style={{fontSize:11, color:C.muted}}>—</div>}
+                </div>
+                {/* Raw response */}
+                <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
+                  <div style={{fontSize:10, color:C.muted, marginBottom:6, fontWeight:700, textTransform:'uppercase'}}>API Response</div>
+                  <code style={{fontSize:9.5, color:C.accent, lineHeight:1.6, whiteSpace:'pre-wrap', wordBreak:'break-all'}}>
+                    {JSON.stringify(connResult, null, 2)}
                   </code>
                 </div>
               </div>
             )}
           </div>
-          {/* Info cards for all CAMARA device-status endpoints */}
+
+          {/* Location Verification */}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', letterSpacing:1, marginBottom:12}}>
+              Location Verification — CAMARA location-verification v0.2
+            </div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 120px 120px 120px auto', gap:10, alignItems:'end', marginBottom:locResult ? 12 : 0}}>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Device (UE)</div>
+                <select style={inputSt} value={ueId} onChange={e=>setUeId(e.target.value)}>
+                  <option value="ue1">ue1</option><option value="ue2">ue2</option>
+                </select>
+              </div>
+              <div><div style={{fontSize:11, color:C.muted, marginBottom:4}}>Latitude</div>
+                <input style={inputSt} value={locLat} onChange={e=>setLocLat(e.target.value)}/></div>
+              <div><div style={{fontSize:11, color:C.muted, marginBottom:4}}>Longitude</div>
+                <input style={inputSt} value={locLon} onChange={e=>setLocLon(e.target.value)}/></div>
+              <div><div style={{fontSize:11, color:C.muted, marginBottom:4}}>Radius (m)</div>
+                <input style={inputSt} type="number" value={locRadius} onChange={e=>setLocRadius(e.target.value)}/></div>
+              <button onClick={verifyLocation} disabled={!isUp||locLoading} style={btnPrimary(!isUp||locLoading)}>
+                {locLoading ? '⏳ Verifying…' : '📍 Verify'}
+              </button>
+            </div>
+            {locResult && (
+              <div style={{display:'grid', gridTemplateColumns:'auto 1fr', gap:10}}>
+                <div style={{background:'#0d1117', border:`1px solid #a78bfa44`, borderRadius:6, padding:14, minWidth:180}}>
+                  <div style={{fontSize:10, color:C.muted, marginBottom:8, fontWeight:700, textTransform:'uppercase'}}>Verification Result</div>
+                  <div style={{fontSize:18, fontWeight:700, color:'#a78bfa'}}>{locResult.verificationResult||'—'}</div>
+                  <div style={{marginTop:6, fontSize:10, color:C.muted}}>Testbed returns UNKNOWN — no real GPS</div>
+                </div>
+                <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
+                  <div style={{fontSize:10, color:C.muted, marginBottom:6, fontWeight:700, textTransform:'uppercase'}}>Request Sent</div>
+                  <code style={{fontSize:9.5, color:C.accent, lineHeight:1.6, whiteSpace:'pre-wrap'}}>
+{`POST /location-verification/v0/verify
+→ device: { networkAccessIdentifier: "${ueId}" }
+→ area: CIRCLE (${locLat}°, ${locLon}°) r=${locRadius}m
+← ${JSON.stringify(locResult)}`}
+                  </code>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* API reference */}
           <div style={{background:'#0d1c18', border:`1px solid ${C.accent}22`, borderRadius:6, padding:12}}>
-            <div style={{fontSize:11, color:C.accent, fontWeight:700, marginBottom:8}}>Device Status API (CAMARA device-status v0.6 · 3GPP TS 29.122)</div>
+            <div style={{fontSize:11, color:C.accent, fontWeight:700, marginBottom:8}}>Available Endpoints</div>
             {[
-              ['GET', '/device-status/v0/connectivity?ueId=', 'Returns CONNECTED_DATA | CONNECTED_SMS | NOT_CONNECTED'],
-              ['GET', '/device-status/v0/roaming?ueId=',      'Returns {roaming: false, countryCode: 001} (always home in testbed)'],
+              ['GET',  '/device-status/v0/connectivity?ueId=',  'Returns CONNECTED_DATA | CONNECTED_SMS | NOT_CONNECTED'],
+              ['GET',  '/device-status/v0/roaming?ueId=',       'Returns {roaming: false, countryCode: "001"} — always home'],
+              ['POST', '/location-verification/v0/verify',      'Returns {verificationResult: "UNKNOWN"} — testbed has no GPS'],
             ].map(([m,p,d]) => (
-              <div key={p} style={{display:'flex', gap:10, padding:'5px 0', borderBottom:`1px solid ${C.border}22`}}>
-                <span style={{width:44, fontSize:10, fontWeight:700, color:'#60a5fa', flexShrink:0}}>{m}</span>
-                <code style={{fontSize:10, color:C.muted, flex:1}}>{p}</code>
-                <span style={{fontSize:10, color:'#555'}}>{d}</span>
+              <div key={p} style={{display:'flex', gap:10, padding:'5px 0', borderBottom:`1px solid ${C.border}22`, alignItems:'center'}}>
+                <span style={{width:40, fontSize:10, fontWeight:700, color: m==='GET'?'#60a5fa':'#f59e0b', flexShrink:0}}>{m}</span>
+                <code style={{fontSize:10, color:C.text, flex:'0 0 360px'}}>{p}</code>
+                <span style={{fontSize:10, color:C.muted}}>{d}</span>
               </div>
             ))}
           </div>
