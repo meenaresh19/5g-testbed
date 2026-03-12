@@ -6,7 +6,7 @@
 COMPOSE = docker compose -f docker/docker-compose.yml --project-directory .
 PROJECT = 5g-testbed
 
-.PHONY: help up down restart logs status pull gen-config clean info ue2-up ue2-down oai-up oai-down iperf-ping ids-up ids-down ids-status ids-clear nef-up nef-down nef-status
+.PHONY: help up down restart logs status pull gen-config clean info ue2-up ue2-down oai-up oai-down iperf-ping ids-up ids-down ids-status ids-clear nef-up nef-down nef-status camara-up camara-down camara-status
 
 help:
 	@echo ""
@@ -36,6 +36,10 @@ help:
 	@echo "  nef-up        Start NEF (Free5GC Network Exposure Function)"
 	@echo "  nef-down      Stop NEF"
 	@echo "  nef-status    Show NEF status + Northbound API URL"
+	@echo "  ─────────────────────────────────────────────────"
+	@echo "  camara-up     Start CAMARA API server (device-status, QoD, ...)"
+	@echo "  camara-down   Stop CAMARA API server"
+	@echo "  camara-status Show CAMARA server state + API URLs"
 	@echo ""
 
 up:
@@ -160,3 +164,27 @@ nef-status:
 	@echo "  SBI     : http://10.45.0.25:8000"
 	@echo "  NRF     : http://10.45.0.10:7777"
 	@echo "  Proxy   : http://localhost:5000/nef-api/*"
+
+# ── CAMARA API Server ──────────────────────────────────────
+camara-up:
+	$(COMPOSE) --profile camara up -d 5g-camara-api
+	@echo ""
+	@echo "CAMARA API Server starting..."
+	@echo "  Direct API  : http://localhost:8081/camara/health"
+	@echo "  Proxy       : http://localhost:5000/camara-api/camara/health"
+	@echo "  APIs        : device-status, location-verification, qod,"
+	@echo "                device-reachability, simple-edge-discovery"
+	@echo "  UI          : http://localhost:3000  → CAMARA APIs tab"
+	@echo ""
+
+camara-down:
+	$(COMPOSE) --profile camara stop 5g-camara-api
+	@echo "CAMARA API server stopped"
+
+camara-status:
+	@echo "=== CAMARA API Server Status ==="
+	@docker inspect 5g-camara-api --format '  State   : {{.State.Status}}' 2>/dev/null || echo "  State   : not running (run: make camara-up)"
+	@docker inspect 5g-camara-api --format '  Started : {{.State.StartedAt}}' 2>/dev/null || true
+	@echo "  Direct  : http://localhost:8081/camara/health"
+	@echo "  Proxy   : http://localhost:5000/camara-api/camara/apis"
+	@echo "  Network : mgmt-net 172.22.0.31:8080"

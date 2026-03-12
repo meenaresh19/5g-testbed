@@ -337,6 +337,7 @@ function Icon({ name, size=16 }) {
     speed: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2C6.48 2 2 6.48 2 12"/><path d="M12 2c5.52 0 10 4.48 10 10"/><path d="M12 12l-4-4"/><circle cx="12" cy="12" r="2"/><path d="M2 12h2M20 12h2M12 2v2M12 20v2"/></svg>,
     shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>,
     nef:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12,2 22,7 22,17 12,22 2,17 2,7"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="7" x2="22" y2="7"/><line x1="2" y1="17" x2="22" y2="17"/></svg>,
+    camara: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4"/><path d="M17.7 6.3a8 8 0 0 1 0 11.4"/><path d="M3.5 3.5a13.5 13.5 0 0 0 0 17"/><path d="M20.5 3.5a13.5 13.5 0 0 1 0 17"/></svg>,
   };
   return icons[name] || null;
 }
@@ -2449,6 +2450,435 @@ function NEFPage() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════
+// CAMARA APIs PAGE  — CAMARA-Project standardised APIs
+// device-status · location-verification · QoD · reachability
+// ═══════════════════════════════════════════════════════════
+function CamaraAPIs() {
+  const [health,   setHealth]   = useState({ status:'DOWN', mgmtApiReachable:false, qodSessions:0, reachSubs:0 });
+  const [tab,      setTab]      = useState('status');
+  const [busy,     setBusy]     = useState(false);
+  const [msg,      setMsg]      = useState('');
+
+  // Device Status tab
+  const [ueId,     setUeId]     = useState('ue1');
+  const [connResult, setConnResult] = useState(null);
+  const [connLoading, setConnLoading] = useState(false);
+
+  // QoD tab
+  const [qodList,  setQodList]  = useState([]);
+  const [qodForm,  setQodForm]  = useState({ ueId:'ue1', qosProfile:'QOS_M', duration:3600 });
+  const [qodLoading, setQodLoading] = useState(false);
+
+  // Subscriptions tab
+  const [subList,  setSubList]  = useState([]);
+  const [subForm,  setSubForm]  = useState({ ueId:'ue1', notifUrl:'http://10.45.0.30:8081/camara/callback' });
+  const [subLoading, setSubLoading] = useState(false);
+
+  // Notifications tab
+  const [notifs,   setNotifs]   = useState([]);
+
+  const QOS_LABELS = { QOS_E:'Best Effort', QOS_S:'Small ≥2 Mbps', QOS_M:'Medium ≥10 Mbps', QOS_L:'Large ≥20 Mbps', QOS_REAL_TIME_CONVERSATIONAL:'Real-Time' };
+  const CONN_COLOR  = { CONNECTED_DATA:'#00c896', CONNECTED_SMS:'#f59e0b', NOT_CONNECTED:'#ef4444' };
+  const QOS_COLOR   = { AVAILABLE:'#00c896', REQUESTED:'#f59e0b', UNAVAILABLE:'#ef4444' };
+
+  const callCamara = (path, opts) => apiFetch(`/camara-api${path}`, opts);
+
+  const loadHealth = async () => {
+    const d = await callCamara('/camara/health');
+    if (d) setHealth(d);
+  };
+
+  const loadQod = async () => {
+    setQodLoading(true);
+    const d = await callCamara('/qod/v0/sessions');
+    if (Array.isArray(d)) setQodList(d);
+    setQodLoading(false);
+  };
+
+  const loadSubs = async () => {
+    setSubLoading(true);
+    const d = await callCamara('/device-reachability/v0/subscriptions');
+    if (Array.isArray(d)) setSubList(d);
+    setSubLoading(false);
+  };
+
+  const loadNotifs = async () => {
+    const d = await callCamara('/camara/notifications');
+    if (Array.isArray(d)) setNotifs(d);
+  };
+
+  useEffect(() => {
+    loadHealth();
+    const t = setInterval(loadHealth, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'qod')   loadQod();
+    if (tab === 'subs')  loadSubs();
+    if (tab === 'notifs') { loadNotifs(); }
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'notifs') return;
+    const t = setInterval(loadNotifs, 3000);
+    return () => clearInterval(t);
+  }, [tab]);
+
+  const checkDeviceStatus = async () => {
+    setConnLoading(true); setConnResult(null);
+    const d = await callCamara(`/device-status/v0/connectivity?ueId=${encodeURIComponent(ueId)}`);
+    setConnResult(d);
+    setConnLoading(false);
+  };
+
+  const createQodSession = async () => {
+    setBusy(true); setMsg('Creating QoD session...');
+    const body = {
+      device: { networkAccessIdentifier: qodForm.ueId },
+      qosProfile: qodForm.qosProfile,
+      duration: parseInt(qodForm.duration),
+    };
+    const d = await callCamara('/qod/v0/sessions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (d?.sessionId) setMsg(`Session created: ${d.sessionId}`);
+    else setMsg('Failed to create session');
+    await loadQod();
+    setBusy(false);
+    setTimeout(() => setMsg(''), 4000);
+  };
+
+  const deleteQodSession = async (id) => {
+    await callCamara(`/qod/v0/sessions/${id}`, { method:'DELETE' });
+    loadQod();
+  };
+
+  const createSub = async () => {
+    setBusy(true); setMsg('Creating subscription...');
+    const body = {
+      device: { networkAccessIdentifier: subForm.ueId },
+      webhook: { notificationUrl: subForm.notifUrl },
+    };
+    const d = await callCamara('/device-reachability/v0/subscriptions', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if (d?.subscriptionId) setMsg(`Subscription created: ${d.subscriptionId}`);
+    else setMsg('Failed to create subscription');
+    await loadSubs();
+    setBusy(false);
+    setTimeout(() => setMsg(''), 4000);
+  };
+
+  const deleteSub = async (id) => {
+    await callCamara(`/device-reachability/v0/subscriptions/${id}`, { method:'DELETE' });
+    loadSubs();
+  };
+
+  const clearNotifs = async () => {
+    await callCamara('/camara/notifications', { method:'DELETE' });
+    setNotifs([]);
+  };
+
+  const startCamara = async () => {
+    setBusy(true); setMsg('Starting CAMARA API server...');
+    await apiFetch('/nf/camara-api/start', { method:'POST' });
+    setTimeout(() => { loadHealth(); setMsg(''); setBusy(false); }, 3000);
+  };
+
+  const stopCamara = async () => {
+    setBusy(true); setMsg('Stopping CAMARA API server...');
+    await apiFetch('/nf/camara-api/stop', { method:'POST' });
+    setTimeout(() => { loadHealth(); setMsg(''); setBusy(false); }, 2000);
+  };
+
+  const isUp      = health.status === 'UP';
+  const C  = { bg:'#0d1117', card:'#161b22', border:'#30363d', text:'#e6edf3', muted:'#8b949e', accent:'#00c896' };
+  const tabStyle = (t) => ({ padding:'6px 16px', borderRadius:4, cursor:'pointer', fontSize:12, fontWeight:600,
+    background: tab===t ? C.accent : 'transparent', color: tab===t ? '#000' : C.muted, border:'none',
+    transition:'all .15s', marginRight:4 });
+  const inputSt  = { background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:4, color:C.text, padding:'6px 10px', fontSize:12, width:'100%', boxSizing:'border-box' };
+  const btnPrimary = (off) => ({ padding:'6px 16px', background: off ? '#333' : C.accent, color: off ? C.muted : '#000', border:'none', borderRadius:4, cursor: off ? 'not-allowed':'pointer', fontSize:12, fontWeight:700 });
+  const btnDanger  = { padding:'4px 10px', background:'transparent', color:'#ef4444', border:'1px solid #ef4444', borderRadius:3, cursor:'pointer', fontSize:11 };
+
+  const CAMARA_APIS = [
+    { name:'Device Status',          spec:'device-status/v0.6',          ts:'TS 29.122',  color:'#60a5fa', desc:'UE connectivity & roaming detection' },
+    { name:'Location Verification',  spec:'location-verification/v0.2',   ts:'TS 29.572',  color:'#a78bfa', desc:'Verify UE is within a geographic area' },
+    { name:'Quality on Demand',      spec:'qod/v0.10',                    ts:'TS 29.522',  color:'#00c896', desc:'Create QoS sessions via NEF Traffic Influence' },
+    { name:'Device Reachability',    spec:'device-reachability/v0',       ts:'TS 29.508',  color:'#f59e0b', desc:'Subscribe to UE reachability events via NEF' },
+    { name:'Simple Edge Discovery',  spec:'simple-edge-discovery/v1',     ts:'MEC-003',    color:'#f87171', desc:'Discover available MEC platforms' },
+  ];
+
+  return (
+    <div style={{color:C.text, fontSize:13}}>
+
+      {/* Status row */}
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:16}}>
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>CAMARA API Server</div>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:6}}>
+            <span style={{width:10, height:10, borderRadius:'50%', background: isUp ? C.accent : '#ef4444', boxShadow:`0 0 6px ${isUp?C.accent:'#ef4444'}`}}/>
+            <span style={{fontWeight:700, fontSize:14}}>{isUp ? 'Running' : 'Stopped'}</span>
+          </div>
+          <div style={{color:C.muted, fontSize:11}}>Port: 8080 (container) · 8081 (host)</div>
+          <div style={{color:C.muted, fontSize:11}}>Mgmt API: {health.mgmtApiReachable ? '✓ Reachable' : '✗ Unreachable'}</div>
+        </div>
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>Active Sessions</div>
+          <div style={{display:'flex', gap:20, marginTop:4}}>
+            <div><div style={{fontSize:24, fontWeight:700, color:C.accent}}>{health.qodSessions||0}</div><div style={{fontSize:10, color:C.muted}}>QoD Sessions</div></div>
+            <div><div style={{fontSize:24, fontWeight:700, color:'#f59e0b'}}>{health.reachSubs||0}</div><div style={{fontSize:10, color:C.muted}}>Reachability Subs</div></div>
+            <div><div style={{fontSize:24, fontWeight:700, color:'#a78bfa'}}>{health.notifications||0}</div><div style={{fontSize:10, color:C.muted}}>Notifications</div></div>
+          </div>
+        </div>
+        <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>CAMARA APIs ({CAMARA_APIS.length})</div>
+          {CAMARA_APIS.map(a => (
+            <div key={a.name} style={{display:'flex', alignItems:'center', gap:6, marginBottom:3}}>
+              <span style={{width:6, height:6, borderRadius:'50%', background: isUp ? a.color : C.border, flexShrink:0}}/>
+              <span style={{fontSize:10, color: isUp ? C.text : C.muted}}>{a.spec}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:16}}>
+        <button onClick={startCamara} disabled={busy || isUp} style={btnPrimary(busy || isUp)}>▶ Start CAMARA</button>
+        <button onClick={stopCamara}  disabled={busy || !isUp} style={{...btnPrimary(busy||!isUp), background:(busy||!isUp)?'#333':'#ef4444', color:(busy||!isUp)?C.muted:'#fff'}}>■ Stop</button>
+        {msg && <span style={{color:C.accent, fontSize:12}}>{msg}</span>}
+        {!isUp && <span style={{color:'#f59e0b', fontSize:11, marginLeft:'auto'}}>⚠ Run <code style={{background:'#1c2128', padding:'1px 5px', borderRadius:3}}>make camara-up</code> or click Start</span>}
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:'flex', marginBottom:14, borderBottom:`1px solid ${C.border}`, paddingBottom:8}}>
+        {[['status','Device Status'],['qod','QoD Sessions'],['subs','Reachability Subs'],['notifs','Notifications'],['catalog','API Catalog']].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={tabStyle(id)}>{label}</button>
+        ))}
+      </div>
+
+      {/* ── TAB: Device Status ── */}
+      {tab === 'status' && (
+        <div>
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14, marginBottom:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>Check Device Connectivity</div>
+            <div style={{display:'flex', gap:10, alignItems:'end'}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>UE Identifier</div>
+                <select style={inputSt} value={ueId} onChange={e=>setUeId(e.target.value)}>
+                  <option value="ue1">ue1 — IMSI 001010000000001</option>
+                  <option value="ue2">ue2 — IMSI 001010000000002</option>
+                </select>
+              </div>
+              <button onClick={checkDeviceStatus} disabled={!isUp || connLoading} style={btnPrimary(!isUp || connLoading)}>
+                {connLoading ? 'Checking…' : '⚡ Check Status'}
+              </button>
+            </div>
+            {connResult && (
+              <div style={{marginTop:14, display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
+                <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
+                  <div style={{fontSize:10, color:C.muted, marginBottom:6, fontWeight:700}}>CONNECTIVITY STATUS</div>
+                  <div style={{display:'flex', alignItems:'center', gap:10}}>
+                    <span style={{width:12, height:12, borderRadius:'50%', background: CONN_COLOR[connResult.connectivityStatus]||'#555', boxShadow:`0 0 8px ${CONN_COLOR[connResult.connectivityStatus]||'#555'}`}}/>
+                    <span style={{fontSize:18, fontWeight:700, color: CONN_COLOR[connResult.connectivityStatus]||C.muted}}>{connResult.connectivityStatus||'—'}</span>
+                  </div>
+                  <div style={{marginTop:6, fontSize:11, color:C.muted}}>Last checked: {connResult.lastStatusTime ? new Date(connResult.lastStatusTime).toLocaleTimeString() : '—'}</div>
+                </div>
+                <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:14}}>
+                  <div style={{fontSize:10, color:C.muted, marginBottom:6, fontWeight:700}}>CAMARA API REQUEST</div>
+                  <code style={{fontSize:10, color:C.accent, lineHeight:1.6}}>
+                    GET /device-status/v0/connectivity<br/>
+                    ?ueId={ueId}<br/>
+                    → {JSON.stringify(connResult)}
+                  </code>
+                </div>
+              </div>
+            )}
+          </div>
+          {/* Info cards for all CAMARA device-status endpoints */}
+          <div style={{background:'#0d1c18', border:`1px solid ${C.accent}22`, borderRadius:6, padding:12}}>
+            <div style={{fontSize:11, color:C.accent, fontWeight:700, marginBottom:8}}>Device Status API (CAMARA device-status v0.6 · 3GPP TS 29.122)</div>
+            {[
+              ['GET', '/device-status/v0/connectivity?ueId=', 'Returns CONNECTED_DATA | CONNECTED_SMS | NOT_CONNECTED'],
+              ['GET', '/device-status/v0/roaming?ueId=',      'Returns {roaming: false, countryCode: 001} (always home in testbed)'],
+            ].map(([m,p,d]) => (
+              <div key={p} style={{display:'flex', gap:10, padding:'5px 0', borderBottom:`1px solid ${C.border}22`}}>
+                <span style={{width:44, fontSize:10, fontWeight:700, color:'#60a5fa', flexShrink:0}}>{m}</span>
+                <code style={{fontSize:10, color:C.muted, flex:1}}>{p}</code>
+                <span style={{fontSize:10, color:'#555'}}>{d}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: QoD Sessions ── */}
+      {tab === 'qod' && (
+        <div>
+          {!isUp && <div style={{background:'#1c1207', border:'1px solid #f59e0b44', borderRadius:6, padding:12, color:'#f59e0b', fontSize:12, marginBottom:12}}>Start CAMARA API server first.</div>}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14, marginBottom:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>Create QoD Session</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 120px auto', gap:10, alignItems:'end'}}>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Device (UE)</div>
+                <select style={inputSt} value={qodForm.ueId} onChange={e=>setQodForm(p=>({...p,ueId:e.target.value}))}>
+                  <option value="ue1">ue1</option><option value="ue2">ue2</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>QoS Profile</div>
+                <select style={inputSt} value={qodForm.qosProfile} onChange={e=>setQodForm(p=>({...p,qosProfile:e.target.value}))}>
+                  {Object.entries(QOS_LABELS).map(([k,v])=><option key={k} value={k}>{k} — {v}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Duration (s)</div>
+                <input style={inputSt} type="number" value={qodForm.duration} onChange={e=>setQodForm(p=>({...p,duration:e.target.value}))}/>
+              </div>
+              <button onClick={createQodSession} disabled={!isUp||busy} style={btnPrimary(!isUp||busy)}>+ Create</button>
+            </div>
+          </div>
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6}}>
+            <div style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase'}}>
+              Active QoD Sessions {qodLoading && '(loading…)'}
+            </div>
+            {qodList.length === 0 ? (
+              <div style={{padding:24, textAlign:'center', color:C.muted, fontSize:12}}>No QoD sessions. Create one above.</div>
+            ) : qodList.map(s=>(
+              <div key={s.sessionId} style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:10}}>
+                <span style={{background: (QOS_COLOR[s.qosStatus]||'#555')+'22', color: QOS_COLOR[s.qosStatus]||'#555', padding:'2px 8px', borderRadius:3, fontSize:10, fontWeight:700}}>{s.qosStatus}</span>
+                <span style={{fontWeight:600, fontSize:12}}>{s.qosProfile}</span>
+                <span style={{color:C.muted, fontSize:11}}>{s.device?.networkAccessIdentifier||'—'}</span>
+                <span style={{color:C.muted, fontSize:10, flex:1}}>ID: {s.sessionId}</span>
+                <span style={{color:C.muted, fontSize:10}}>exp: {s.expiresAt ? new Date(s.expiresAt).toLocaleTimeString() : '—'}</span>
+                {s.nefSubscriptionId && <span style={{color:C.accent, fontSize:10}}>NEF ✓</span>}
+                <button onClick={()=>deleteQodSession(s.sessionId)} style={btnDanger}>Delete</button>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:12, background:'#0d1c18', border:`1px solid ${C.accent}22`, borderRadius:6, padding:12}}>
+            <div style={{fontSize:11, color:C.accent, fontWeight:700, marginBottom:6}}>QoD → NEF Mapping (CAMARA qod v0.10 · 3GPP TS 29.522)</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr 1fr', gap:8}}>
+              {Object.entries(QOS_LABELS).map(([k,v])=>(
+                <div key={k} style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:4, padding:8, textAlign:'center'}}>
+                  <div style={{fontSize:11, fontWeight:700, color:C.accent}}>{k}</div>
+                  <div style={{fontSize:10, color:C.muted, marginTop:2}}>{v}</div>
+                  <div style={{fontSize:9, color:'#555', marginTop:4}}>→ NEF TrafficInfluence</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: Reachability Subscriptions ── */}
+      {tab === 'subs' && (
+        <div>
+          {!isUp && <div style={{background:'#1c1207', border:'1px solid #f59e0b44', borderRadius:6, padding:12, color:'#f59e0b', fontSize:12, marginBottom:12}}>Start CAMARA API server first.</div>}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:14, marginBottom:14}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:10}}>New Reachability Subscription</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 2fr auto', gap:10, alignItems:'end'}}>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Device (UE)</div>
+                <select style={inputSt} value={subForm.ueId} onChange={e=>setSubForm(p=>({...p,ueId:e.target.value}))}>
+                  <option value="ue1">ue1</option><option value="ue2">ue2</option>
+                </select>
+              </div>
+              <div>
+                <div style={{fontSize:11, color:C.muted, marginBottom:4}}>Notification URL (webhook)</div>
+                <input style={inputSt} value={subForm.notifUrl} onChange={e=>setSubForm(p=>({...p,notifUrl:e.target.value}))}/>
+              </div>
+              <button onClick={createSub} disabled={!isUp||busy} style={btnPrimary(!isUp||busy)}>+ Subscribe</button>
+            </div>
+          </div>
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6}}>
+            <div style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase'}}>
+              Active Subscriptions {subLoading && '(loading…)'}
+            </div>
+            {subList.length === 0 ? (
+              <div style={{padding:24, textAlign:'center', color:C.muted, fontSize:12}}>No subscriptions yet.</div>
+            ) : subList.map(s=>(
+              <div key={s.subscriptionId} style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:10}}>
+                <span style={{background:'#f59e0b20', color:'#f59e0b', padding:'2px 8px', borderRadius:3, fontSize:10, fontWeight:700}}>REACHABILITY</span>
+                <span style={{color:C.muted, fontSize:11}}>UE: {s.device?.networkAccessIdentifier||'—'}</span>
+                <span style={{color:C.muted, fontSize:10, flex:1}}>ID: {s.subscriptionId}</span>
+                <span style={{color:C.muted, fontSize:10, overflow:'hidden', textOverflow:'ellipsis', maxWidth:200}}>{s.webhook?.notificationUrl}</span>
+                {s.nefSubscriptionId && <span style={{color:C.accent, fontSize:10}}>NEF ✓</span>}
+                <button onClick={()=>deleteSub(s.subscriptionId)} style={btnDanger}>Delete</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: Notifications ── */}
+      {tab === 'notifs' && (
+        <div>
+          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10}}>
+            <span style={{fontSize:12, color:C.muted}}>Live feed — auto-refreshes every 3s</span>
+            <button onClick={clearNotifs} style={{...btnDanger, border:'none', color:C.muted, fontSize:11}}>Clear All</button>
+          </div>
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6}}>
+            {notifs.length === 0 ? (
+              <div style={{padding:32, textAlign:'center', color:C.muted, fontSize:12}}>
+                No notifications received yet.<br/>
+                <span style={{fontSize:11}}>Notifications arrive when NEF sends reachability events to the CAMARA callback URL.</span>
+              </div>
+            ) : notifs.map((n,i)=>(
+              <div key={i} style={{padding:'10px 14px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'flex-start', gap:10}}>
+                <span style={{background:'#a78bfa20', color:'#a78bfa', padding:'2px 8px', borderRadius:3, fontSize:10, fontWeight:700, flexShrink:0}}>
+                  {n.type||'EVENT'}
+                </span>
+                <span style={{fontSize:10, color:C.muted, flexShrink:0}}>{n.receivedAt ? new Date(n.receivedAt).toLocaleTimeString() : '—'}</span>
+                <pre style={{margin:0, fontSize:10, color:C.text, flex:1, whiteSpace:'pre-wrap', wordBreak:'break-all', lineHeight:1.4}}>
+                  {typeof n.data === 'object' ? JSON.stringify(n.data, null, 2) : String(n.data)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: API Catalog ── */}
+      {tab === 'catalog' && (
+        <div style={{display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(340px,1fr))', gap:12}}>
+          {CAMARA_APIS.map(api=>(
+            <div key={api.name} style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:16}}>
+              <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:8}}>
+                <span style={{width:10, height:10, borderRadius:'50%', background: isUp ? api.color : C.border}}/>
+                <span style={{fontWeight:700, fontSize:13}}>{api.name}</span>
+                <span style={{marginLeft:'auto', fontSize:10, color:C.muted, background:'#1c2128', padding:'2px 6px', borderRadius:3}}>{api.ts}</span>
+              </div>
+              <div style={{fontSize:11, color:C.muted, marginBottom:8}}>{api.desc}</div>
+              <div style={{fontSize:10, color: api.color, fontFamily:'monospace', background:'#0d1117', padding:'6px 8px', borderRadius:3}}>{api.spec}</div>
+              <a href={`https://github.com/camaraproject/${api.name.replace(/ /g,'')}`} target="_blank" rel="noreferrer"
+                style={{display:'block', marginTop:8, fontSize:10, color:C.muted, textDecoration:'none'}}>
+                ↗ CAMARA GitHub spec
+              </a>
+            </div>
+          ))}
+          {/* Simple Edge Discovery demo */}
+          <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:16, gridColumn:'1 / -1'}}>
+            <div style={{fontSize:11, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>Simple Edge Discovery — MEC Platforms</div>
+            <div style={{fontSize:11, color:C.muted, marginBottom:8}}>
+              <code style={{background:'#0d1117', padding:'2px 6px', borderRadius:3}}>GET /simple-edge-discovery/v1/mec-platforms</code>
+              {' '}→ Returns the testbed's iPerf3 server (10.45.0.200:5201) as a MEC platform.
+            </div>
+            {isUp && (
+              <button onClick={async()=>{ const d=await callCamara('/simple-edge-discovery/v1/mec-platforms'); setMsg(JSON.stringify(d,null,2)); }}
+                style={{...btnPrimary(false), fontSize:11}}>
+                ⚡ Discover MEC Platforms
+              </button>
+            )}
+            {msg && msg.startsWith('[') && (
+              <pre style={{marginTop:10, background:'#0d1117', padding:10, borderRadius:4, fontSize:11, color:C.accent, overflow:'auto', maxHeight:200}}>
+                {msg}
+              </pre>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main App ──────────────────────────────────────────────
 function App() {
   const [page, setPage] = useState('dashboard');
@@ -2496,6 +2926,7 @@ function App() {
     {id:'grafana',    label:'Dashboards',  icon:'chart',     group:'obs', external: `http://${location.hostname}:3001`},
     {id:'ids',        label:'IDS Monitor', icon:'shield',    group:'security'},
     {id:'nef',        label:'NEF',         icon:'nef',       group:'security'},
+    {id:'camara',     label:'CAMARA APIs', icon:'camara',    group:'security'},
   ];
 
   const groups = {overview:'Overview', network:'Network', data:'Data Plane', ops:'Operations', obs:'Observability', security:'Security'};
@@ -2512,6 +2943,7 @@ function App() {
     grafana:    ['GRAFANA',        'Opens Grafana dashboards in a new tab'],
     ids:        ['IDS MONITOR',    'Zeek + Scapy intrusion detection — SBI/N2 control plane + N3/N4 data plane'],
     nef:        ['NEF — NETWORK EXPOSURE FUNCTION', 'Free5GC Northbound API — event exposure · PFD management · traffic influence'],
+    camara:     ['CAMARA APIs', 'CAMARA-Project standardised APIs — device-status · QoD · location · reachability · edge discovery'],
   };
 
   return (
@@ -2579,6 +3011,7 @@ function App() {
             {page === 'logs'       && <LogsPage/>}
             {page === 'ids'        && <SecurityIDS/>}
             {page === 'nef'        && <NEFPage/>}
+            {page === 'camara'     && <CamaraAPIs/>}
           </div>
         </div>
       </div>

@@ -1,0 +1,13 @@
+{
+  "name": "camara-api",
+  "version": "1.0.0",
+  "description": "CAMARA API Server for 5G Testbed — exposes standardized CAMARA REST APIs over Open5GS + Free5GC NEF",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2"
+  }
+}

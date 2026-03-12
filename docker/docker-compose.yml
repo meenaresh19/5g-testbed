@@ -31,6 +31,7 @@ volumes:
   grafana-data:       # Grafana state, plugins, user data
   loki-data:          # Loki log chunks
   ids-data:           # Zeek + Scapy IDS alerts/logs (shared with API)
+  camara-node-modules: # CAMARA API server npm cache
   # Note: ./traces is a host bind-mount (not a named volume) so PCAP files
   # persist and are accessible for download even after containers restart.
 
@@ -728,3 +729,47 @@ services:
     labels:
       com.5g-testbed.nf: "nef"
       com.5g-testbed.type: "core"
+
+  # ============================================================
+  # CAMARA API SERVER
+  # Exposes CAMARA-Project standardised REST APIs on top of
+  # Open5GS + Free5GC NEF:
+  #   device-status/v0        — UE connectivity & roaming
+  #   location-verification/v0 — UE location verification
+  #   qod/v0                  — Quality on Demand (NEF TI)
+  #   device-reachability/v0  — Event subscriptions (NEF EE)
+  #   simple-edge-discovery/v1 — MEC platform discovery
+  # Start: make camara-up  |  Direct: http://localhost:8081
+  # Proxy: http://localhost:5000/camara-api/camara/health
+  # ============================================================
+  5g-camara-api:
+    image: node:18-alpine
+    container_name: 5g-camara-api
+    working_dir: /app
+    volumes:
+      - ./camara:/app:ro
+      - camara-node-modules:/app/node_modules
+    command: >
+      sh -c "npm install --quiet --no-audit 2>&1 | tail -3 &&
+             exec node server.js"
+    networks:
+      mgmt-net:
+        ipv4_address: 172.22.0.31
+    ports:
+      - "8081:8080"
+    environment:
+      MGMT_API_URL: http://5g-testbed-api:5000
+      MCC: "001"
+      MNC: "01"
+    depends_on:
+      - testbed-api
+    profiles: [camara]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/camara/health 2>/dev/null | grep -q UP"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      com.5g-testbed.nf: "camara-api"
+      com.5g-testbed.type: "api"

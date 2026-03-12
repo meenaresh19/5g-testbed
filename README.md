@@ -17,11 +17,11 @@ Ubuntu 22.04 / 24.04 · Docker Compose · Kubernetes (K3s)
 │  ueransim-ue1 │  UPF  AUSF UDM  UDR      │  Open5GS WebUI  :9999         │
 │  ueransim-ue2 │  PCF  BSF  NSSF          │  API Server     :5000         │
 │               │  NEF (Free5GC) :8000     │  Grafana        :3001         │
-│  (optional)   │                          │  Grafana        :3001         │
-│               │  iPerf3 server           │  Prometheus     :9090         │
-│  OAI gNB+UE   │  (10.45.0.200)           │  Loki + Promtail              │
-│  (--profile   │                          │  Zeek IDS (ctrl-plane)        │
-│   oai)        │                          │  Scapy IDS (data-plane)       │
+│  (optional)   │                          │  Prometheus     :9090         │
+│               │  iPerf3 server           │  Loki + Promtail              │
+│  OAI gNB+UE   │  (10.45.0.200)           │  Zeek IDS (ctrl-plane)        │
+│  (--profile   │                          │  Scapy IDS (data-plane)       │
+│   oai)        │                          │  CAMARA APIs    :8081         │
 └───────────────┴──────────────────────────┴───────────────────────────────┘
 ```
 
@@ -74,6 +74,8 @@ make info                           # show all URLs
 | **Logs** | Aggregated log viewer for all NFs |
 | **Dashboards** | Opens Grafana (5G Core / RAN / System dashboards) |
 | **IDS Monitor** | Zeek + Scapy intrusion detection — alert feed, start/stop engines |
+| **NEF** | Free5GC NEF — event exposure, PFD management, traffic influence, API explorer |
+| **CAMARA APIs** | CAMARA-Project standardised APIs — device-status, QoD, location, reachability, edge discovery |
 
 ---
 
@@ -133,6 +135,50 @@ make nef-status  # show container state + API URLs
 | Management UI | `http://localhost:3000` → **NEF tab** |
 
 **UI Tabs:** Event Exposure · PFD Management · Traffic Influence · API Explorer (interactive Northbound API tester with request templates)
+
+---
+
+## CAMARA APIs
+
+The testbed exposes **CAMARA-Project** standardised REST APIs — a set of developer-friendly network APIs defined by the Linux Foundation / GSMA that sit on top of the 3GPP NEF Northbound interface.
+
+```bash
+make camara-up      # start CAMARA API server (requires NEF optional)
+make camara-down    # stop CAMARA server
+make camara-status  # show container state + API URLs
+```
+
+| CAMARA API | Spec Version | Maps to | Key Endpoint |
+|---|---|---|---|
+| **Device Status** | device-status v0.6 | UE container state | `GET /device-status/v0/connectivity?ueId=ue1` |
+| **Device Roaming** | device-status v0.6 | Always home (testbed) | `GET /device-status/v0/roaming?ueId=ue1` |
+| **Location Verification** | location-verification v0.2 | Simulated (UNKNOWN) | `POST /location-verification/v0/verify` |
+| **Quality on Demand** | qod v0.10 | NEF Traffic Influence | `POST /qod/v0/sessions` |
+| **Device Reachability** | device-status v0.6 | NEF Event Exposure | `POST /device-reachability/v0/subscriptions` |
+| **Simple Edge Discovery** | simple-edge-discovery v1 | iPerf3 as MEC node | `GET /simple-edge-discovery/v1/mec-platforms` |
+
+**QoS Profiles (QoD API):**
+
+| Profile | Throughput | NEF Action |
+|---------|-----------|------------|
+| `QOS_E` | Best effort | Default routing |
+| `QOS_S` | ≥ 2 Mbps | NEF Traffic Influence priority |
+| `QOS_M` | ≥ 10 Mbps | NEF Traffic Influence priority |
+| `QOS_L` | ≥ 20 Mbps | NEF Traffic Influence priority |
+| `QOS_REAL_TIME_CONVERSATIONAL` | Low-latency | NEF Traffic Influence |
+
+**Access:**
+
+| Endpoint | URL |
+|---|---|
+| CAMARA server (direct) | `http://localhost:8081/camara/health` |
+| CAMARA API catalog | `http://localhost:8081/camara/apis` |
+| Proxy (via Management API) | `http://localhost:5000/camara-api/camara/*` |
+| Management UI | `http://localhost:3000` → **CAMARA APIs tab** |
+
+**Architecture:** `UI → Management API (:5000) → /camara-api/* → CAMARA server (:8081) → /nef-api/* → Management API → Free5GC NEF (10.45.0.25:8000)`
+
+**UI Tabs:** Device Status · QoD Sessions · Reachability Subscriptions · Notifications · API Catalog
 
 ---
 
@@ -201,6 +247,7 @@ PCAP files are written to `./traces/` and downloadable via the UI or `GET /trace
 | UPF | core | 10.45.0.14 |
 | AUSF/UDM/UDR/PCF/BSF/NSSF | core | 10.45.0.15–20 |
 | NEF (Free5GC) | core | 10.45.0.25 |
+| CAMARA API server | mgmt | 172.22.0.31 (port 8081 on host) |
 | UERANSIM gNB | ran + core | 192.168.70.20 · 10.45.0.50 |
 | UERANSIM UE1 | ran | 192.168.70.30 |
 | UERANSIM UE2 | ran | 192.168.70.31 |
@@ -259,6 +306,10 @@ make ids-clear       Clear alert files
 make nef-up          Start Free5GC NEF (Network Exposure Function)
 make nef-down        Stop NEF
 make nef-status      Show NEF state + Northbound API URL
+
+make camara-up       Start CAMARA API server (device-status, QoD, location, ...)
+make camara-down     Stop CAMARA API server
+make camara-status   Show CAMARA server state + API URLs
 ```
 
 ---
@@ -299,5 +350,7 @@ docker exec open5gs-amf ss -s | grep sctp
 | Prometheus | latest |
 | Grafana | latest |
 | Zeek IDS | latest |
+| Free5GC NEF | v3.4.3 |
+| Node.js (CAMARA) | 18-alpine |
 | Docker | 24+ |
 | K3s | v1.29+ |

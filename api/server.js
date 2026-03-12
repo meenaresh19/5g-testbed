@@ -48,6 +48,8 @@ const NAME_TO_NF = {
   '5g-scapy-ids': 'scapy-ids',
   // NEF (Free5GC)
   '5g-nef':       'nef',
+  // CAMARA API Server
+  '5g-camara-api': 'camara-api',
   // Management
   '5g-testbed-ui':   'ui',
   '5g-testbed-api':  'api',
@@ -773,6 +775,39 @@ app.all('/nef-api/*', async (req, res) => {
     res.status(upstream.status).json(body);
   } catch (err) {
     res.status(503).json({ error: 'NEF unreachable', detail: err.message, nefUrl: `${NEF_BASE}${nefPath}` });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// CAMARA API proxy  →  CAMARA API Server (5g-camara-api:8080)
+// All /camara-api/* requests are forwarded transparently.
+// ═══════════════════════════════════════════════════════════
+const CAMARA_BASE = process.env.CAMARA_URL || 'http://5g-camara-api:8080';
+
+app.all('/camara-api/*', async (req, res) => {
+  const camaraPath = req.url.replace('/camara-api', '') || '/';
+  const opts = {
+    method:  req.method,
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    signal:  AbortSignal.timeout(12000),
+  };
+  if (['POST', 'PUT', 'PATCH'].includes(req.method) && req.body && Object.keys(req.body).length) {
+    opts.body = JSON.stringify(req.body);
+  }
+  try {
+    const upstream = await fetch(`${CAMARA_BASE}${camaraPath}`, opts);
+    const ct   = upstream.headers.get('content-type') || '';
+    let body;
+    try { body = ct.includes('json') ? await upstream.json() : await upstream.text(); }
+    catch { body = {}; }
+    res.status(upstream.status).json(body);
+  } catch (err) {
+    res.status(503).json({
+      error:    'CAMARA API server unreachable',
+      detail:   err.message,
+      camaraUrl: `${CAMARA_BASE}${camaraPath}`,
+      hint:     'Run: make camara-up',
+    });
   }
 });
 
