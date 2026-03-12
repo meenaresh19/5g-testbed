@@ -294,12 +294,6 @@ const INIT_SLICES = [
     dnn:'iot',      qos:'5QI-65', ues:12, ul:'1 Mbps', dl:'1 Mbps', active:false },
 ];
 
-const INIT_SUBS = [
-  { imsi:'001010000000001', key:'fec86ba6eb707ed0', opc:'C42449363BBAD02B', dnn:'internet', sst:1, sd:'000000', state:'REGISTERED' },
-  { imsi:'001010000000002', key:'0c0a34601d4f07677303652c0462535b', opc:'63bfa50ee6523365ff14c1f45f88737d', dnn:'urllc', sst:2, sd:'000001', state:'REGISTERED' },
-  { imsi:'001010000000003', key:'465b5ce8b199b49faa5f0a2ee238a6bc', opc:'e8ed289deba952e4283b54e88e6183ca', dnn:'iot', sst:3, sd:'000001', state:'IDLE' },
-];
-
 const LOGS = [
   { ts:'10:42:33', nf:'AMF', msg:'UE registered IMSI=001010000000001 SST=1', lvl:'ok' },
   { ts:'10:42:34', nf:'SMF', msg:'PDU Session established DNN=internet QFI=1', lvl:'ok' },
@@ -846,106 +840,252 @@ function SliceManager({ slices, setSlices }) {
   );
 }
 
-// ── Subscriptions Page ────────────────────────────────────
-function Subscriptions({ subs, setSubs }) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [newSub, setNewSub] = useState({
-    imsi:'001010000000004', key:'', opc:'',
-    dnn:'internet', sst:'1', sd:'000000',
-  });
+// ── Subscriptions Page — real MongoDB CRUD ────────────────
+function Subscriptions() {
+  const BLANK = { imsi:'', key:'', opc:'', dnn:'internet', sst:'1', sd:'000000', ambrDl:'1024', ambrUl:'1024' };
+  const [subs,       setSubs]       = useState([]);
+  const [loading,    setLoading]    = useState(false);
+  const [msg,        setMsg]        = useState(null);      // {text, ok}
+  const [showAdd,    setShowAdd]    = useState(false);
+  const [editSub,    setEditSub]    = useState(null);      // sub object being edited
+  const [form,       setForm]       = useState(BLANK);
+  const [busy,       setBusy]       = useState({});        // imsi → string | true
+  const [delConfirm, setDelConfirm] = useState(null);      // imsi awaiting delete confirm
 
-  const addSub = () => {
-    setSubs(s=>[...s,{...newSub, state:'IDLE'}]);
-    setShowAdd(false);
-    setNewSub({imsi:'',key:'',opc:'',dnn:'internet',sst:'1',sd:'000000'});
+  const flash      = (text, ok=true) => { setMsg({text, ok}); setTimeout(()=>setMsg(null), 4500); };
+  const setBusyKey = (k, v)          => setBusy(b=>({...b,[k]:v}));
+
+  const loadSubs = async () => {
+    setLoading(true);
+    const d = await apiFetch('/subscribers');
+    setLoading(false);
+    if (Array.isArray(d)) setSubs(d);
+    else flash('Failed to load subscribers from MongoDB', false);
+  };
+  useEffect(()=>{ loadSubs(); }, []);
+
+  const genCreds = () => {
+    const hex32 = ()=>[...Array(32)].map(()=>Math.floor(Math.random()*16).toString(16)).join('');
+    setForm(f=>({...f, key:hex32(), opc:hex32()}));
   };
 
-  const genKey = () => {
-    const hex = ()=>[...Array(32)].map(()=>Math.floor(Math.random()*16).toString(16)).join('');
-    setNewSub(s=>({...s,key:hex(),opc:hex()}));
+  const addSub = async () => {
+    if (!/^\d{15}$/.test(form.imsi)) return flash('IMSI must be exactly 15 digits', false);
+    if (!form.key  || form.key.length  !== 32) return flash('K must be 32 hex characters', false);
+    if (!form.opc  || form.opc.length  !== 32) return flash('OPc must be 32 hex characters', false);
+    setBusyKey('_add', true);
+    const d = await apiFetch('/subscribers', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(form) });
+    setBusyKey('_add', false);
+    if (d?.ok) { flash(`Subscriber ${form.imsi} provisioned in Open5GS`); setShowAdd(false); setForm(BLANK); await loadSubs(); }
+    else flash(d?.error || 'Failed to add subscriber — IMSI may already exist', false);
   };
+
+  const saveSub = async () => {
+    if (!form.key  || form.key.length  !== 32) return flash('K must be 32 hex characters', false);
+    if (!form.opc  || form.opc.length  !== 32) return flash('OPc must be 32 hex characters', false);
+    const imsi = editSub.imsi;
+    setBusyKey(imsi, 'save');
+    const d = await apiFetch(`/subscribers/${imsi}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(form) });
+    setBusyKey(imsi, null);
+    if (d?.ok) { flash(`Subscriber ${imsi} updated`); setEditSub(null); setForm(BLANK); await loadSubs(); }
+    else flash(d?.error || 'Failed to update subscriber', false);
+  };
+
+  const doDelete = async (imsi) => {
+    setBusyKey(imsi, 'del');
+    const d = await apiFetch(`/subscribers/${imsi}`, { method:'DELETE' });
+    setBusyKey(imsi, null);
+    setDelConfirm(null);
+    if (d?.ok) { flash(`Subscriber ${imsi} removed from Open5GS`); await loadSubs(); }
+    else flash(d?.error || 'Failed to delete subscriber', false);
+  };
+
+  const openEdit = (s) => {
+    setEditSub(s);
+    setForm({...s, sst:String(s.sst), ambrDl:String(s.ambrDl), ambrUl:String(s.ambrUl)});
+  };
+  const closeModal = () => { setShowAdd(false); setEditSub(null); setForm(BLANK); };
+
+  const renderModal = (isEdit) => (
+    <div className="modal-overlay" onClick={closeModal}>
+      <div className="modal" style={{maxWidth:540}} onClick={e=>e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">{isEdit ? `EDIT — ${editSub.imsi}` : 'ADD SUBSCRIBER'}</span>
+          <button className="btn btn-ghost btn-sm" onClick={closeModal}><Icon name="close" size={14}/></button>
+        </div>
+        <div className="modal-body">
+          {!isEdit && (
+            <div className="form-group mb-3">
+              <label className="form-label">IMSI (15 digits)</label>
+              <input className="form-input" style={{fontFamily:'var(--font-mono)'}}
+                placeholder="001010000000001" value={form.imsi}
+                onChange={e=>setForm(f=>({...f,imsi:e.target.value}))}/>
+            </div>
+          )}
+          <div className="form-row grid-3 mb-3">
+            <div className="form-group">
+              <label className="form-label">DNN</label>
+              <input className="form-input" placeholder="internet" value={form.dnn}
+                onChange={e=>setForm(f=>({...f,dnn:e.target.value}))}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">SST</label>
+              <select className="form-input" value={form.sst} onChange={e=>setForm(f=>({...f,sst:e.target.value}))}>
+                <option value="1">1 — eMBB</option>
+                <option value="2">2 — URLLC</option>
+                <option value="3">3 — mMTC</option>
+                <option value="4">4 — V2X</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">SD (hex)</label>
+              <input className="form-input" placeholder="000000" value={form.sd}
+                onChange={e=>setForm(f=>({...f,sd:e.target.value}))}/>
+            </div>
+          </div>
+          <div className="form-row grid-2 mb-3">
+            <div className="form-group">
+              <label className="form-label">AMBR DL (Mbps)</label>
+              <input className="form-input" type="number" min="1" max="10000" value={form.ambrDl}
+                onChange={e=>setForm(f=>({...f,ambrDl:e.target.value}))}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">AMBR UL (Mbps)</label>
+              <input className="form-input" type="number" min="1" max="10000" value={form.ambrUl}
+                onChange={e=>setForm(f=>({...f,ambrUl:e.target.value}))}/>
+            </div>
+          </div>
+          <div className="flex justify-between items-center mb-2">
+            <div style={{fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)',letterSpacing:1}}>SECURITY CREDENTIALS</div>
+            <button className="btn btn-ghost btn-sm" onClick={genCreds}>⚡ Auto-generate K / OPc</button>
+          </div>
+          <div className="form-group mb-2">
+            <label className="form-label">K — Authentication Key (128-bit / 32 hex chars)</label>
+            <input className="form-input" style={{fontFamily:'var(--font-mono)',fontSize:12}}
+              placeholder="32 hex characters" value={form.key}
+              onChange={e=>setForm(f=>({...f,key:e.target.value}))}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">OPc — Operator Key (128-bit / 32 hex chars)</label>
+            <input className="form-input" style={{fontFamily:'var(--font-mono)',fontSize:12}}
+              placeholder="32 hex characters" value={form.opc}
+              onChange={e=>setForm(f=>({...f,opc:e.target.value}))}/>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-ghost" onClick={closeModal}>Cancel</button>
+          <button className="btn btn-primary"
+            disabled={!!(busy._add || (editSub && busy[editSub.imsi]))}
+            onClick={isEdit ? saveSub : addSub}>
+            {isEdit ? 'Save Changes' : 'Add Subscriber'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="fade-in">
-      <div className="flex justify-between items-center mb-4">
-        <div style={{fontSize:11,color:'var(--muted)',fontFamily:'var(--font-mono)'}}>
-          {subs.length} subscribers — {subs.filter(s=>s.state==='REGISTERED').length} registered
+      {msg && (
+        <div style={{marginBottom:12,padding:'8px 14px',borderRadius:4,fontSize:12,
+          fontFamily:'var(--font-mono)',
+          background: msg.ok ? 'rgba(0,230,118,.08)' : 'rgba(255,59,92,.08)',
+          border:`1px solid ${msg.ok ? 'var(--success)' : 'var(--danger)'}`,
+          color: msg.ok ? 'var(--success)' : 'var(--danger)'}}>
+          {msg.ok ? '✓' : '✗'} {msg.text}
         </div>
-        <button className="btn btn-primary" onClick={()=>setShowAdd(true)}>
-          <Icon name="plus" size={12}/> Add Subscriber
-        </button>
+      )}
+
+      <div className="flex justify-between items-center mb-3">
+        <div style={{fontSize:11,color:'var(--muted)',fontFamily:'var(--font-mono)'}}>
+          {loading ? 'Loading from MongoDB…' : `${subs.length} subscriber${subs.length!==1?'s':''} provisioned in Open5GS`}
+        </div>
+        <div className="flex gap-2">
+          <button className="btn btn-ghost btn-sm" onClick={loadSubs} disabled={loading}>↻ Refresh</button>
+          <button className="btn btn-primary" onClick={()=>{setForm(BLANK);setShowAdd(true);}}>
+            <Icon name="plus" size={12}/> Add Subscriber
+          </button>
+        </div>
+      </div>
+
+      <div style={{marginBottom:12,padding:'8px 12px',background:'rgba(0,200,255,.04)',
+        border:'1px solid var(--border)',borderRadius:4,fontSize:11,color:'var(--text2)'}}>
+        ℹ Subscriber records are written directly to Open5GS MongoDB.
+        UE authentication (5G-AKA) uses the K / OPc provisioned here — no additional registration step needed.
       </div>
 
       <div className="card">
         <div className="card-body" style={{padding:0}}>
-          <table className="data-table w-full">
-            <thead>
-              <tr><th>IMSI</th><th>DNN</th><th>S-NSSAI</th><th>K / OPc</th><th>State</th><th>Actions</th></tr>
-            </thead>
-            <tbody>
-              {subs.map((s,i)=>(
-                <tr key={i}>
-                  <td style={{color:'var(--accent)',fontFamily:'var(--font-mono)'}}>{s.imsi}</td>
-                  <td>{s.dnn}</td>
-                  <td>SST:{s.sst}{s.sd?' SD:'+s.sd:''}</td>
-                  <td style={{fontSize:10}}>
-                    <span style={{color:'var(--muted)'}}>K:</span> {s.key.substring(0,8)}···
-                    <span style={{color:'var(--muted)',marginLeft:8}}>OPc:</span> {s.opc.substring(0,8)}···
-                  </td>
-                  <td><span className={`badge badge-${s.state==='REGISTERED'?'success':'muted'}`}>{s.state}</span></td>
-                  <td>
-                    <div className="flex gap-2">
-                      <button className="btn btn-xs btn-ghost"><Icon name="edit" size={10}/></button>
-                      <button className="btn btn-xs btn-danger" onClick={()=>setSubs(sb=>sb.filter((_,j)=>j!==i))}>
-                        <Icon name="trash" size={10}/>
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {!loading && subs.length === 0 ? (
+            <div style={{padding:40,textAlign:'center',color:'var(--muted)',fontFamily:'var(--font-mono)',fontSize:12}}>
+              No subscribers in MongoDB — click "Add Subscriber" to provision a UE in the 5G core
+            </div>
+          ) : (
+            <table className="data-table w-full">
+              <thead>
+                <tr><th>IMSI</th><th>DNN</th><th>S-NSSAI</th><th>AMBR DL / UL</th><th>K / OPc</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {subs.map(s=>(
+                  <tr key={s.imsi}>
+                    <td style={{color:'var(--accent)',fontFamily:'var(--font-mono)',letterSpacing:.5}}>{s.imsi}</td>
+                    <td style={{color:'var(--text2)'}}>{s.dnn}</td>
+                    <td>
+                      <span className="badge badge-muted">SST:{s.sst}</span>
+                      {s.sd && s.sd!=='000000' && <span className="badge badge-muted" style={{marginLeft:4}}>SD:{s.sd}</span>}
+                    </td>
+                    <td style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--text2)'}}>
+                      ↓{s.ambrDl} / ↑{s.ambrUl} Mbps
+                    </td>
+                    <td style={{fontSize:10,fontFamily:'var(--font-mono)'}}>
+                      <span style={{color:'var(--muted)'}}>K:</span> {(s.key||'').substring(0,8)}···
+                      <span style={{color:'var(--muted)',marginLeft:8}}>OPc:</span> {(s.opc||'').substring(0,8)}···
+                    </td>
+                    <td>
+                      <div className="flex gap-2">
+                        <button className="btn btn-xs btn-ghost" title="Edit subscriber"
+                          disabled={!!busy[s.imsi]} onClick={()=>openEdit(s)}>
+                          <Icon name="edit" size={10}/>
+                        </button>
+                        <button className="btn btn-xs btn-danger" title="Delete subscriber"
+                          disabled={!!busy[s.imsi]} onClick={()=>setDelConfirm(s.imsi)}>
+                          <Icon name="trash" size={10}/>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
-      {showAdd && (
-        <div className="modal-overlay" onClick={()=>setShowAdd(false)}>
-          <div className="modal" onClick={e=>e.stopPropagation()}>
+      {delConfirm && (
+        <div className="modal-overlay" onClick={()=>setDelConfirm(null)}>
+          <div className="modal" style={{maxWidth:420}} onClick={e=>e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title">ADD SUBSCRIBER</span>
-              <button className="btn btn-ghost btn-sm" onClick={()=>setShowAdd(false)}><Icon name="close" size={14}/></button>
+              <span className="modal-title" style={{color:'var(--danger)'}}>CONFIRM DELETE</span>
             </div>
             <div className="modal-body">
-              <div className="form-row grid-2">
-                {[['imsi','IMSI (15 digits)'],['dnn','DNN'],['sst','SST'],['sd','SD (hex)']].map(([k,l])=>(
-                  <div key={k} className="form-group">
-                    <label className="form-label">{l}</label>
-                    <input className="form-input" value={newSub[k]} onChange={e=>setNewSub({...newSub,[k]:e.target.value})}/>
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-between items-center mb-2">
-                <div className="section-title" style={{margin:0}}>Security Credentials</div>
-                <button className="btn btn-ghost btn-sm" onClick={genKey}>⚡ Auto-generate K / OPc</button>
-              </div>
-              <div className="form-group mb-3">
-                <label className="form-label">K — Authentication Key (128-bit hex)</label>
-                <input className="form-input" placeholder="32 hex chars" value={newSub.key}
-                  onChange={e=>setNewSub({...newSub,key:e.target.value})}/>
-              </div>
-              <div className="form-group">
-                <label className="form-label">OPc — Operator Key (128-bit hex)</label>
-                <input className="form-input" placeholder="32 hex chars" value={newSub.opc}
-                  onChange={e=>setNewSub({...newSub,opc:e.target.value})}/>
-              </div>
+              <p style={{marginBottom:8}}>Delete subscriber <strong style={{fontFamily:'var(--font-mono)',color:'var(--accent)'}}>{delConfirm}</strong> from MongoDB?</p>
+              <p style={{fontSize:11,color:'var(--warn)'}}>⚠ The UE will not be able to authenticate until re-provisioned.</p>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={()=>setShowAdd(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={addSub}>Add Subscriber</button>
+              <button className="btn btn-ghost" onClick={()=>setDelConfirm(null)}>Cancel</button>
+              <button className="btn btn-danger" disabled={!!busy[delConfirm]}
+                onClick={()=>doDelete(delConfirm)}>
+                {busy[delConfirm] ? 'Deleting…' : 'Delete'}
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {showAdd  && renderModal(false)}
+      {editSub  && renderModal(true)}
     </div>
   );
 }
@@ -3525,7 +3665,6 @@ function App() {
   const [nfStatus, setNfStatus] = useState(INIT_STATUS);
   const [apiOk, setApiOk] = useState(false);
   const [slices, setSlices] = useState(INIT_SLICES);
-  const [subs, setSubs] = useState(INIT_SUBS);
   const [time, setTime] = useState(new Date().toLocaleTimeString());
 
   // Clock
@@ -3647,7 +3786,7 @@ function App() {
             {(page === 'core' || page === 'ran') && <CoreNFs nfStatus={nfStatus} setNfStatus={setNfStatus}/>}
             {page === 'uemanager'  && <UEManager/>}
             {page === 'slices'    && <SliceManager slices={slices} setSlices={setSlices}/>}
-            {page === 'subs'      && <Subscriptions subs={subs} setSubs={setSubs}/>}
+            {page === 'subs'      && <Subscriptions/>}
             {page === 'topo'      && <Topology nfStatus={nfStatus}/>}
             {page === 'tracing'    && <Tracing/>}
             {page === 'throughput' && <ThroughputTest/>}

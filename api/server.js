@@ -812,6 +812,126 @@ app.all('/camara-api/*', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// SUBSCRIBERS — live CRUD against Open5GS MongoDB
+// ═══════════════════════════════════════════════════════════
+
+// Shared helper: build the full Open5GS subscriber document
+// Input: { imsi, key, opc, dnn, sst, sd, ambrDl, ambrUl }
+function buildSubDoc(s) {
+  const dl = s.ambrDl || 1024, ul = s.ambrUl || 1024;
+  const sd = (s.sd || '000000').replace(/^0x/i, '');
+  return `{
+    imsi: '${s.imsi}', msisdn: [], imeisv: '4301816488979312',
+    mme_host: [], mme_realm: [], purge_flag: [],
+    security: { k: '${s.key}', op: null, opc: '${s.opc}', amf: '8000', sqn: NumberLong(64) },
+    ambr: { downlink: { value: ${dl}, unit: 3 }, uplink: { value: ${ul}, unit: 3 } },
+    slice: [{ sst: ${Number(s.sst) || 1}, sd: '0x${sd}', default_indicator: true,
+      session: [{ name: '${s.dnn || 'internet'}', type: 3, pcc_rule: [],
+        ambr: { downlink: { value: ${dl}, unit: 3 }, uplink: { value: ${ul}, unit: 3 } },
+        qos: { index: 9, arp: { priority_level: 8, pre_emption_capability: 1, pre_emption_vulnerability: 1 } },
+        ue: { addr: '0.0.0.0' }
+      }]
+    }],
+    access_restriction_data: 32, subscriber_status: 0,
+    network_access_mode: 0, subscribed_rau_tau_timer: 12, __v: 0
+  }`;
+}
+
+// Normalize a raw MongoDB subscriber doc into a flat UI object
+function normalizeSub(d) {
+  const slice   = (d.slice || [])[0] || {};
+  const session = (slice.session || [])[0] || {};
+  const rawSd   = (slice.sd || '000000').replace(/^0x/i, '');
+  return {
+    imsi:   d.imsi || '',
+    key:    (d.security || {}).k   || '',
+    opc:    (d.security || {}).opc || '',
+    dnn:    session.name  || 'internet',
+    sst:    slice.sst     || 1,
+    sd:     rawSd,
+    ambrDl: ((d.ambr || {}).downlink || {}).value || 1024,
+    ambrUl: ((d.ambr || {}).uplink   || {}).value || 1024,
+  };
+}
+
+// GET /subscribers — list all from MongoDB
+app.get('/subscribers', async (req, res) => {
+  try {
+    const mongo  = docker.getContainer('open5gs-mongodb');
+    const script = `
+      var docs = db.getSiblingDB('open5gs').subscribers.find({}).toArray();
+      var out  = docs.map(function(d) {
+        var sl = (d.slice||[])[0]||{}, se = (sl.session||[])[0]||{};
+        return { imsi: d.imsi,
+          key:  (d.security||{}).k   || '',
+          opc:  (d.security||{}).opc || '',
+          dnn:  se.name  || 'internet',
+          sst:  sl.sst   || 1,
+          sd:   ((sl.sd||'000000').replace(/^0x/i,'')),
+          ambrDl: ((d.ambr||{}).downlink||{}).value || 1024,
+          ambrUl: ((d.ambr||{}).uplink  ||{}).value || 1024 };
+      });
+      print(JSON.stringify(out));
+    `;
+    const raw = await runExecOutput(mongo, ['mongosh', '--quiet', '--eval', script], 10000);
+    // Extract JSON from output (ignore any mongosh preamble lines)
+    const jsonLine = raw.split('\n').find(l => l.trim().startsWith('['));
+    res.json(jsonLine ? JSON.parse(jsonLine) : []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /subscribers — create subscriber in MongoDB
+app.post('/subscribers', async (req, res) => {
+  const { imsi } = req.body;
+  if (!imsi || !/^\d{15}$/.test(imsi))
+    return res.status(400).json({ error: 'imsi must be 15 digits' });
+  try {
+    const mongo  = docker.getContainer('open5gs-mongodb');
+    // Check for duplicate
+    const chk = await runExecOutput(mongo,
+      ['mongosh','--quiet','--eval',
+       `db.getSiblingDB('open5gs').subscribers.countDocuments({imsi:'${imsi}'})`], 5000);
+    if (/^\s*[1-9]/.test(chk.trim()))
+      return res.status(409).json({ error: 'IMSI already exists in MongoDB' });
+    const script = `
+      db.getSiblingDB('open5gs').subscribers.insertOne(${buildSubDoc(req.body)});
+      print('ok');
+    `;
+    await runExecOutput(mongo, ['mongosh','--quiet','--eval', script], 15000);
+    res.json({ ok: true, imsi });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PUT /subscribers/:imsi — update subscriber (replace document)
+app.put('/subscribers/:imsi', async (req, res) => {
+  const { imsi } = req.params;
+  try {
+    const mongo  = docker.getContainer('open5gs-mongodb');
+    const script = `
+      db.getSiblingDB('open5gs').subscribers.deleteOne({ imsi: '${imsi}' });
+      db.getSiblingDB('open5gs').subscribers.insertOne(${buildSubDoc({ ...req.body, imsi })});
+      print('ok');
+    `;
+    await runExecOutput(mongo, ['mongosh','--quiet','--eval', script], 15000);
+    res.json({ ok: true, imsi });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /subscribers/:imsi — remove subscriber from MongoDB
+app.delete('/subscribers/:imsi', async (req, res) => {
+  try {
+    const mongo  = docker.getContainer('open5gs-mongodb');
+    const script = `
+      var r = db.getSiblingDB('open5gs').subscribers.deleteOne({ imsi: '${req.params.imsi}' });
+      print(r.deletedCount === 1 ? 'ok' : 'notfound');
+    `;
+    const out = await runExecOutput(mongo, ['mongosh','--quiet','--eval', script], 10000);
+    if (out.includes('notfound')) return res.status(404).json({ error: 'IMSI not found in MongoDB' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════
 // UE MANAGER — simulated UE config + Open5GS subscriber reg
 // ═══════════════════════════════════════════════════════════
 
