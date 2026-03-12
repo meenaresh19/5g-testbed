@@ -3030,13 +3030,22 @@ function UEManager() {
     setForm(f=>({...f, key:hex32(), opc:hex32()}));
   };
 
-  const addUe = async () => {
+  const addUe = async (andRegister=false) => {
     if (!/^\d{15}$/.test(newImsi)) { flash('IMSI must be exactly 15 digits', false); return; }
     setBusyKey('add', true);
     const d = await apiFetch('/ue', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ imsi:newImsi, ...DEF, ...form }) });
-    if (d?.imsi) { setShowAdd(false); setNewImsi(''); setForm({}); await loadUes(); flash(`UE ${d.imsi} added`); }
-    else flash(d?.error || 'Failed to add UE', false);
+    if (d?.imsi) {
+      setShowAdd(false); setNewImsi(''); setForm({}); await loadUes();
+      if (andRegister) {
+        flash(`UE ${d.imsi} added — registering in Open5GS…`);
+        const r = await apiFetch(`/ue/${d.imsi}/register`, { method:'POST' });
+        if (r?.ok) { await loadUes(); flash(`✓ UE ${d.imsi} added and registered in Open5GS`); }
+        else flash(`UE added but registration failed: ${r?.error||'unknown error'}`, false);
+      } else {
+        flash(`UE ${d.imsi} added — click ▶ Register to push to Open5GS`);
+      }
+    } else { flash(d?.error || 'Failed to add UE', false); }
     setBusyKey('add', false);
   };
 
@@ -3148,6 +3157,24 @@ function UEManager() {
       {/* ─────────────── CONFIG TAB ─────────────── */}
       {tab==='config' && (
         <div>
+          {/* Workflow note */}
+          <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:'10px 14px', marginBottom:12, display:'flex', gap:24, alignItems:'center', flexWrap:'wrap'}}>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <span style={{background:'#60a5fa22', color:'#60a5fa', border:'1px solid #60a5fa44', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>① ADD</span>
+              <span style={{fontSize:11, color:C.muted}}>Create UE config locally (store only)</span>
+            </div>
+            <span style={{color:C.border, fontSize:16}}>→</span>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <span style={{background:'#00c89622', color:'#00c896', border:'1px solid #00c89644', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>② REGISTER</span>
+              <span style={{fontSize:11, color:C.muted}}>Push subscriber to Open5GS MongoDB (core registration)</span>
+            </div>
+            <span style={{color:C.border, fontSize:16}}>→</span>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <span style={{background:'#f59e0b22', color:'#f59e0b', border:'1px solid #f59e0b44', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>③ DEREGISTER</span>
+              <span style={{fontSize:11, color:C.muted}}>Remove from core to edit or delete</span>
+            </div>
+          </div>
+
           {/* UE table */}
           <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, marginBottom:14}}>
             <div style={{padding:'12px 16px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', justifyContent:'space-between'}}>
@@ -3197,9 +3224,16 @@ function UEManager() {
                                   {busy[ue.imsi]==='dereg'?'…':'✕ Deregister'}
                                 </button>
                             }
-                            <button onClick={()=>{setEditUe(ue);setForm({key:ue.key,opc:ue.opc,dnn:ue.dnn,sst:ue.sst,sd:ue.sd,ambrDl:ue.ambrDl,ambrUl:ue.ambrUl});}}
-                              style={btnTiny('#60a5fa')}>Edit</button>
-                            <button onClick={()=>deleteUe(ue.imsi)} disabled={busy[ue.imsi]==='del'} style={btnTiny('#ef4444')}>Del</button>
+                            <button
+                              onClick={()=>{if(!ue.registered){setEditUe(ue);setForm({key:ue.key,opc:ue.opc,dnn:ue.dnn,sst:ue.sst,sd:ue.sd,ambrDl:ue.ambrDl,ambrUl:ue.ambrUl});}}}
+                              disabled={ue.registered || !!busy[ue.imsi]}
+                              title={ue.registered?'Deregister from core first to edit':'Edit UE config'}
+                              style={btnTiny('#60a5fa', ue.registered || !!busy[ue.imsi])}>Edit</button>
+                            <button
+                              onClick={()=>{if(!ue.registered)deleteUe(ue.imsi);}}
+                              disabled={ue.registered || busy[ue.imsi]==='del'}
+                              title={ue.registered?'Deregister from core first to delete':'Remove UE'}
+                              style={btnTiny('#ef4444', ue.registered || !!busy[ue.imsi])}>Del</button>
                           </div>
                         </td>
                       </tr>
@@ -3405,11 +3439,20 @@ function UEManager() {
                 </div>
               </div>
             </div>
-            <div style={{padding:'12px 20px',borderTop:`1px solid ${C.border}`,display:'flex',gap:10,justifyContent:'flex-end'}}>
-              <button onClick={()=>setShowAdd(false)} style={{padding:'7px 16px',background:'none',border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,cursor:'pointer',fontSize:12}}>Cancel</button>
-              <button onClick={addUe} disabled={busy.add||newImsi.length!==15} style={btnP(busy.add||newImsi.length!==15)}>
-                {busy.add?'Adding…':'Add UE'}
-              </button>
+            <div style={{padding:'12px 20px',borderTop:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10, color:C.muted, marginBottom:10, padding:'8px 10px', background:'#0d1117', borderRadius:4, border:`1px solid ${C.border}`}}>
+                <strong style={{color:C.text}}>Add UE</strong> — saves to local config only (no core change)<br/>
+                <strong style={{color:'#00c896'}}>Add &amp; Register</strong> — saves config <em>and</em> immediately writes subscriber to Open5GS MongoDB
+              </div>
+              <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+                <button onClick={()=>setShowAdd(false)} style={{padding:'7px 14px',background:'none',border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,cursor:'pointer',fontSize:12}}>Cancel</button>
+                <button onClick={()=>addUe(false)} disabled={busy.add||newImsi.length!==15} style={{...btnP(busy.add||newImsi.length!==15), background:(busy.add||newImsi.length!==15)?'#1c2128':'#1c2128', color:(busy.add||newImsi.length!==15)?C.muted:'#60a5fa', border:`1px solid ${(busy.add||newImsi.length!==15)?C.border:'#60a5fa55'}`}}>
+                  {busy.add?'Adding…':'Add UE'}
+                </button>
+                <button onClick={()=>addUe(true)} disabled={busy.add||newImsi.length!==15} style={btnP(busy.add||newImsi.length!==15)}>
+                  {busy.add?'Adding…':'Add &amp; Register'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
