@@ -967,11 +967,68 @@ function ueDefaults(imsi) {
   };
 }
 
-// IMSI → UERANSIM Docker container name (ue1/ue2 are pre-wired)
-const IMSI_TO_CONTAINER = {
+// IMSI → UERANSIM container: static fallback + dynamic Docker-label lookup
+const IMSI_STATIC = {
   '001010000000001': 'ueransim-ue1',
   '001010000000002': 'ueransim-ue2',
 };
+
+async function resolveImsiToContainer(imsi) {
+  if (IMSI_STATIC[imsi]) {
+    try { await docker.getContainer(IMSI_STATIC[imsi]).inspect(); return IMSI_STATIC[imsi]; } catch {}
+  }
+  const containers = await docker.listContainers({ all: true });
+  const match = containers.find(c => c.Labels?.['com.5g-testbed.imsi'] === imsi);
+  return match ? match.Names[0].replace('/', '') : null;
+}
+
+// Generate UERANSIM nr-ue YAML config for an arbitrary IMSI
+function generateUeYaml({ imsi, key, opc, dnn = 'internet', sst = 1, sd = '000000', mcc = '001', mnc = '01' }) {
+  const sdHex = sd && sd !== '000000' ? sd : null;
+  return [
+    `supi: 'imsi-${imsi}'`,
+    `mcc: '${mcc}'`,
+    `mnc: '${mnc}'`,
+    `key: '${key}'`,
+    `op:  '${opc}'`,
+    `opType: 'OPC'`,
+    `amf: '8000'`,
+    `imei:   '35693803564${String(Date.now() % 10000).padStart(4, '0')}'`,
+    `imeiSv: '4370816125816151'`,
+    ``,
+    `gnbSearchList:`,
+    `  - 192.168.70.20`,
+    ``,
+    `uacAic: {mps: false, mcs: false}`,
+    `uacAcc: {normalClass: 0, class11: false, class12: false, class13: false, class14: false, class15: false}`,
+    ``,
+    `sessions:`,
+    `  - type: 'IPv4'`,
+    `    apn: '${dnn}'`,
+    `    slice: {sst: ${sst}${sdHex ? `, sd: 0x${sdHex}` : ''}}`,
+    ``,
+    `configured-nssai:`,
+    `  - sst: ${sst}${sdHex ? `\n    sd: 0x${sdHex}` : ''}`,
+    ``,
+    `default-nssai:`,
+    `  - sst: ${sst}`,
+    `    sd: 1`,
+    ``,
+    `integrity: {IA1: true, IA2: true, IA3: true}`,
+    `ciphering: {EA1: true, EA2: true, EA3: true}`,
+    `integrityMaxRate: {uplink: 'full', downlink: 'full'}`,
+  ].join('\n');
+}
+
+// Find next available UE label (ue3, ue4, …)
+async function nextUeLabel() {
+  const containers = await docker.listContainers({ all: true });
+  const taken = new Set(containers.map(c => c.Labels?.['com.5g-testbed.nf']).filter(Boolean));
+  taken.add('ue1'); taken.add('ue2');
+  let n = 3;
+  while (taken.has(`ue${n}`)) n++;
+  return `ue${n}`;
+}
 
 // Build mongosh script to upsert a subscriber document
 function buildMongoInsert(ue) {
@@ -1084,7 +1141,7 @@ app.get('/ue/:imsi/status', async (req, res) => {
   const ue = ues.find(u => u.imsi === req.params.imsi);
   if (!ue) return res.status(404).json({ error: 'UE not found' });
 
-  const containerName = IMSI_TO_CONTAINER[ue.imsi] || null;
+  const containerName = await resolveImsiToContainer(ue.imsi);
   let tunIp = null, cState = 'none', cRunning = false;
   if (containerName) {
     try {
@@ -1115,7 +1172,7 @@ app.get('/ue/:imsi/status', async (req, res) => {
 // POST /ue/:imsi/ping — ICMP ping via PDU session tunnel
 app.post('/ue/:imsi/ping', async (req, res) => {
   const { target = '8.8.8.8', count = 4 } = req.body || {};
-  const containerName = IMSI_TO_CONTAINER[req.params.imsi];
+  const containerName = await resolveImsiToContainer(req.params.imsi);
   if (!containerName)
     return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
   try {
@@ -1189,7 +1246,7 @@ function parseNasStatus(raw) {
 // GET /ue/:imsi/sessions — list active PDU sessions via nr-cli ps-list
 app.get('/ue/:imsi/sessions', async (req, res) => {
   const { imsi } = req.params;
-  const cn = IMSI_TO_CONTAINER[imsi];
+  const cn = await resolveImsiToContainer(imsi);
   if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
   try {
     const out  = await runNrCli(cn, imsi, 'ps-list');
@@ -1201,7 +1258,7 @@ app.get('/ue/:imsi/sessions', async (req, res) => {
 // body: { type:'IPv4'|'IPv6'|'IPv4v6', dnn, sst, sd }
 app.post('/ue/:imsi/sessions', async (req, res) => {
   const { imsi } = req.params;
-  const cn = IMSI_TO_CONTAINER[imsi];
+  const cn = await resolveImsiToContainer(imsi);
   if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
   const { type = 'IPv4', dnn, sst, sd } = req.body || {};
   // Validate type
@@ -1220,7 +1277,7 @@ app.post('/ue/:imsi/sessions', async (req, res) => {
 // DELETE /ue/:imsi/sessions — release all PDU sessions (ps-release-all)
 app.delete('/ue/:imsi/sessions', async (req, res) => {
   const { imsi } = req.params;
-  const cn = IMSI_TO_CONTAINER[imsi];
+  const cn = await resolveImsiToContainer(imsi);
   if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
   try {
     const out = await runNrCli(cn, imsi, 'ps-release-all', 20000);
@@ -1231,7 +1288,7 @@ app.delete('/ue/:imsi/sessions', async (req, res) => {
 // DELETE /ue/:imsi/sessions/:psi — release a specific PDU session by PSI
 app.delete('/ue/:imsi/sessions/:psi', async (req, res) => {
   const { imsi, psi } = req.params;
-  const cn = IMSI_TO_CONTAINER[imsi];
+  const cn = await resolveImsiToContainer(imsi);
   if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
   const psiN = parseInt(psi);
   if (isNaN(psiN) || psiN < 1 || psiN > 15)
@@ -1245,7 +1302,7 @@ app.delete('/ue/:imsi/sessions/:psi', async (req, res) => {
 // GET /ue/:imsi/nas-status — NAS / CM state from nr-cli status
 app.get('/ue/:imsi/nas-status', async (req, res) => {
   const { imsi } = req.params;
-  const cn = IMSI_TO_CONTAINER[imsi];
+  const cn = await resolveImsiToContainer(imsi);
   if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
   try {
     const out = await runNrCli(cn, imsi, 'status', 10000);
@@ -1257,13 +1314,196 @@ app.get('/ue/:imsi/nas-status', async (req, res) => {
 // body: { type: 'normal'|'switch-off'|'disable-5g' }
 app.post('/ue/:imsi/nas-deregister', async (req, res) => {
   const { imsi } = req.params;
-  const cn = IMSI_TO_CONTAINER[imsi];
+  const cn = await resolveImsiToContainer(imsi);
   if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
   const type = ['normal', 'switch-off', 'disable-5g'].includes(req.body?.type)
     ? req.body.type : 'normal';
   try {
     const out = await runNrCli(cn, imsi, `deregister ${type}`, 20000);
     res.json({ ok: true, output: out, type });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════
+// UE LIFECYCLE — dynamic provisioning / deprovisioning
+// ═══════════════════════════════════════════════════════════
+
+// GET /ue/inventory — merged view: UE store + Docker containers + MongoDB subscribers
+app.get('/ue/inventory', async (req, res) => {
+  try {
+    // 1. All UE-type Docker containers (label or name pattern)
+    const allContainers = await docker.listContainers({ all: true });
+    const ueContainers  = allContainers.filter(c =>
+      c.Labels?.['com.5g-testbed.type'] === 'ue' ||
+      c.Names.some(n => /\/ueransim-ue\d+/.test(n))
+    );
+    const containerByName = {};
+    for (const c of ueContainers) containerByName[c.Names[0].replace('/', '')] = c;
+
+    // 2. MongoDB IMSIs
+    let mongoImsis = [];
+    try {
+      const mongo = docker.getContainer('open5gs-mongodb');
+      const out = await runExecOutput(mongo, ['mongosh', '--quiet', '--eval',
+        `JSON.stringify(Array.from(db.getSiblingDB('open5gs').subscribers.find({},{imsi:1,_id:0})))`], 8000);
+      const line = out.split('\n').find(l => l.trim().startsWith('['));
+      if (line) mongoImsis = JSON.parse(line).map(s => s.imsi);
+    } catch {}
+
+    // 3. UE store (credentials + labels)
+    const ueStore = loadUeStore();
+
+    // Helper: build result entry from container + optional store entry
+    async function makeEntry(imsi, storEntry, containerName) {
+      const c = containerName ? containerByName[containerName] : null;
+      let tunIp = null;
+      if (c?.State === 'running') {
+        try { tunIp = await getUeTunIp(docker.getContainer(containerName)); } catch {}
+      }
+      return {
+        imsi,
+        label:           storEntry?.label || (IMSI_STATIC[imsi] ? IMSI_STATIC[imsi].replace('ueransim-', '') : null),
+        key:             storEntry?.key  || null,
+        opc:             storEntry?.opc  || null,
+        dnn:             storEntry?.dnn  || null,
+        sst:             storEntry?.sst  || null,
+        sd:              storEntry?.sd   || null,
+        containerName:   containerName   || null,
+        containerState:  c?.State        || 'none',
+        containerRunning: c?.State === 'running',
+        tunIp,
+        inMongo:         mongoImsis.includes(imsi),
+        provisioned:     !!containerName,
+        dynamic:         !IMSI_STATIC[imsi],
+      };
+    }
+
+    const result = [];
+    const seen   = new Set();
+
+    // From UE store
+    for (const ue of ueStore) {
+      seen.add(ue.imsi);
+      const staticCn = IMSI_STATIC[ue.imsi];
+      const dynC = ueContainers.find(c => c.Labels?.['com.5g-testbed.imsi'] === ue.imsi);
+      const cn = ue.containerName ||
+        (staticCn && containerByName[staticCn] ? staticCn : null) ||
+        (dynC ? dynC.Names[0].replace('/', '') : null);
+      result.push(await makeEntry(ue.imsi, ue, cn));
+    }
+
+    // Containers not yet in UE store (e.g. ue1 before user adds it)
+    for (const c of ueContainers) {
+      const cn        = c.Names[0].replace('/', '');
+      const imsiLabel = c.Labels?.['com.5g-testbed.imsi'];
+      const staticImsi = Object.entries(IMSI_STATIC).find(([, name]) => name === cn)?.[0];
+      const imsi = imsiLabel || staticImsi;
+      if (!imsi || seen.has(imsi)) continue;
+      seen.add(imsi);
+      result.push(await makeEntry(imsi, null, cn));
+    }
+
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /ue/provision — create and start a UERANSIM container for a UE in the store
+app.post('/ue/provision', async (req, res) => {
+  const { imsi } = req.body || {};
+  if (!imsi) return res.status(400).json({ error: 'imsi required' });
+
+  const ues = loadUeStore();
+  const ue  = ues.find(u => u.imsi === imsi);
+  if (!ue) return res.status(404).json({ error: 'UE not in store — add it in the Config tab first' });
+
+  const containers = await docker.listContainers({ all: true });
+  const staticCn   = IMSI_STATIC[imsi];
+
+  // Static container (ue1/ue2): just start if it exists but is stopped
+  if (staticCn) {
+    const existing = containers.find(c => c.Names.some(n => n.includes(staticCn)));
+    if (existing) {
+      if (existing.State !== 'running') await docker.getContainer(staticCn).start();
+      return res.json({ ok: true, containerName: staticCn, label: staticCn.replace('ueransim-', ''), existed: true });
+    }
+    // Fall through: static container not created yet — create dynamically
+  }
+
+  // Check for existing dynamic container
+  const dynExisting = containers.find(c => c.Labels?.['com.5g-testbed.imsi'] === imsi);
+  if (dynExisting) {
+    const cn = dynExisting.Names[0].replace('/', '');
+    if (dynExisting.State !== 'running') await docker.getContainer(cn).start();
+    return res.json({ ok: true, containerName: cn, label: dynExisting.Labels?.['com.5g-testbed.nf'], existed: true });
+  }
+
+  // Create new container with config embedded in the start command
+  const label         = staticCn ? staticCn.replace('ueransim-', '') : await nextUeLabel();
+  const containerName = staticCn || `ueransim-${label}`;
+  const mcc           = process.env.MCC || '001';
+  const mnc           = process.env.MNC || '01';
+  const yaml          = generateUeYaml({ imsi, key: ue.key, opc: ue.opc, dnn: ue.dnn || 'internet',
+    sst: ue.sst || 1, sd: ue.sd || '000000', mcc, mnc });
+  const b64           = Buffer.from(yaml).toString('base64');
+
+  // Locate the project ran-net
+  const nets   = await docker.listNetworks();
+  const ranNet = nets.find(n => n.Name.endsWith('_ran-net') || n.Name === 'ran-net');
+  if (!ranNet) return res.status(500).json({ error: 'ran-net not found — is the testbed running?' });
+
+  try {
+    const container = await docker.createContainer({
+      Image: 'towards5gs/ueransim:v3.2.6',
+      name:  containerName,
+      Cmd:   ['sh', '-c', `printf '%s' '${b64}' | base64 -d > /tmp/ue.yaml && exec nr-ue -c /tmp/ue.yaml`],
+      HostConfig: {
+        CapAdd:        ['NET_ADMIN'],
+        Devices:       [{ PathOnHost: '/dev/net/tun', PathInContainer: '/dev/net/tun', CgroupPermissions: 'rwm' }],
+        RestartPolicy: { Name: 'on-failure', MaximumRetryCount: 5 },
+        NetworkMode:   ranNet.Name,
+      },
+      Labels: {
+        'com.5g-testbed.nf':      label,
+        'com.5g-testbed.type':    'ue',
+        'com.5g-testbed.imsi':    imsi,
+        'com.5g-testbed.managed': 'dynamic',
+      },
+    });
+    await container.start();
+
+    // Persist label + containerName in UE store
+    const idx = ues.findIndex(u => u.imsi === imsi);
+    ues[idx].label         = label;
+    ues[idx].containerName = containerName;
+    saveUeStore(ues);
+
+    res.json({ ok: true, label, containerName, imsi });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /ue/:containerName/deprovision — stop + remove a dynamic UE container
+app.delete('/ue/:containerName/deprovision', async (req, res) => {
+  const { containerName } = req.params;
+  try {
+    const c    = docker.getContainer(containerName);
+    const info = await c.inspect();
+    const isDynamic = info.Config?.Labels?.['com.5g-testbed.managed'] === 'dynamic';
+
+    if (!isDynamic && IMSI_STATIC[Object.keys(IMSI_STATIC).find(k => IMSI_STATIC[k] === containerName)]) {
+      return res.status(400).json({ error: `${containerName} is a static UE. Stop it via the Start/Stop button instead.` });
+    }
+
+    const imsi = info.Config?.Labels?.['com.5g-testbed.imsi'];
+    if (info.State.Running) await c.stop({ t: 5 });
+    await c.remove();
+
+    // Clear container ref from UE store (keep credentials)
+    if (imsi) {
+      const ues = loadUeStore();
+      const idx = ues.findIndex(u => u.imsi === imsi);
+      if (idx !== -1) { delete ues[idx].containerName; delete ues[idx].label; saveUeStore(ues); }
+    }
+    res.json({ ok: true, containerName, imsi });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -6,7 +6,7 @@
 COMPOSE = docker compose -f docker/docker-compose.yml --project-directory .
 PROJECT = 5g-testbed
 
-.PHONY: help up down restart logs status pull gen-config clean info ue2-up ue2-down oai-up oai-down iperf-ping ids-up ids-down ids-status ids-clear nef-up nef-down nef-status camara-up camara-down camara-status
+.PHONY: help up down restart logs status pull gen-config clean info oai-up oai-down iperf-ping ids-up ids-down ids-status ids-clear nef-up nef-down nef-status camara-up camara-down camara-status
 
 help:
 	@echo ""
@@ -22,8 +22,6 @@ help:
 	@echo "  clean         Stop and remove volumes (data loss!)"
 	@echo "  info          Show access URLs"
 	@echo "  ─────────────────────────────────────────────────"
-	@echo "  ue2-up        Start UE2 (multi-UE testing)"
-	@echo "  ue2-down      Stop UE2"
 	@echo "  oai-up        Start OAI RAN (legacy, replaces UERANSIM)"
 	@echo "  oai-down      Stop OAI RAN"
 	@echo "  iperf-ping    Quick iPerf3 DL test from UE1 (10s)"
@@ -87,14 +85,6 @@ info:
 	printf "  ║  Grafana (UI)  : http://%-24s ║\n" "$$IP:3000/grafana/"; \
 	echo "  ╚══════════════════════════════════════════════════╝"; \
 	echo ""
-
-# ── UERANSIM UE2 ─────────────────────────────────────────
-ue2-up:
-	$(COMPOSE) --profile multi-ue up -d ueransim-ue2
-	@echo "UE2 started. IMSI: 001010000000002"
-
-ue2-down:
-	$(COMPOSE) --profile multi-ue stop ueransim-ue2
 
 # ── OAI RAN (legacy) ─────────────────────────────────────
 oai-up:

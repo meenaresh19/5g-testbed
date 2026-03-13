@@ -357,9 +357,10 @@ services:
     labels:
       com.5g-testbed.nf: "ue1"
       com.5g-testbed.type: "ue"
+      com.5g-testbed.imsi: "001010000000001"
 
-  # UERANSIM UE2 — Second UE for multi-UE / load testing
-  # Start with:  docker compose --profile multi-ue up -d ueransim-ue2
+  # UERANSIM UE2 — managed by UE Manager UI (provision/deprovision from UI)
+  # Kept for backward-compat. Use UE Manager → Provision instead of make ue2-up.
   ueransim-ue2:
     image: towards5gs/ueransim:v3.2.6
     container_name: ueransim-ue2
@@ -380,6 +381,7 @@ services:
     labels:
       com.5g-testbed.nf: "ue2"
       com.5g-testbed.type: "ue"
+      com.5g-testbed.imsi: "001010000000002"
 
   # ============================================================
   # iPerf3 SERVER — data plane throughput target

@@ -1839,7 +1839,7 @@ function ThroughputTest() {
           <div className="grid grid-3" style={{gap:16}}>
             {[
               ['Data Path', 'UE → uesimtun0 → GTP-U → UPF N3 → iPerf3 server (10.45.0.200)'],
-              ['UE2 Setup', 'Start UE2: make ue2-up  (adds 2nd subscriber, same IMSI 001010000000002)'],
+              ['UE2 Setup', 'Provision UE2 via UE Manager → Operations → ⚡ Provision Container'],
               ['Manual CLI', 'docker exec ueransim-ue1 iperf3 -c 10.45.0.200 -t 10 -B $(tunIP)'],
             ].map(([t,d])=>(
               <div key={t} style={{padding:'12px',background:'var(--bg3)',borderRadius:6,borderLeft:'3px solid var(--accent2)'}}>
@@ -3147,6 +3147,9 @@ function UEManager() {
   const [expanded,    setExpanded]    = useState(null);
   const [pduForm,     setPduForm]     = useState({});   // imsi → {dnn,sst,type}
   const [showPduForm, setShowPduForm] = useState({});   // imsi → bool
+  // Lifecycle
+  const [inventory,   setInventory]   = useState([]);   // from /ue/inventory
+  const [provBusy,    setProvBusy]    = useState({});   // imsi → bool
 
   const DEF = { key:'fec86ba6eb707ed08905757b1bb44b8f', opc:'C42449363BBAD02B66D16BC975D77CC1',
     dnn:'internet', sst:1, sd:'000000', ambrDl:1024, ambrUl:1024 };
@@ -3171,14 +3174,43 @@ function UEManager() {
     await Promise.all([loadStatus(imsi), loadSessions(imsi), loadNasStatus(imsi)]);
   };
 
-  useEffect(() => { loadUes(); }, []);
+  const loadInventory = async () => {
+    const d = await apiFetch('/ue/inventory');
+    if (Array.isArray(d)) setInventory(d);
+  };
+
+  const provision = async (imsi) => {
+    setProvBusy(p=>({...p,[imsi]:true}));
+    const d = await apiFetch('/ue/provision', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify({imsi}) });
+    if (d?.ok) {
+      flash(`✓ Container ${d.containerName} created for ${imsi}`);
+      await Promise.all([loadUes(), loadInventory()]);
+    } else { flash(d?.error || 'Provision failed', false); }
+    setProvBusy(p=>({...p,[imsi]:false}));
+  };
+
+  const deprovision = async (containerName, imsi) => {
+    if (!confirm(`Remove container ${containerName}?\nThe UE credentials stay in the store — you can re-provision later.`)) return;
+    const d = await apiFetch(`/ue/${containerName}/deprovision`, { method:'DELETE' });
+    if (d?.ok) {
+      flash(`✓ Container ${containerName} removed`);
+      await Promise.all([loadUes(), loadInventory()]);
+    } else { flash(d?.error || 'Deprovision failed', false); }
+  };
+
+  useEffect(() => { loadUes(); loadInventory(); }, []);
   useEffect(() => {
     if (tab !== 'ops') return;
-    const reg = ues.filter(u=>u.registered);
-    reg.forEach(u=>refreshAll(u.imsi));
-    const t = setInterval(()=>reg.forEach(u=>loadStatus(u.imsi)), 5000);
-    return ()=>clearInterval(t);
-  }, [tab, ues]);
+    loadInventory();
+    const provisioned = inventory.filter(u => u.provisioned);
+    provisioned.forEach(u => refreshAll(u.imsi));
+    const t = setInterval(() => {
+      loadInventory();
+      inventory.filter(u => u.provisioned).forEach(u => loadStatus(u.imsi));
+    }, 5000);
+    return () => clearInterval(t);
+  }, [tab, inventory.length]);
 
   const genCreds = () => {
     const hex32 = ()=>[...Array(32)].map(()=>Math.floor(Math.random()*16).toString(16)).join('');
@@ -3316,20 +3348,33 @@ function UEManager() {
           <div style={{fontSize:11, color:C.muted}}>Subscriber entries in Open5GS MongoDB</div>
         </div>
         <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'14px 16px'}}>
-          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:8}}>UERANSIM Containers</div>
-          <div style={{display:'flex', gap:16, marginTop:6}}>
-            {[['001010000000001','UE1','ueransim-ue1'],['001010000000002','UE2','ueransim-ue2']].map(([imsi,label])=>{
-              const st = ueStatus[imsi] || {};
-              const color = st.hasPduSession ? C.accent : st.containerRunning ? '#f59e0b' : C.muted;
-              return (
-                <div key={label} style={{textAlign:'center'}}>
-                  <div style={{width:10,height:10,borderRadius:'50%',background:color,margin:'0 auto 4px',
-                    boxShadow:st.containerRunning?`0 0 6px ${color}`:undefined}}/>
-                  <div style={{fontSize:11,fontWeight:700,color}}>{label}</div>
-                  <div style={{fontSize:9,color:C.muted}}>{st.hasPduSession?'PDU up':st.containerRunning?'No PDU':'stopped'}</div>
-                </div>
-              );
-            })}
+          <div style={{fontSize:10, color:C.muted, fontWeight:700, textTransform:'uppercase', marginBottom:4}}>UERANSIM Containers</div>
+          <div style={{fontSize:11, color:C.muted, marginBottom:8}}>{inventory.filter(u=>u.provisioned).length} provisioned · {inventory.filter(u=>!u.provisioned).length} not yet</div>
+          <div style={{display:'flex', gap:12, flexWrap:'wrap', marginTop:4}}>
+            {inventory.length === 0
+              ? <span style={{fontSize:11,color:C.muted}}>Loading…</span>
+              : inventory.map(inv => {
+                  const st    = ueStatus[inv.imsi] || {};
+                  const color = !inv.provisioned ? C.muted
+                    : (st.hasPduSession || inv.tunIp) ? C.accent
+                    : inv.containerRunning ? '#f59e0b' : '#ef4444';
+                  const lbl   = inv.label || inv.imsi.slice(-4);
+                  return (
+                    <div key={inv.imsi} style={{textAlign:'center'}}>
+                      <div style={{width:10,height:10,borderRadius:'50%',background:color,margin:'0 auto 4px',
+                        boxShadow:inv.provisioned&&inv.containerRunning?`0 0 6px ${color}`:undefined}}/>
+                      <div style={{fontSize:10,fontWeight:700,color}}>{lbl}</div>
+                      <div style={{fontSize:9,color:C.muted}}>
+                        {!inv.provisioned ? 'no container'
+                          : (st.hasPduSession||inv.tunIp) ? 'PDU up'
+                          : inv.containerRunning ? 'running'
+                          : inv.containerState === 'none' ? 'not created'
+                          : inv.containerState}
+                      </div>
+                    </div>
+                  );
+                })
+            }
           </div>
         </div>
       </div>
@@ -3347,7 +3392,11 @@ function UEManager() {
         <button onClick={()=>setTab('config')} style={tabSt('config')}>🔧 Config</button>
         <button onClick={()=>setTab('ops')} style={tabSt('ops')}>
           ⚙ Operations
-          {regCount>0 && <span style={{marginLeft:6, background:C.accent+'33', color:C.accent, borderRadius:10, padding:'1px 7px', fontSize:9, fontWeight:700}}>{regCount}</span>}
+          {inventory.filter(u=>u.provisioned).length > 0 && (
+            <span style={{marginLeft:6, background:C.accent+'33', color:C.accent, borderRadius:10, padding:'1px 7px', fontSize:9, fontWeight:700}}>
+              {inventory.filter(u=>u.provisioned).length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -3355,20 +3404,25 @@ function UEManager() {
       {tab==='config' && (
         <div>
           {/* Workflow note */}
-          <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:'10px 14px', marginBottom:12, display:'flex', gap:24, alignItems:'center', flexWrap:'wrap'}}>
+          <div style={{background:'#0d1117', border:`1px solid ${C.border}`, borderRadius:6, padding:'10px 14px', marginBottom:12, display:'flex', gap:16, alignItems:'center', flexWrap:'wrap'}}>
             <div style={{display:'flex', alignItems:'center', gap:8}}>
               <span style={{background:'#60a5fa22', color:'#60a5fa', border:'1px solid #60a5fa44', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>① ADD</span>
-              <span style={{fontSize:11, color:C.muted}}>Create UE config locally (store only)</span>
+              <span style={{fontSize:11, color:C.muted}}>Create UE config (store)</span>
             </div>
-            <span style={{color:C.border, fontSize:16}}>→</span>
+            <span style={{color:C.border, fontSize:14}}>→</span>
             <div style={{display:'flex', alignItems:'center', gap:8}}>
               <span style={{background:'#00c89622', color:'#00c896', border:'1px solid #00c89644', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>② REGISTER</span>
-              <span style={{fontSize:11, color:C.muted}}>Push subscriber to Open5GS MongoDB (core registration)</span>
+              <span style={{fontSize:11, color:C.muted}}>Push to Open5GS MongoDB</span>
             </div>
-            <span style={{color:C.border, fontSize:16}}>→</span>
+            <span style={{color:C.border, fontSize:14}}>→</span>
             <div style={{display:'flex', alignItems:'center', gap:8}}>
-              <span style={{background:'#f59e0b22', color:'#f59e0b', border:'1px solid #f59e0b44', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>③ DEREGISTER</span>
-              <span style={{fontSize:11, color:C.muted}}>Remove from core to edit or delete</span>
+              <span style={{background:'#a78bfa22', color:'#a78bfa', border:'1px solid #a78bfa44', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>③ PROVISION</span>
+              <span style={{fontSize:11, color:C.muted}}>Ops tab → create UERANSIM container</span>
+            </div>
+            <span style={{color:C.border, fontSize:14}}>→</span>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <span style={{background:'#f59e0b22', color:'#f59e0b', border:'1px solid #f59e0b44', borderRadius:3, padding:'2px 8px', fontSize:10, fontWeight:700}}>④ OPERATE</span>
+              <span style={{fontSize:11, color:C.muted}}>PDU sessions, NAS, ping</span>
             </div>
           </div>
 
@@ -3466,30 +3520,60 @@ function UEManager() {
       {/* ─────────────── OPERATIONS TAB ─────────────── */}
       {tab==='ops' && (
         <div>
-          {regCount===0 ? (
+          {ues.length === 0 ? (
             <div style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:40, textAlign:'center', color:C.muted}}>
-              No registered UEs.<br/>
-              <span style={{fontSize:11}}>Go to the <strong style={{color:C.text}}>Config</strong> tab and click <strong style={{color:'#00c896'}}>▶ Register</strong> on a UE to add it to Open5GS.</span>
+              No UEs configured yet.<br/>
+              <span style={{fontSize:11}}>Go to the <strong style={{color:C.text}}>Config</strong> tab → <strong style={{color:'#60a5fa'}}>+ Add UE</strong> → Register → then Provision here.</span>
             </div>
           ) : (<>
+            {/* Unprovisioned UEs — quick provision row */}
+            {inventory.filter(u => !u.provisioned).length > 0 && (
+              <div style={{background:'#1c1428', border:'1px solid #a78bfa33', borderRadius:6, padding:'10px 14px', marginBottom:14}}>
+                <div style={{fontSize:11, color:'#a78bfa', fontWeight:700, marginBottom:8}}>
+                  📦 Unprovisioned UEs — no UERANSIM container yet
+                </div>
+                {inventory.filter(u => !u.provisioned).map(inv => (
+                  <div key={inv.imsi} style={{display:'flex', alignItems:'center', gap:10, marginBottom:6, flexWrap:'wrap'}}>
+                    <span style={{fontFamily:'monospace', fontSize:12, color:'#e6edf3', fontWeight:600}}>{inv.imsi}</span>
+                    {inv.label && <span style={{fontSize:10, color:'#a78bfa', background:'#a78bfa15', border:'1px solid #a78bfa33', padding:'1px 6px', borderRadius:3}}>{inv.label}</span>}
+                    <span style={{fontSize:11, color:C.muted}}>{inv.inMongo ? '✓ in MongoDB' : '⚠ not in MongoDB'}</span>
+                    <button
+                      onClick={() => provision(inv.imsi)}
+                      disabled={!!provBusy[inv.imsi] || !inv.key}
+                      style={{padding:'5px 14px', background:inv.key?'#a78bfa':'#333', color:inv.key?'#fff':C.muted,
+                        border:'none', borderRadius:4, cursor:inv.key?'pointer':'not-allowed', fontSize:11, fontWeight:700}}>
+                      {provBusy[inv.imsi] ? '⏳ Provisioning…' : '⚡ Provision Container'}
+                    </button>
+                    {!inv.key && <span style={{fontSize:10, color:'#ef4444'}}>Add credentials in Config tab first</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Ping target bar */}
             <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:14, background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'10px 14px'}}>
               <span style={{fontSize:12, color:C.muted, fontWeight:600, whiteSpace:'nowrap'}}>🏓 Ping target:</span>
               <input style={{...inputSt, width:170}} value={pingTarget} onChange={e=>setPingTarget(e.target.value)} placeholder="8.8.8.8"/>
               <span style={{fontSize:11, color:C.muted}}>Used by all UE ping tests below</span>
+              <button onClick={loadInventory} style={{marginLeft:'auto', padding:'5px 12px', background:'transparent',
+                border:`1px solid ${C.border}`, borderRadius:4, color:C.muted, cursor:'pointer', fontSize:11}}>↻ Refresh</button>
             </div>
 
-            {ues.filter(u=>u.registered).map(ue=>{
+            {inventory.filter(u => u.provisioned).map(inv => {
+              const ue   = { ...inv, ...(ueStatus[inv.imsi] || {}) };
               const st   = ueStatus[ue.imsi]  || {};
               const ss   = sessions[ue.imsi]  || {};
               const ns   = nasStatus[ue.imsi] || {};
               const pr   = pingResult[ue.imsi];
               const open = expanded===ue.imsi;
-              const hasCont   = !!st.containerName;
+              const cn        = ue.containerName || st.containerName || null;
+              const hasCont   = !!cn;
+              const isDynamic = ue.dynamic;
               const pduList   = ss.sessions || [];
               const pduF      = pduForm[showPduForm[ue.imsi] ? ue.imsi : ''] || {};
               const nasP      = ns.parsed || {};
-              const stColor   = st.hasPduSession ? C.accent : st.containerRunning ? '#f59e0b' : '#ef4444';
+              const cRunning  = ue.containerRunning || st.containerRunning;
+              const stColor   = (ue.tunIp||st.hasPduSession) ? C.accent : cRunning ? '#f59e0b' : '#ef4444';
               const nasColor  = nasP.cmState?.includes('CONNECTED') ? C.accent
                               : nasP.mmState?.includes('REGISTERED') ? '#f59e0b' : C.muted;
 
@@ -3501,14 +3585,16 @@ function UEManager() {
                     onClick={()=>setExpanded(open?null:ue.imsi)}>
                     <span style={{width:10,height:10,borderRadius:'50%',flexShrink:0,background:stColor,boxShadow:`0 0 6px ${stColor}`}}/>
                     <span style={{fontFamily:'monospace',fontWeight:700,color:C.accent,fontSize:14,flex:'0 0 auto'}}>{ue.imsi}</span>
+                    {/* Label */}
+                    {ue.label && <span style={{fontSize:10,background:'#a78bfa15',color:'#a78bfa',border:'1px solid #a78bfa33',padding:'2px 6px',borderRadius:3,fontWeight:700,flexShrink:0}}>{ue.label}</span>}
                     {/* Core badge */}
-                    <span style={{fontSize:10,background:'#00c89615',color:'#00c896',border:'1px solid #00c89633',padding:'2px 7px',borderRadius:3,fontWeight:700,flexShrink:0}}>✓ Core</span>
+                    {ue.inMongo && <span style={{fontSize:10,background:'#00c89615',color:'#00c896',border:'1px solid #00c89633',padding:'2px 7px',borderRadius:3,fontWeight:700,flexShrink:0}}>✓ Core</span>}
                     {/* Container state */}
-                    {hasCont && <span style={{fontSize:10,background:st.containerRunning?'#60a5fa15':'#ef444415',
-                      color:st.containerRunning?'#60a5fa':'#ef4444',
-                      border:`1px solid ${st.containerRunning?'#60a5fa33':'#ef444433'}`,
+                    {hasCont && <span style={{fontSize:10,background:cRunning?'#60a5fa15':'#ef444415',
+                      color:cRunning?'#60a5fa':'#ef4444',
+                      border:`1px solid ${cRunning?'#60a5fa33':'#ef444433'}`,
                       padding:'2px 7px',borderRadius:3,fontWeight:700,flexShrink:0}}>
-                      {st.containerName?.replace('ueransim-','')} {st.containerState}
+                      {cn?.replace('ueransim-','')} · {ue.containerState||st.containerState}
                     </span>}
                     {/* NAS state */}
                     {nasP.cmState && <span style={{fontSize:10,color:nasColor,fontFamily:'monospace',flexShrink:0}}>{nasP.cmState}</span>}
@@ -3520,7 +3606,15 @@ function UEManager() {
                         </span>
                       : <span style={{fontSize:10,color:'#f59e0b',flexShrink:0}}>○ No PDU session</span>
                     }
-                    <span style={{marginLeft:'auto',fontSize:11,color:C.muted,flexShrink:0}}>{open?'▲':'▼'}</span>
+                    {/* Deprovision button for dynamic UEs (stop propagation so it doesn't toggle expand) */}
+                    {isDynamic && cn && (
+                      <button onClick={e=>{e.stopPropagation();deprovision(cn,ue.imsi);}}
+                        style={{marginLeft:'auto',padding:'3px 10px',background:'#ef444415',color:'#ef4444',
+                          border:'1px solid #ef444433',borderRadius:3,cursor:'pointer',fontSize:10,fontWeight:700,flexShrink:0}}>
+                        ✕ Deprovision
+                      </button>
+                    )}
+                    <span style={{marginLeft:isDynamic&&cn?'8px':'auto',fontSize:11,color:C.muted,flexShrink:0}}>{open?'▲':'▼'}</span>
                   </div>
 
                   {/* ── Expanded panel ── */}
@@ -3774,9 +3868,9 @@ function UEManager() {
                               style={{...btnTiny('#60a5fa'),justifyContent:'center',padding:'7px 0'}}>
                               📋 List PDU Sessions
                             </button>
-                            {hasCont && (
+                            {cn && (
                               <div style={{fontSize:10,color:C.muted,background:'#161b22',borderRadius:4,padding:'6px 8px',fontFamily:'monospace',wordBreak:'break-all'}}>
-                                docker logs {st.containerName}
+                                docker logs {cn}
                               </div>
                             )}
                           </div>
