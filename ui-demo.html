@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>5G Testbed UI — Visual Demo</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#040810;--bg2:#070d1a;--bg3:#0a1525;
+  --panel:#0d1b2e;--panel2:#0f2035;
+  --border:#1a3a5c;--border2:#1f4a70;
+  --accent:#00c8ff;--accent2:#0080c8;--accent3:#00ffc8;
+  --warn:#ffb800;--danger:#ff3b5c;--success:#00e676;
+  --muted:#4a7090;--text:#c8e8ff;--text2:#7aaccc;--text3:#3a6080;
+  --glow:0 0 20px rgba(0,200,255,0.3);
+  --font-main:'Exo 2',sans-serif;
+  --font-mono:'Share Tech Mono',monospace;
+  --font-head:'Orbitron',sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font-main);overflow:hidden}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.03) 2px,rgba(0,0,0,0.03) 4px);pointer-events:none;z-index:9999}
+
+/* Top bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:0 24px;height:52px;background:var(--bg2);border-bottom:1px solid var(--border);position:relative;flex-shrink:0}
+.topbar::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent)}
+.logo{display:flex;align-items:center;gap:12px}
+.logo-text{font-family:var(--font-head);font-size:13px;font-weight:700;letter-spacing:3px;color:var(--accent);text-shadow:var(--glow)}
+.topbar-center{display:flex;align-items:center;gap:20px}
+.status-pill{display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text2)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);animation:pulse 2s infinite}
+.status-dot.warn{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.status-dot.off{background:var(--muted);box-shadow:none;animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.topbar-time{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+/* Profile button */
+.topbar-right{display:flex;align-items:center;gap:16px}
+.profile-btn{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 4px;border:1px solid rgba(0,200,255,.3);border-radius:20px;background:rgba(0,200,255,.05);cursor:pointer;transition:all .15s}
+.profile-btn:hover{border-color:var(--accent);background:rgba(0,200,255,.1)}
+.profile-avatar{width:26px;height:26px;border-radius:50%;border:1.5px solid var(--accent);background:rgba(0,200,255,.08);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.profile-name{font-family:var(--font-mono);font-size:11px;color:var(--text2)}
+.profile-caret{font-size:9px;color:var(--muted);margin-left:2px}
+
+/* Layout */
+.app{display:flex;flex-direction:column;height:100vh}
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:200px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.nav-section{padding:16px 0 8px;border-bottom:1px solid var(--border)}
+.nav-label{font-size:9px;font-weight:700;letter-spacing:3px;color:var(--muted);padding:0 16px 8px;text-transform:uppercase;font-family:var(--font-head)}
+.nav-item{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);transition:all .15s;letter-spacing:.5px;position:relative;border:none;background:none;width:100%;text-align:left}
+.nav-item:hover{color:var(--text);background:rgba(0,200,255,.05)}
+.nav-item.active{color:var(--accent);background:rgba(0,200,255,.08)}
+.nav-item.active::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.nav-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sidebar-footer{margin-top:auto;padding:16px;border-top:1px solid var(--border)}
+.version-tag{font-family:var(--font-mono);font-size:10px;color:var(--text3)}
+
+/* Main */
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.main-header{padding:16px 24px 0;flex-shrink:0}
+.page-title{font-family:var(--font-head);font-size:18px;font-weight:700;color:var(--accent);letter-spacing:2px;text-shadow:var(--glow)}
+.page-sub{font-size:11px;color:var(--muted);margin-top:2px;letter-spacing:.5px}
+.main-content{flex:1;overflow-y:auto;padding:16px 24px 24px}
+
+/* Cards */
+.card{background:var(--panel);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.card-title{font-family:var(--font-head);font-size:11px;letter-spacing:2px;color:var(--text2);font-weight:400}
+.card-body{padding:16px}
+
+/* Grid */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:16px}
+.mb-3{margin-bottom:12px}
+.mb-4{margin-bottom:16px}
+.flex{display:flex}
+.gap-2{gap:8px}
+.items-center{align-items:center}
+.justify-between{justify-content:space-between}
+
+/* NF Grid */
+.nf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px}
+.nf-card{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px 14px;position:relative;overflow:hidden}
+.nf-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--border2)}
+.nf-card.running::before{background:var(--success);box-shadow:0 0 10px var(--success)}
+.nf-card.stopped::before{background:var(--danger)}
+.nf-card.warn::before{background:var(--warn)}
+.nf-name{font-family:var(--font-head);font-size:12px;font-weight:700;color:var(--text);letter-spacing:1px;margin-bottom:4px}
+.nf-ip{font-family:var(--font-mono);font-size:9px;color:var(--muted)}
+.nf-state{font-size:9px;font-weight:700;letter-spacing:1px;margin-top:6px}
+.nf-state.running{color:var(--success)}
+.nf-state.stopped{color:var(--danger)}
+.nf-state.warn{color:var(--warn)}
+
+/* Metrics */
+.metric{text-align:center;padding:8px}
+.metric-val{font-family:var(--font-head);font-size:28px;font-weight:700;letter-spacing:2px;margin-bottom:4px}
+.metric-label{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--muted);text-transform:uppercase}
+.metric-sub{font-size:10px;color:var(--text3);margin-top:4px;font-family:var(--font-mono)}
+
+/* Event feed */
+.event-feed{font-family:var(--font-mono);font-size:11px;max-height:160px;overflow-y:auto}
+.event-row{display:flex;gap:8px;padding:5px 0;border-bottom:1px solid rgba(26,58,92,.5)}
+.event-ts{color:var(--muted);flex-shrink:0;width:70px}
+.event-nf{color:var(--accent);flex-shrink:0;width:44px}
+.event-msg.ok{color:var(--success)}
+.event-msg.warn{color:var(--warn)}
+.event-msg.info{color:var(--text2)}
+
+/* Table */
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th{padding:8px 12px;text-align:left;font-size:9px;font-weight:700;letter-spacing:2px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);background:var(--bg3);font-family:var(--font-head)}
+.data-table td{padding:10px 12px;border-bottom:1px solid rgba(26,58,92,.4);vertical-align:middle}
+.data-table tr:last-child td{border-bottom:none}
+.data-table tr:hover td{background:rgba(0,200,255,.03)}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:1px;font-family:var(--font-head)}
+.badge-success{background:rgba(0,230,118,.15);color:var(--success);border:1px solid rgba(0,230,118,.3)}
+.badge-danger{background:rgba(255,59,92,.15);color:var(--danger);border:1px solid rgba(255,59,92,.3)}
+.badge-warn{background:rgba(255,184,0,.15);color:var(--warn);border:1px solid rgba(255,184,0,.3)}
+.badge-muted{background:rgba(74,112,144,.2);color:var(--text2);border:1px solid rgba(74,112,144,.3)}
+.badge-accent{background:rgba(0,200,255,.15);color:var(--accent);border:1px solid rgba(0,200,255,.3)}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.5px;cursor:pointer;border:1px solid;transition:all .15s;font-family:var(--font-main)}
+.btn-primary{background:rgba(0,200,255,.15);border-color:var(--accent2);color:var(--accent)}
+.btn-primary:hover{background:rgba(0,200,255,.25);box-shadow:var(--glow)}
+.btn-ghost{background:transparent;border-color:var(--border2);color:var(--text2)}
+.btn-ghost:hover{color:var(--text);border-color:var(--accent)}
+.btn-danger{background:rgba(255,59,92,.15);border-color:rgba(255,59,92,.4);color:var(--danger)}
+.btn-success{background:rgba(0,230,118,.12);border-color:rgba(0,230,118,.3);color:var(--success)}
+.btn-warn{background:rgba(255,184,0,.12);border-color:rgba(255,184,0,.3);color:var(--warn)}
+.btn-sm{padding:4px 10px;font-size:10px}
+.btn-xs{padding:2px 7px;font-size:9px}
+
+/* Form */
+.form-group{margin-bottom:12px}
+.form-label{display:block;font-size:9px;font-weight:700;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:5px;font-family:var(--font-head)}
+.form-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:8px 10px;color:var(--text);font-size:12px;font-family:var(--font-main)}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:1000}
+.modal{background:var(--panel);border:1px solid var(--border2);border-radius:8px;width:90%;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.modal-title{font-family:var(--font-head);font-size:12px;letter-spacing:2px;color:var(--accent)}
+.modal-body{padding:20px}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border)}
+
+/* Tabs */
+.tab-bar{display:flex;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tab-btn{padding:8px 16px;font-size:11px;font-weight:700;letter-spacing:.5px;cursor:pointer;border:none;background:none;color:var(--text2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-btn:hover:not(.active){color:var(--text)}
+.cnt-badge{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;font-size:9px;background:rgba(0,200,255,.2);color:var(--accent);margin-left:5px}
+
+/* Status bar */
+.status-bar{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.stat-card{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px 16px}
+.stat-label{font-size:9px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;font-family:var(--font-head);margin-bottom:6px}
+.stat-val{font-family:var(--font-head);font-size:20px;color:var(--accent)}
+.stat-sub{font-size:10px;color:var(--text3);margin-top:3px;font-family:var(--font-mono)}
+
+/* IDS alert rows */
+.alert-row{display:flex;gap:10px;padding:6px 12px;border-bottom:1px solid rgba(26,58,92,.4);font-family:var(--font-mono);font-size:11px;align-items:flex-start}
+.alert-sev.high{color:var(--danger);font-weight:700;min-width:36px}
+.alert-sev.med{color:var(--warn);font-weight:700;min-width:36px}
+.alert-sev.low{color:var(--accent);font-weight:700;min-width:36px}
+
+/* Scapy alert rows */
+.scapy-alert{display:flex;gap:10px;padding:7px 10px;border-bottom:1px solid rgba(26,58,92,.4);font-family:var(--font-mono);font-size:11px;align-items:baseline}
+.scapy-alert:last-child{border-bottom:none}
+.scapy-tag{font-size:9px;background:rgba(0,200,255,.12);color:var(--accent2);padding:1px 6px;border-radius:3px;font-weight:700;flex-shrink:0}
+.scapy-time{color:var(--muted);flex-shrink:0;font-size:10px}
+.scapy-sev{color:var(--danger);font-weight:700;font-size:9px;flex-shrink:0}
+.scapy-msg{color:var(--text)}
+
+/* Topology */
+.topo-svg{width:100%;height:300px;border-radius:6px;background:var(--bg3);border:1px solid var(--border)}
+
+/* Info note / flash */
+.info-note{padding:8px 12px;background:rgba(0,200,255,.04);border:1px solid var(--border);border-radius:4px;font-size:11px;color:var(--text2);margin-bottom:12px}
+.flash{padding:8px 14px;border-radius:4px;font-size:12px;font-family:var(--font-mono);margin-bottom:12px}
+.flash.ok{background:rgba(0,230,118,.08);border:1px solid var(--success);color:var(--success)}
+
+/* UE ops */
+.ue-ops-card{background:var(--bg3);border:1px solid var(--border);border-radius:6px;margin-bottom:10px;overflow:hidden}
+.ue-ops-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer}
+.ue-ops-body{padding:14px;border-top:1px solid var(--border)}
+.tunnel-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;background:rgba(0,230,118,.1);border:1px solid rgba(0,230,118,.3);border-radius:3px;font-family:var(--font-mono);font-size:11px;color:var(--success)}
+
+/* Attack-specific */
+.plane-tabs{display:flex;border-radius:6px;overflow:hidden;border:1px solid var(--border);width:fit-content;margin-bottom:16px}
+.plane-tab{padding:7px 22px;border:none;font-family:var(--font-mono);font-size:12px;font-weight:700;cursor:pointer;transition:all .15s;color:var(--muted);background:var(--bg3)}
+.plane-tab.active{background:var(--accent2);color:#fff}
+.atk-params{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px}
+.atk-param-label{font-family:var(--font-mono);font-size:10px;color:var(--muted);display:block;margin-bottom:5px;letter-spacing:1px}
+.atk-param-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:7px 10px;color:var(--text);font-family:var(--font-mono);font-size:13px}
+.atk-param-hint{font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-top:3px}
+.atk-status-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px}
+.atk-status-pill{padding:6px 14px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--muted)}
+.atk-status-pill.idle{border-color:var(--border);color:var(--muted)}
+.btn-launch{padding:8px 22px;background:rgba(255,59,92,.12);border:1px solid var(--danger);border-radius:6px;color:var(--danger);font-family:var(--font-mono);font-size:13px;font-weight:700;letter-spacing:1px;cursor:pointer;transition:all .15s}
+.btn-launch:hover{background:rgba(255,59,92,.22);box-shadow:0 0 12px rgba(255,59,92,.3)}
+.btn-stop-atk{padding:8px 22px;background:rgba(255,184,0,.1);border:1px solid var(--warn);border-radius:6px;color:var(--warn);font-family:var(--font-mono);font-size:13px;font-weight:700;cursor:pointer}
+.data-plane-extras{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;padding:12px 14px;background:var(--bg3);border-radius:6px;border:1px solid var(--border);opacity:.45;pointer-events:none}
+
+/* Login page */
+.login-wrap{display:flex;align-items:center;justify-content:center;height:100%;background:var(--bg)}
+.login-box{background:var(--panel);border:1px solid var(--border2);border-radius:10px;padding:40px 44px;width:360px;box-shadow:0 0 60px rgba(0,200,255,.1)}
+.login-logo{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:28px}
+.login-title{font-family:var(--font-head);font-size:14px;letter-spacing:3px;color:var(--accent);text-shadow:var(--glow)}
+.login-form-label{display:block;font-size:9px;font-weight:700;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:5px;font-family:var(--font-head)}
+.login-form-input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:9px 12px;color:var(--text);font-size:13px;font-family:var(--font-mono);margin-bottom:14px}
+.btn-auth{width:100%;padding:10px;background:var(--accent2);border:none;border-radius:4px;color:#fff;font-family:var(--font-head);font-size:11px;font-weight:700;letter-spacing:2px;cursor:pointer;margin-top:4px}
+.btn-auth:hover{background:var(--accent);box-shadow:var(--glow)}
+.login-note{text-align:center;font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:16px}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ══ TOP BAR ════════════════════════════════════ -->
+<div class="topbar">
+  <div class="logo">
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+      <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="var(--accent)" stroke-width="1.5" fill="none"/>
+      <circle cx="16" cy="16" r="4" fill="var(--accent)" opacity=".8"/>
+      <line x1="16" y1="8" x2="16" y2="12" stroke="var(--accent)" stroke-width="1.5"/>
+      <line x1="16" y1="20" x2="16" y2="24" stroke="var(--accent)" stroke-width="1.5"/>
+      <line x1="8" y1="12" x2="12" y2="14" stroke="var(--accent)" stroke-width="1.5"/>
+      <line x1="20" y1="14" x2="24" y2="12" stroke="var(--accent)" stroke-width="1.5"/>
+    </svg>
+    <span class="logo-text">5G TESTBED</span>
+  </div>
+  <div class="topbar-center">
+    <div class="status-pill"><div class="status-dot"></div>API CONNECTED</div>
+    <div class="status-pill"><div class="status-dot"></div>9 / 12 NFs RUNNING</div>
+    <div class="status-pill"><div class="status-dot warn"></div>UPF WARN</div>
+    <div class="topbar-time" id="clock">10:42:33</div>
+  </div>
+  <div class="topbar-right">
+    <div class="profile-btn">
+      <div class="profile-avatar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      </div>
+      <span class="profile-name">admin</span>
+      <span class="profile-caret">&#9662;</span>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+
+<!-- ══ SIDEBAR ═══════════════════════════════════ -->
+<div class="sidebar">
+  <div class="nav-section">
+    <div class="nav-label">Overview</div>
+    <button class="nav-item" onclick="show('dashboard')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard
+    </button>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Network</div>
+    <button class="nav-item" onclick="show('core')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+      Core NFs
+    </button>
+    <button class="nav-item" onclick="show('ran')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 6l6 6-6 6"/><path d="M23 6l-6 6 6 6"/><path d="M12 2v20"/></svg>
+      RAN
+    </button>
+    <button class="nav-item" onclick="show('uemanager')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M15 2l-6 5h6"/><rect x="8" y="12" width="3" height="3"/><rect x="13" y="12" width="3" height="3"/></svg>
+      UE Manager
+    </button>
+    <button class="nav-item" onclick="show('slices')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Slices
+    </button>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Data Plane</div>
+    <button class="nav-item" onclick="show('subs')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Subscribers
+    </button>
+    <button class="nav-item" onclick="show('topo')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><line x1="12" y1="7" x2="5" y2="17"/><line x1="12" y1="7" x2="19" y2="17"/><line x1="5" y1="19" x2="19" y2="19"/></svg>
+      Topology
+    </button>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Operations</div>
+    <button class="nav-item" onclick="show('tracing')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Tracing
+    </button>
+    <button class="nav-item" onclick="show('throughput')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      Throughput
+    </button>
+    <button class="nav-item" onclick="show('logs')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Logs
+    </button>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Security</div>
+    <button class="nav-item" onclick="show('ids')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      IDS Monitor
+    </button>
+    <button class="nav-item active" onclick="show('ddos')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      DDoS Attack
+    </button>
+    <button class="nav-item" onclick="show('nef')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      NEF
+    </button>
+    <button class="nav-item" onclick="show('camara')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      CAMARA APIs
+    </button>
+  </div>
+  <div class="nav-section">
+    <div class="nav-label">Demo</div>
+    <button class="nav-item" onclick="show('login')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+      Login Page
+    </button>
+  </div>
+  <div class="sidebar-footer">
+    <div class="version-tag">Open5GS 2.7.0<br>UERANSIM v3.2.6<br>NEF v3.4.3</div>
+  </div>
+</div>
+
+<!-- ══ MAIN ══════════════════════════════════════ -->
+<div class="main">
+  <div class="main-header" id="page-header">
+    <div class="page-title" id="page-title-text">DDOS ATTACK</div>
+    <div class="page-sub" id="page-sub-text">Scapy-based DDoS simulation — control-plane NGAP flood + data-plane GTP-U flood</div>
+  </div>
+  <div class="main-content">
+
+  <!-- ━━ DASHBOARD ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-dashboard" style="display:none">
+    <div class="grid-4 mb-4">
+      <div class="card"><div class="card-body"><div class="metric"><div class="metric-val" style="color:var(--success)">9/12</div><div class="metric-label">NFs Running</div><div class="metric-sub">3 stopped</div></div></div></div>
+      <div class="card"><div class="card-body"><div class="metric"><div class="metric-val" style="color:var(--accent)">2</div><div class="metric-label">Active UEs</div><div class="metric-sub">ue1 · ue2 online</div></div></div></div>
+      <div class="card"><div class="card-body"><div class="metric"><div class="metric-val" style="color:var(--accent3)">847 Mbps</div><div class="metric-label">Throughput DL</div><div class="metric-sub">via uesimtun0</div></div></div></div>
+      <div class="card"><div class="card-body"><div class="metric"><div class="metric-val" style="color:var(--warn)">2d 7h</div><div class="metric-label">Uptime</div><div class="metric-sub">since last restart</div></div></div></div>
+    </div>
+    <div class="grid-2 mb-4" style="gap:16px">
+      <div>
+        <div style="font-size:9px;font-family:var(--font-head);letter-spacing:2px;color:var(--muted);margin-bottom:8px">CORE NETWORK FUNCTIONS</div>
+        <div class="nf-grid">
+          <div class="nf-card running"><div class="nf-name">NRF</div><div class="nf-ip">10.45.0.10</div><div class="nf-state running">● RUNNING</div></div>
+          <div class="nf-card running"><div class="nf-name">AMF</div><div class="nf-ip">10.45.0.12</div><div class="nf-state running">● RUNNING</div></div>
+          <div class="nf-card running"><div class="nf-name">SMF</div><div class="nf-ip">10.45.0.13</div><div class="nf-state running">● RUNNING</div></div>
+          <div class="nf-card warn"><div class="nf-name">UPF</div><div class="nf-ip">10.45.0.14</div><div class="nf-state warn">⚠ WARN</div></div>
+          <div class="nf-card running"><div class="nf-name">AUSF</div><div class="nf-ip">10.45.0.15</div><div class="nf-state running">● RUNNING</div></div>
+          <div class="nf-card running"><div class="nf-name">UDM</div><div class="nf-ip">10.45.0.16</div><div class="nf-state running">● RUNNING</div></div>
+          <div class="nf-card running"><div class="nf-name">UDR</div><div class="nf-ip">10.45.0.17</div><div class="nf-state running">● RUNNING</div></div>
+          <div class="nf-card running"><div class="nf-name">PCF</div><div class="nf-ip">10.45.0.18</div><div class="nf-state running">● RUNNING</div></div>
+          <div class="nf-card stopped"><div class="nf-name">NEF</div><div class="nf-ip">10.45.0.25</div><div class="nf-state stopped">● STOPPED</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">LIVE EVENTS</span></div>
+        <div class="card-body" style="padding:8px 12px">
+          <div class="event-feed">
+            <div class="event-row"><span class="event-ts">10:42:33</span><span class="event-nf">AMF</span><span class="event-msg ok">UE IMSI=001010000000001 registered SST=1</span></div>
+            <div class="event-row"><span class="event-ts">10:42:34</span><span class="event-nf">SMF</span><span class="event-msg ok">PDU session DNN=internet QFI=1</span></div>
+            <div class="event-row"><span class="event-ts">10:42:35</span><span class="event-nf">UPF</span><span class="event-msg ok">GTP-U tunnel TEID=0x00000001</span></div>
+            <div class="event-row"><span class="event-ts">10:43:01</span><span class="event-nf">PCF</span><span class="event-msg info">Policy applied 5QI=9 UL=50Mbps</span></div>
+            <div class="event-row"><span class="event-ts">10:43:05</span><span class="event-nf">AMF</span><span class="event-msg ok">UE IMSI=001010000000002 registered SST=2</span></div>
+            <div class="event-row"><span class="event-ts">10:44:02</span><span class="event-nf">UPF</span><span class="event-msg warn">WARN: High throughput N3 (89%)</span></div>
+            <div class="event-row"><span class="event-ts">10:44:18</span><span class="event-nf">NRF</span><span class="event-msg info">NF heartbeat: SMF, UDM, PCF</span></div>
+            <div class="event-row"><span class="event-ts">10:44:55</span><span class="event-nf">AUSF</span><span class="event-msg ok">5G-AKA authentication success</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ━━ UE MANAGER ━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-uemanager" style="display:none">
+    <div class="grid-3 mb-4">
+      <div class="stat-card"><div class="stat-label">Configured UEs</div><div class="stat-val">3</div><div class="stat-sub">in local store</div></div>
+      <div class="stat-card"><div class="stat-label">Registered (Core)</div><div class="stat-val" style="color:var(--success)">2</div><div class="stat-sub">IMSI provisioned in MongoDB</div></div>
+      <div class="stat-card"><div class="stat-label">UERANSIM</div><div class="stat-val" style="font-size:13px;display:flex;gap:8px;margin-top:4px"><span style="color:var(--success)">● gnb</span><span style="color:var(--success)">● ue1</span><span style="color:var(--success)">● ue2</span></div><div class="stat-sub">all containers up</div></div>
+    </div>
+    <div class="tab-bar">
+      <button class="tab-btn active" id="ue-tab-config" onclick="ueTab('config')">Config</button>
+      <button class="tab-btn" id="ue-tab-ops" onclick="ueTab('ops')">Operations</button>
+    </div>
+    <!-- Config tab -->
+    <div id="ue-config">
+      <div style="background:rgba(0,200,255,.05);border:1px solid var(--border);border-radius:4px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--text2);display:flex;gap:24px;align-items:center">
+        <span style="font-family:var(--font-head);font-size:9px;letter-spacing:2px;color:var(--muted)">WORKFLOW</span>
+        <span>&#9312; <strong style="color:var(--accent)">ADD UE</strong> — save to local store</span>
+        <span>&#9313; <strong style="color:var(--success)">REGISTER</strong> — push to Open5GS MongoDB</span>
+        <span>&#9314; <strong style="color:var(--warn)">DEREGISTER</strong> — remove from core</span>
+      </div>
+      <div class="flex justify-between items-center mb-3">
+        <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">3 UEs configured</div>
+        <button class="btn btn-primary btn-sm">&#xFF0B; Add UE</button>
+      </div>
+      <div class="card">
+        <div class="card-body" style="padding:0">
+          <table class="data-table">
+            <thead><tr><th>IMSI</th><th>DNN</th><th>S-NSSAI</th><th>K / OPc</th><th>State</th><th>Actions</th></tr></thead>
+            <tbody>
+              <tr>
+                <td style="color:var(--accent);font-family:var(--font-mono)">001010000000001</td>
+                <td>internet</td><td><span class="badge badge-muted">SST:1</span></td>
+                <td style="font-size:10px;font-family:var(--font-mono)"><span style="color:var(--muted)">K:</span> fec86ba6&#183;&#183;&#183; <span style="color:var(--muted)">OPc:</span> C4244936&#183;&#183;&#183;</td>
+                <td><span class="badge badge-success">REGISTERED</span></td>
+                <td><div class="flex gap-2"><button class="btn btn-xs btn-ghost" style="opacity:.35;cursor:not-allowed">&#10002; Edit</button><button class="btn btn-xs btn-danger" style="opacity:.35;cursor:not-allowed">Del</button><button class="btn btn-xs btn-warn">Deregister</button></div></td>
+              </tr>
+              <tr>
+                <td style="color:var(--accent);font-family:var(--font-mono)">001010000000002</td>
+                <td>urllc</td><td><span class="badge badge-muted">SST:2</span> <span class="badge badge-muted">SD:000001</span></td>
+                <td style="font-size:10px;font-family:var(--font-mono)"><span style="color:var(--muted)">K:</span> 0c0a3460&#183;&#183;&#183; <span style="color:var(--muted)">OPc:</span> 63bfa50e&#183;&#183;&#183;</td>
+                <td><span class="badge badge-success">REGISTERED</span></td>
+                <td><div class="flex gap-2"><button class="btn btn-xs btn-ghost" style="opacity:.35;cursor:not-allowed">&#10002; Edit</button><button class="btn btn-xs btn-danger" style="opacity:.35;cursor:not-allowed">Del</button><button class="btn btn-xs btn-warn">Deregister</button></div></td>
+              </tr>
+              <tr>
+                <td style="color:var(--accent);font-family:var(--font-mono)">001010000000003</td>
+                <td>iot</td><td><span class="badge badge-muted">SST:3</span></td>
+                <td style="font-size:10px;font-family:var(--font-mono)"><span style="color:var(--muted)">K:</span> 465b5ce8&#183;&#183;&#183; <span style="color:var(--muted)">OPc:</span> e8ed289d&#183;&#183;&#183;</td>
+                <td><span class="badge badge-muted">NOT REGISTERED</span></td>
+                <td><div class="flex gap-2"><button class="btn btn-xs btn-ghost">&#10002; Edit</button><button class="btn btn-xs btn-danger">Del</button><button class="btn btn-xs btn-success">&#9654; Register</button></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <!-- Ops tab -->
+    <div id="ue-ops" style="display:none">
+      <div class="flex items-center gap-2 mb-3">
+        <span style="font-size:11px;color:var(--muted)">Ping target:</span>
+        <input class="form-input" style="width:160px;padding:4px 8px" value="8.8.8.8"/>
+        <button class="btn btn-ghost btn-sm">Ping all</button>
+      </div>
+      <div class="ue-ops-card">
+        <div class="ue-ops-header">
+          <div class="flex items-center gap-10">
+            <span style="font-family:var(--font-mono);color:var(--accent)">001010000000001</span>
+            <span class="badge badge-success">REGISTERED</span>
+            <span class="tunnel-pill">uesimtun0 · 10.45.0.3</span>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-xs btn-ghost">Ping</button>
+            <button class="btn btn-xs btn-ghost">&#9660;</button>
+          </div>
+        </div>
+        <div class="ue-ops-body">
+          <div class="grid-3" style="font-size:11px;margin-bottom:10px">
+            <div><span style="color:var(--muted)">Container:</span> <span style="color:var(--success)">ueransim-ue1 running</span></div>
+            <div><span style="color:var(--muted)">Tunnel IP:</span> <span style="color:var(--accent);font-family:var(--font-mono)">10.45.0.3</span></div>
+            <div><span style="color:var(--muted)">In MongoDB:</span> <span style="color:var(--success)">&#10003; provisioned</span></div>
+          </div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px;font-family:var(--font-mono);font-size:11px;color:var(--success)">
+            PING 8.8.8.8 (8.8.8.8) from 10.45.0.3 uesimtun0<br>
+            64 bytes from 8.8.8.8: icmp_seq=1 ttl=118 time=12.4 ms<br>
+            64 bytes from 8.8.8.8: icmp_seq=2 ttl=118 time=11.8 ms<br>
+            64 bytes from 8.8.8.8: icmp_seq=3 ttl=118 time=12.1 ms
+          </div>
+        </div>
+      </div>
+      <div class="ue-ops-card">
+        <div class="ue-ops-header">
+          <div class="flex items-center gap-10">
+            <span style="font-family:var(--font-mono);color:var(--accent)">001010000000002</span>
+            <span class="badge badge-success">REGISTERED</span>
+            <span class="tunnel-pill">uesimtun0 · 10.45.0.4</span>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-xs btn-ghost">Ping</button>
+            <button class="btn btn-xs btn-ghost">&#9660;</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ━━ SUBSCRIBERS ━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-subs" style="display:none">
+    <div class="flash ok">&#10003; Subscriber 001010000000003 provisioned in Open5GS</div>
+    <div class="flex justify-between items-center mb-3">
+      <div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">3 subscribers in Open5GS</div>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost btn-sm">&#8635; Refresh</button>
+        <button class="btn btn-primary btn-sm" onclick="toggleModal()">&#xFF0B; Add Subscriber</button>
+      </div>
+    </div>
+    <div class="info-note">&#8505; Subscriber records are written directly to Open5GS MongoDB. UE authentication (5G-AKA) uses the K / OPc provisioned here.</div>
+    <div class="card">
+      <div class="card-body" style="padding:0">
+        <table class="data-table">
+          <thead><tr><th>IMSI</th><th>DNN</th><th>S-NSSAI</th><th>AMBR DL / UL</th><th>K / OPc</th><th>Actions</th></tr></thead>
+          <tbody>
+            <tr>
+              <td style="color:var(--accent);font-family:var(--font-mono)">001010000000001</td>
+              <td>internet</td><td><span class="badge badge-muted">SST:1</span></td>
+              <td style="font-family:var(--font-mono);font-size:11px">&#8595;1024 / &#8593;1024 Mbps</td>
+              <td style="font-size:10px;font-family:var(--font-mono)"><span style="color:var(--muted)">K:</span> fec86ba6&#183;&#183;&#183; <span style="color:var(--muted)">OPc:</span> C4244936&#183;&#183;&#183;</td>
+              <td><div class="flex gap-2"><button class="btn btn-xs btn-ghost">&#10002;</button><button class="btn btn-xs btn-danger">Del</button></div></td>
+            </tr>
+            <tr>
+              <td style="color:var(--accent);font-family:var(--font-mono)">001010000000002</td>
+              <td>urllc</td><td><span class="badge badge-muted">SST:2</span> <span class="badge badge-muted" style="margin-left:4px">SD:000001</span></td>
+              <td style="font-family:var(--font-mono);font-size:11px">&#8595;512 / &#8593;256 Mbps</td>
+              <td style="font-size:10px;font-family:var(--font-mono)"><span style="color:var(--muted)">K:</span> 0c0a3460&#183;&#183;&#183; <span style="color:var(--muted)">OPc:</span> 63bfa50e&#183;&#183;&#183;</td>
+              <td><div class="flex gap-2"><button class="btn btn-xs btn-ghost">&#10002;</button><button class="btn btn-xs btn-danger">Del</button></div></td>
+            </tr>
+            <tr>
+              <td style="color:var(--accent);font-family:var(--font-mono)">001010000000003</td>
+              <td>iot</td><td><span class="badge badge-muted">SST:3</span></td>
+              <td style="font-family:var(--font-mono);font-size:11px">&#8595;100 / &#8593;50 Mbps</td>
+              <td style="font-size:10px;font-family:var(--font-mono)"><span style="color:var(--muted)">K:</span> 465b5ce8&#183;&#183;&#183; <span style="color:var(--muted)">OPc:</span> e8ed289d&#183;&#183;&#183;</td>
+              <td><div class="flex gap-2"><button class="btn btn-xs btn-ghost">&#10002;</button><button class="btn btn-xs btn-danger">Del</button></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <!-- Add modal -->
+    <div id="sub-modal" class="modal-overlay" style="display:none" onclick="toggleModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-header"><span class="modal-title">ADD SUBSCRIBER</span><button class="btn btn-ghost btn-sm" onclick="toggleModal()">&#10005;</button></div>
+        <div class="modal-body">
+          <div class="form-group"><label class="form-label">IMSI (15 digits)</label><input class="form-input" style="font-family:var(--font-mono)" value="001010000000004"/></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+            <div class="form-group"><label class="form-label">DNN</label><input class="form-input" value="internet"/></div>
+            <div class="form-group"><label class="form-label">SST</label><select class="form-input"><option>1 — eMBB</option><option>2 — URLLC</option><option>3 — mMTC</option></select></div>
+            <div class="form-group"><label class="form-label">SD (hex)</label><input class="form-input" value="000000"/></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+            <div class="form-group"><label class="form-label">AMBR DL (Mbps)</label><input class="form-input" type="number" value="1024"/></div>
+            <div class="form-group"><label class="form-label">AMBR UL (Mbps)</label><input class="form-input" type="number" value="1024"/></div>
+          </div>
+          <div class="form-group"><label class="form-label">K — Auth Key</label><input class="form-input" style="font-family:var(--font-mono);font-size:12px" value="fec86ba6eb707ed08905757b1bb44b8f"/></div>
+          <div class="form-group"><label class="form-label">OPc — Operator Key</label><input class="form-input" style="font-family:var(--font-mono);font-size:12px" value="C42449363BBAD02B66D16BC975D77CC1"/></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="toggleModal()">Cancel</button>
+          <button class="btn btn-primary">Add Subscriber</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ━━ IDS MONITOR (Zeek only) ━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-ids" style="display:none">
+    <div class="grid-2 mb-4" style="gap:12px">
+      <!-- Zeek engine card -->
+      <div style="padding:14px 16px;background:var(--panel);border:1px solid rgba(0,230,118,.3);border-radius:8px;display:flex;flex-direction:column;gap:8px;box-shadow:0 0 14px rgba(0,230,118,.1)">
+        <div class="flex items-center justify-between">
+          <span style="font-family:var(--font-head);font-size:11px;color:var(--accent);letter-spacing:2px">ZEEK IDS</span>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--success);font-weight:700">● ACTIVE</span>
+        </div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">Control Plane (SBI / N2)</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">monitoring 5g-core-net · sbi port 7777</div>
+        <div style="font-family:var(--font-mono);font-size:9px;color:var(--muted)">up since 08:15:00</div>
+        <div class="flex gap-2" style="margin-top:4px">
+          <button class="btn btn-success btn-sm" style="flex:1;opacity:.4;cursor:not-allowed">&#9654; Start</button>
+          <button class="btn btn-danger btn-sm" style="flex:1">&#9632; Stop</button>
+        </div>
+      </div>
+      <!-- Zeek alert breakdown -->
+      <div style="padding:14px 16px;background:var(--panel);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;gap:6px">
+        <div style="font-family:var(--font-head);font-size:10px;color:var(--accent);letter-spacing:2px;margin-bottom:2px">ZEEK ALERT BREAKDOWN</div>
+        <div class="flex items-center" style="gap:8px"><span style="font-family:var(--font-mono);font-size:9px;color:var(--danger);min-width:60px">CRITICAL</span><div style="flex:1;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden"><div style="width:10%;height:100%;background:var(--danger);border-radius:2px"></div></div><span style="font-family:var(--font-mono);font-size:10px;color:var(--text2);min-width:20px;text-align:right">1</span></div>
+        <div class="flex items-center" style="gap:8px"><span style="font-family:var(--font-mono);font-size:9px;color:#ff7020;min-width:60px">HIGH</span><div style="flex:1;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden"><div style="width:30%;height:100%;background:#ff7020;border-radius:2px"></div></div><span style="font-family:var(--font-mono);font-size:10px;color:var(--text2);min-width:20px;text-align:right">3</span></div>
+        <div class="flex items-center" style="gap:8px"><span style="font-family:var(--font-mono);font-size:9px;color:var(--warn);min-width:60px">MEDIUM</span><div style="flex:1;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden"><div style="width:20%;height:100%;background:var(--warn);border-radius:2px"></div></div><span style="font-family:var(--font-mono);font-size:10px;color:var(--text2);min-width:20px;text-align:right">2</span></div>
+        <div class="flex items-center" style="gap:8px"><span style="font-family:var(--font-mono);font-size:9px;color:var(--accent);min-width:60px">LOW</span><div style="flex:1;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden"><div style="width:10%;height:100%;background:var(--accent);border-radius:2px"></div></div><span style="font-family:var(--font-mono);font-size:10px;color:var(--text2);min-width:20px;text-align:right">1</span></div>
+        <div class="flex items-center" style="gap:8px"><span style="font-family:var(--font-mono);font-size:9px;color:var(--muted);min-width:60px">INFO</span><div style="flex:1;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden"><div style="width:0%;height:100%;background:var(--muted);border-radius:2px"></div></div><span style="font-family:var(--font-mono);font-size:10px;color:var(--text2);min-width:20px;text-align:right">0</span></div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px;border-top:1px solid var(--border);padding-top:4px">Zeek total: 7 alerts</div>
+      </div>
+    </div>
+
+    <!-- Alert feed — Zeek only -->
+    <div class="card mb-4">
+      <div class="card-header"><span class="card-title">ZEEK — CONTROL PLANE ALERTS</span><span class="badge badge-danger">3 HIGH</span></div>
+      <div class="card-body" style="padding:0">
+        <div class="alert-row"><span class="alert-sev high">HIGH</span><div><div style="font-family:var(--font-mono);font-size:11px">SBI auth failure burst — 42 failures/s from 10.45.0.50</div><div style="font-size:10px;color:var(--muted)">10:39:12 · zeek · N2/SBI interface</div></div></div>
+        <div class="alert-row"><span class="alert-sev high">HIGH</span><div><div style="font-family:var(--font-mono);font-size:11px">NRF registration flood — 200 req/s</div><div style="font-size:10px;color:var(--muted)">10:41:05 · zeek · source: 10.45.0.50</div></div></div>
+        <div class="alert-row"><span class="alert-sev high">HIGH</span><div><div style="font-family:var(--font-mono);font-size:11px">N2 NGAP connection flood — 300 new sessions/s</div><div style="font-size:10px;color:var(--muted)">10:42:01 · zeek · source: 192.168.70.91</div></div></div>
+        <div class="alert-row"><span class="alert-sev med">MED</span><div><div style="font-family:var(--font-mono);font-size:11px">NF 5xx spike — SMF: 15 errors in 30s window</div><div style="font-size:10px;color:var(--muted)">10:42:50 · zeek · source: 10.45.0.13</div></div></div>
+      </div>
+    </div>
+
+    <!-- Zeek coverage -->
+    <div style="padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px">
+      <div style="font-family:var(--font-head);font-size:9px;color:var(--muted);letter-spacing:2px;margin-bottom:6px">ZEEK DETECTION COVERAGE</div>
+      <div style="padding:10px;background:var(--bg3);border-radius:6px;border-left:2px solid var(--accent2)">
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);line-height:1.7">
+          SBI auth failures (HTTP 4xx bursts) &nbsp;·&nbsp; NRF registration floods &nbsp;·&nbsp; NF 5xx error spikes &nbsp;·&nbsp; N2 NGAP connection floods
+        </div>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);margin-top:8px">
+        Zeek runs with <code style="color:var(--accent2)">network_mode: host</code> to see all Docker bridge traffic. Start with <code style="color:var(--accent2)">make ids-up</code> or the Start button above.
+      </div>
+    </div>
+  </div>
+
+  <!-- ━━ DDOS ATTACK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-ddos">
+
+    <!-- Attack Configuration card -->
+    <div style="background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+
+      <!-- Card header with attacker status -->
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2)">
+        <span style="font-family:var(--font-head);font-size:11px;color:var(--accent);letter-spacing:2px">ATTACK CONFIGURATION</span>
+        <div class="flex items-center" style="gap:12px">
+          <div class="flex items-center" style="gap:6px">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--success);box-shadow:0 0 6px var(--success);display:inline-block;animation:pulse 2s infinite"></span>
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--success);font-weight:700">READY</span>
+          </div>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">Status: Idle</span>
+        </div>
+      </div>
+
+      <div style="padding:16px">
+        <!-- Plane tabs -->
+        <div class="plane-tabs">
+          <button class="plane-tab active" id="ptab-control" onclick="ddosPlane('control')">&#9889; Control Plane</button>
+          <button class="plane-tab" id="ptab-data" onclick="ddosPlane('data')">&#128225; Data Plane</button>
+        </div>
+
+        <!-- Common params -->
+        <div class="atk-params">
+          <div>
+            <label class="atk-param-label">BURST RATE (msgs/burst)</label>
+            <input type="number" class="atk-param-input" value="4" min="1" max="500"/>
+            <div class="atk-param-hint">default: 4</div>
+          </div>
+          <div>
+            <label class="atk-param-label">DURATION (min)</label>
+            <input type="number" class="atk-param-input" value="1" min="0.1" max="60" step="0.5"/>
+            <div class="atk-param-hint">default: 1 min</div>
+          </div>
+          <div>
+            <label class="atk-param-label">WAIT BETWEEN BURSTS (sec)</label>
+            <input type="number" class="atk-param-input" value="5" min="0.5" max="120" step="0.5"/>
+            <div class="atk-param-hint">default: 5 s</div>
+          </div>
+        </div>
+
+        <!-- Data plane extras (dimmed when control plane active) -->
+        <div class="data-plane-extras" id="data-plane-extras">
+          <div>
+            <label class="atk-param-label">TARGET UPF (destination)</label>
+            <select class="atk-param-input" style="padding:7px 10px">
+              <option>10.45.0.7 (5g-upf1)</option>
+              <option>10.45.0.8 (5g-upf2)</option>
+            </select>
+            <div class="atk-param-hint">GTP-U flood &rarr; port 2152</div>
+          </div>
+          <div>
+            <label class="atk-param-label">ATTACK SOURCE</label>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="ddos-src" value="ue" checked style="margin-top:2px"/>
+                <div>
+                  <div style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">UE Data Interface</div>
+                  <div style="font-family:var(--font-mono);font-size:9px;color:var(--muted)">Simulates rogue UE (src: 192.168.70.91)</div>
+                </div>
+              </label>
+              <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+                <input type="radio" name="ddos-src" value="internet" style="margin-top:2px"/>
+                <div>
+                  <div style="font-family:var(--font-mono);font-size:12px;color:var(--text)">Internet / WAN</div>
+                  <div style="font-family:var(--font-mono);font-size:9px;color:var(--muted)">Spoofed external IP (src: 1.2.3.4)</div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Status + launch buttons -->
+        <div class="atk-status-bar">
+          <div class="atk-status-pill idle">&#9675; IDLE</div>
+          <button class="btn-launch">&#9889; LAUNCH ATTACK</button>
+          <button class="btn-stop-atk" style="opacity:.4;cursor:not-allowed">&#9632; STOP ATTACK</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scapy IDS Detection section -->
+    <div style="background:var(--panel);border:1px solid rgba(0,200,255,.25);border-radius:8px;overflow:hidden;box-shadow:0 0 14px rgba(0,200,255,.06)">
+
+      <!-- Scapy IDS header -->
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg2)">
+        <div class="flex items-center" style="gap:10px">
+          <span style="font-family:var(--font-head);font-size:11px;color:var(--accent2);letter-spacing:2px">SCAPY IDS DETECTION</span>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--success);font-weight:700">● ACTIVE</span>
+          <span style="font-family:var(--font-mono);font-size:9px;color:var(--text3)">Data Plane N3/N4</span>
+        </div>
+        <div class="flex" style="gap:8px">
+          <button class="btn btn-success btn-sm" style="opacity:.4;cursor:not-allowed">&#9654; Start Scapy</button>
+          <button class="btn btn-danger btn-sm">&#9632; Stop Scapy</button>
+        </div>
+      </div>
+
+      <!-- Scapy alert feed -->
+      <div style="padding:14px 16px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <button style="padding:4px 11px;border-radius:4px;border:1px solid var(--danger);background:rgba(255,59,92,.12);color:var(--danger);cursor:pointer;font-family:var(--font-mono);font-size:11px;font-weight:700">ALL</button>
+          <button style="padding:4px 11px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--font-mono);font-size:11px">CRITICAL</button>
+          <button style="padding:4px 11px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--font-mono);font-size:11px">HIGH <span style="background:rgba(255,59,92,.2);padding:1px 4px;border-radius:3px">2</span></button>
+          <button style="padding:4px 11px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--font-mono);font-size:11px">MEDIUM</button>
+          <button style="padding:4px 11px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--font-mono);font-size:11px">LOW</button>
+          <div style="flex:1"></div>
+          <button style="padding:4px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-family:var(--font-mono);font-size:11px">Clear Alerts</button>
+        </div>
+
+        <!-- Sample scapy alerts -->
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:5px;overflow:hidden">
+          <div class="scapy-alert" style="border-left:3px solid var(--danger)">
+            <span class="scapy-tag">SCAPY</span>
+            <span class="scapy-time">13:42:01</span>
+            <span class="scapy-sev">HIGH</span>
+            <span class="scapy-msg">GTP-U FLOOD DETECTED &mdash; 847 pkts/s from 192.168.70.91</span>
+          </div>
+          <div class="scapy-alert" style="border-left:3px solid var(--danger)">
+            <span class="scapy-tag">SCAPY</span>
+            <span class="scapy-time">13:42:06</span>
+            <span class="scapy-sev">HIGH</span>
+            <span class="scapy-msg">GTP-U FLOOD DETECTED &mdash; 1203 pkts/s from 192.168.70.91</span>
+          </div>
+          <div class="scapy-alert" style="border-left:3px solid var(--warn)">
+            <span class="scapy-tag">SCAPY</span>
+            <span class="scapy-time">13:42:18</span>
+            <span style="color:var(--warn);font-weight:700;font-size:9px;flex-shrink:0">MEDIUM</span>
+            <span class="scapy-msg">High-volume GTP tunnel TEID=0x0001 &mdash; 147 MB in 30s window</span>
+          </div>
+        </div>
+
+        <!-- Scapy coverage note -->
+        <div style="padding:8px 12px;background:var(--bg3);border-radius:6px;border-left:2px solid var(--accent2);margin-top:10px">
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3);line-height:1.7">
+            Detects: GTP-U packet rate flood &nbsp;·&nbsp; High-volume GTP tunnel (&gt;100 MB) &nbsp;·&nbsp; Inner-GTP port scan &nbsp;·&nbsp; PFCP session flood
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end pg-ddos -->
+
+  <!-- ━━ CAMARA APIs ━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-camara" style="display:none">
+    <div class="status-bar">
+      <div class="stat-card" style="border-color:rgba(0,200,255,.3)"><div class="stat-label">CAMARA Server</div><div class="stat-val" style="color:var(--success);font-size:14px">● RUNNING</div><div class="stat-sub">172.22.0.31:8080</div></div>
+      <div class="stat-card"><div class="stat-label">Active QoD Sessions</div><div class="stat-val" style="color:var(--accent)">2</div><div class="stat-sub">QOS_M · QOS_S</div></div>
+      <div class="stat-card"><div class="stat-label">Reachability Subs</div><div class="stat-val" style="color:var(--accent)">1</div><div class="stat-sub">ue1 · CONNECTED event</div></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px"><button class="btn btn-danger btn-sm">&#9632; Stop CAMARA</button></div>
+    <div class="tab-bar">
+      <button class="tab-btn active">Device Status</button>
+      <button class="tab-btn">QoD Sessions <span class="cnt-badge">2</span></button>
+      <button class="tab-btn">Reachability <span class="cnt-badge">1</span></button>
+      <button class="tab-btn">Notifications <span class="cnt-badge">3</span></button>
+      <button class="tab-btn">API Catalog</button>
+    </div>
+    <div class="grid-2" style="gap:12px;margin-bottom:14px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">DEVICE STATUS CHECK</span></div>
+        <div class="card-body">
+          <div class="flex gap-2 mb-3 items-center">
+            <select class="form-input" style="width:140px"><option>ue1 — UE 1</option><option>ue2 — UE 2</option></select>
+            <button class="btn btn-primary btn-sm">Check Status</button>
+          </div>
+          <div class="grid-3" style="gap:10px">
+            <div style="background:var(--bg3);border:1px solid rgba(0,230,118,.2);border-radius:4px;padding:10px;text-align:center">
+              <div style="font-size:9px;color:var(--muted);font-family:var(--font-head);letter-spacing:1px;margin-bottom:4px">CONNECTIVITY</div>
+              <span class="badge badge-success">CONNECTED_DATA</span>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:10px;text-align:center">
+              <div style="font-size:9px;color:var(--muted);font-family:var(--font-head);letter-spacing:1px;margin-bottom:4px">ROAMING</div>
+              <span class="badge badge-muted">HOME</span>
+            </div>
+            <div style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:10px;text-align:center">
+              <div style="font-size:9px;color:var(--muted);font-family:var(--font-head);letter-spacing:1px;margin-bottom:4px">LOCATION</div>
+              <span class="badge badge-muted">UNKNOWN</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">QOD SESSIONS</span><button class="btn btn-primary btn-sm">&#xFF0B; New Session</button></div>
+        <div class="card-body" style="padding:0">
+          <table class="data-table">
+            <thead><tr><th>ID</th><th>UE</th><th>Profile</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">qod-a3f1</td>
+                <td>ue1</td>
+                <td><span class="badge badge-accent">QOS_M</span></td>
+                <td><span class="badge badge-success">ACTIVE</span></td>
+                <td><button class="btn btn-xs btn-danger">Del</button></td>
+              </tr>
+              <tr>
+                <td style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">qod-b7c2</td>
+                <td>ue2</td>
+                <td><span class="badge badge-accent">QOS_S</span></td>
+                <td><span class="badge badge-success">ACTIVE</span></td>
+                <td><button class="btn btn-xs btn-danger">Del</button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ━━ TOPOLOGY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-topo" style="display:none">
+    <svg class="topo-svg" viewBox="0 0 760 300">
+      <defs>
+        <marker id="arr" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L6,3 z" fill="#1a3a5c"/>
+        </marker>
+      </defs>
+      <line x1="90" y1="220" x2="170" y2="220" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="200" y1="210" x2="290" y2="155" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="200" y1="230" x2="290" y2="270" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="360" y1="140" x2="430" y2="140" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="360" y1="140" x2="430" y2="200" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="500" y1="140" x2="570" y2="140" stroke="#00e676" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="500" y1="210" x2="570" y2="210" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="360" y1="270" x2="430" y2="270" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="120" y="215" font-size="9" fill="#1f4a70" font-family="Share Tech Mono">N2</text>
+      <text x="225" y="175" font-size="9" fill="#1f4a70" font-family="Share Tech Mono">N2</text>
+      <text x="225" y="262" font-size="9" fill="#1f4a70" font-family="Share Tech Mono">N3</text>
+      <text x="390" y="132" font-size="9" fill="#1f4a70" font-family="Share Tech Mono">SBI</text>
+      <text x="390" y="215" font-size="9" fill="#1f4a70" font-family="Share Tech Mono">N4</text>
+      <text x="390" y="263" font-size="9" fill="#1f4a70" font-family="Share Tech Mono">SBI</text>
+      <text x="530" y="132" font-size="9" fill="#00e676" font-family="Share Tech Mono">N6</text>
+      <text x="530" y="205" font-size="9" fill="#1f4a70" font-family="Share Tech Mono">SBI</text>
+      <g transform="translate(40,195)"><rect width="60" height="30" rx="4" fill="#0d1b2e" stroke="#00e676" stroke-width="1.5"/><text x="30" y="19" text-anchor="middle" font-size="11" fill="#00e676" font-family="Orbitron,sans-serif" font-weight="700">UE</text></g>
+      <g transform="translate(155,205)"><rect width="60" height="30" rx="4" fill="#0d1b2e" stroke="#00c896" stroke-width="1.5"/><text x="30" y="19" text-anchor="middle" font-size="11" fill="#00c896" font-family="Orbitron,sans-serif" font-weight="700">gNB</text></g>
+      <g transform="translate(295,125)"><rect width="60" height="30" rx="4" fill="#0d1b2e" stroke="#00c8ff" stroke-width="1.5"/><text x="30" y="19" text-anchor="middle" font-size="11" fill="#00c8ff" font-family="Orbitron,sans-serif" font-weight="700">AMF</text></g>
+      <g transform="translate(295,255)"><rect width="60" height="30" rx="4" fill="#0d1b2e" stroke="#00c8ff" stroke-width="1.5"/><text x="30" y="19" text-anchor="middle" font-size="11" fill="#00c8ff" font-family="Orbitron,sans-serif" font-weight="700">UPF</text></g>
+      <g transform="translate(430,125)"><rect width="60" height="30" rx="4" fill="#0d1b2e" stroke="#00c8ff" stroke-width="1.5"/><text x="30" y="19" text-anchor="middle" font-size="11" fill="#00c8ff" font-family="Orbitron,sans-serif" font-weight="700">SMF</text></g>
+      <g transform="translate(430,190)"><rect width="60" height="30" rx="4" fill="#0d1b2e" stroke="#00c8ff" stroke-width="1.5"/><text x="30" y="19" text-anchor="middle" font-size="11" fill="#00c8ff" font-family="Orbitron,sans-serif" font-weight="700">NRF</text></g>
+      <g transform="translate(430,255)"><rect width="60" height="30" rx="4" fill="#0d1b2e" stroke="#00c8ff" stroke-width="1.5"/><text x="30" y="19" text-anchor="middle" font-size="11" fill="#00c8ff" font-family="Orbitron,sans-serif" font-weight="700">UDM</text></g>
+      <g transform="translate(570,125)"><rect width="70" height="30" rx="4" fill="#0d1b2e" stroke="#00e676" stroke-width="1.5"/><text x="35" y="19" text-anchor="middle" font-size="11" fill="#00e676" font-family="Orbitron,sans-serif" font-weight="700">Internet</text></g>
+      <g transform="translate(570,193)"><rect width="70" height="30" rx="4" fill="#0d1b2e" stroke="#4a7090" stroke-width="1.5"/><text x="35" y="19" text-anchor="middle" font-size="11" fill="#4a7090" font-family="Orbitron,sans-serif" font-weight="700">AUSF</text></g>
+    </svg>
+    <div class="grid-4 mb-4" style="margin-top:14px">
+      <div style="font-size:11px;font-family:var(--font-mono)"><span style="color:var(--muted)">N2 (NGAP):</span> <span style="color:var(--text2)">SCTP/38412 gNB&rarr;AMF</span></div>
+      <div style="font-size:11px;font-family:var(--font-mono)"><span style="color:var(--muted)">N3 (GTP-U):</span> <span style="color:var(--text2)">UDP/2152 gNB&rarr;UPF</span></div>
+      <div style="font-size:11px;font-family:var(--font-mono)"><span style="color:var(--muted)">N4 (PFCP):</span> <span style="color:var(--text2)">UDP/8805 SMF&rarr;UPF</span></div>
+      <div style="font-size:11px;font-family:var(--font-mono)"><span style="color:var(--muted)">SBI:</span> <span style="color:var(--text2)">HTTP/2 port 7777</span></div>
+    </div>
+  </div>
+
+  <!-- ━━ PLACEHOLDER PAGES ━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-core" style="display:none">
+    <div class="nf-grid">
+      <div class="nf-card running"><div class="nf-name">NRF</div><div class="nf-ip">10.45.0.10:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card running"><div class="nf-name">SCP</div><div class="nf-ip">10.45.0.11:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card running"><div class="nf-name">AMF</div><div class="nf-ip">10.45.0.12:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card running"><div class="nf-name">SMF</div><div class="nf-ip">10.45.0.13:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card warn"><div class="nf-name">UPF</div><div class="nf-ip">10.45.0.14:8805</div><div class="nf-state warn">&#9888; WARN</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button><button class="btn btn-xs btn-ghost">Logs</button></div></div>
+      <div class="nf-card running"><div class="nf-name">AUSF</div><div class="nf-ip">10.45.0.15:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card running"><div class="nf-name">UDM</div><div class="nf-ip">10.45.0.16:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card running"><div class="nf-name">UDR</div><div class="nf-ip">10.45.0.17:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card running"><div class="nf-name">PCF</div><div class="nf-ip">10.45.0.18:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card running"><div class="nf-name">BSF</div><div class="nf-ip">10.45.0.19:7777</div><div class="nf-state running">● RUNNING</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-danger">Stop</button></div></div>
+      <div class="nf-card stopped"><div class="nf-name">NSSF</div><div class="nf-ip">10.45.0.20:7777</div><div class="nf-state stopped">● STOPPED</div><div style="display:flex;gap:6px;margin-top:10px"><button class="btn btn-xs btn-success">Start</button></div></div>
+    </div>
+  </div>
+
+  <div id="pg-ran" style="display:none">
+    <div class="grid-2 mb-4">
+      <div class="nf-card running" style="padding:16px"><div class="nf-name" style="font-size:14px">gNB</div><div class="nf-ip" style="margin-top:4px">192.168.70.20 / 10.45.0.50</div><div class="nf-state running" style="margin-top:8px">● RUNNING</div><div style="font-size:11px;color:var(--text2);margin-top:8px;font-family:var(--font-mono)">N2: 192.168.70.12:38412 &nbsp;·&nbsp; Band 78</div></div>
+      <div class="nf-card running" style="padding:16px"><div class="nf-name" style="font-size:14px">UE1</div><div class="nf-ip" style="margin-top:4px">192.168.70.30 · uesimtun0: 10.45.0.3</div><div class="nf-state running" style="margin-top:8px">● RUNNING &mdash; PDU SESSION UP</div><div style="font-size:11px;color:var(--text2);margin-top:8px;font-family:var(--font-mono)">IMSI: 001010000000001 &nbsp;·&nbsp; DNN: internet</div></div>
+    </div>
+  </div>
+
+  <div id="pg-nef" style="display:none">
+    <div class="status-bar">
+      <div class="stat-card"><div class="stat-label">NEF Container</div><div class="stat-val" style="color:var(--danger);font-size:14px">● STOPPED</div><div class="stat-sub">free5gc/nef:v3.4.3</div></div>
+      <div class="stat-card"><div class="stat-label">NRF Registered</div><div class="stat-val" style="color:var(--muted);font-size:14px">&mdash;</div><div class="stat-sub">start NEF first</div></div>
+      <div class="stat-card"><div class="stat-label">Northbound API</div><div class="stat-val" style="font-size:12px;color:var(--muted)">10.45.0.25:8000</div><div class="stat-sub">nnef-eventexposure · pfd · ti</div></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:16px"><button class="btn btn-success">&#9654; Start NEF</button></div>
+    <div class="tab-bar">
+      <button class="tab-btn active">Event Exposure</button>
+      <button class="tab-btn">PFD Management</button>
+      <button class="tab-btn">Traffic Influence</button>
+      <button class="tab-btn">API Explorer</button>
+    </div>
+    <div class="card" style="opacity:.5"><div class="card-body" style="text-align:center;padding:40px;color:var(--muted);font-family:var(--font-mono);font-size:12px">NEF not running &mdash; start with <strong style="color:var(--accent)">make nef-up</strong> or the Start button above</div></div>
+  </div>
+
+  <div id="pg-slices" style="display:none">
+    <div class="card"><div class="card-body" style="padding:0">
+      <table class="data-table">
+        <thead><tr><th>Name</th><th>SST</th><th>SD</th><th>DNN</th><th>QoS</th><th>UEs</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+          <tr><td>eMBB Default</td><td>1</td><td>000000</td><td>internet</td><td>5QI-9</td><td>2</td><td><span class="badge badge-success">ACTIVE</span></td><td><button class="btn btn-xs btn-ghost">Edit</button></td></tr>
+          <tr><td>URLLC</td><td>2</td><td>000001</td><td>urllc</td><td>5QI-82</td><td>0</td><td><span class="badge badge-success">ACTIVE</span></td><td><button class="btn btn-xs btn-ghost">Edit</button></td></tr>
+          <tr><td>mMTC / IoT</td><td>3</td><td>000001</td><td>iot</td><td>5QI-65</td><td>0</td><td><span class="badge badge-muted">IDLE</span></td><td><button class="btn btn-xs btn-ghost">Edit</button></td></tr>
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+
+  <div id="pg-tracing" style="display:none">
+    <div class="card"><div class="card-body">
+      <div class="grid-3 mb-3">
+        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" checked style="margin-right:6px"/> N2 (NGAP/SCTP)</label>
+        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" checked style="margin-right:6px"/> N3 (GTP-U)</label>
+        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" style="margin-right:6px"/> N4 (PFCP)</label>
+        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" style="margin-right:6px"/> SBI (HTTP/2)</label>
+      </div>
+      <div class="flex gap-2">
+        <button class="btn btn-primary">&#9654; Start Capture</button>
+        <button class="btn btn-ghost" disabled>&#9632; Stop</button>
+        <button class="btn btn-ghost" disabled>&#8595; Download PCAP</button>
+      </div>
+    </div></div>
+  </div>
+
+  <div id="pg-throughput" style="display:none">
+    <div class="card"><div class="card-body">
+      <div class="grid-3 mb-3">
+        <div class="form-group"><label class="form-label">Direction</label><select class="form-input"><option>Downlink</option><option>Uplink</option><option>BiDir</option></select></div>
+        <div class="form-group"><label class="form-label">Duration (s)</label><input class="form-input" type="number" value="10"/></div>
+        <div class="form-group"><label class="form-label">Parallel Streams</label><input class="form-input" type="number" value="1"/></div>
+      </div>
+      <button class="btn btn-primary">&#9654; Run iPerf3 Test</button>
+    </div></div>
+  </div>
+
+  <div id="pg-logs" style="display:none">
+    <div class="card"><div class="card-body" style="padding:0">
+      <div style="padding:12px;font-family:var(--font-mono);font-size:11px;max-height:400px;overflow-y:auto">
+        <div style="color:var(--success)">[10:42:33][AMF] UE context created IMSI=001010000000001</div>
+        <div style="color:var(--text2)">[10:42:34][SMF] PDU session established DNN=internet</div>
+        <div style="color:var(--warn)">[10:44:02][UPF] WARNING: N3 interface utilization at 89%</div>
+        <div style="color:var(--text2)">[10:44:18][NRF] Heartbeat received from SMF, PCF</div>
+        <div style="color:var(--success)">[10:44:55][AUSF] 5G-AKA success IMSI=001010000000002</div>
+        <div style="color:var(--danger)">[10:45:12][IDS ] [ZEEK] HIGH — SBI auth failure burst 42/s src=10.45.0.50</div>
+        <div style="color:var(--danger)">[10:45:18][IDS ] [SCAPY] HIGH — GTP-U flood 847 pkts/s src=192.168.70.91</div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- ━━ LOGIN PAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+  <div id="pg-login" style="display:none;position:absolute;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center">
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%">
+      <div class="login-box">
+        <div class="login-logo">
+          <svg width="36" height="36" viewBox="0 0 32 32" fill="none">
+            <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="var(--accent)" stroke-width="1.5" fill="none"/>
+            <circle cx="16" cy="16" r="4" fill="var(--accent)" opacity=".8"/>
+            <line x1="16" y1="8" x2="16" y2="12" stroke="var(--accent)" stroke-width="1.5"/>
+            <line x1="16" y1="20" x2="16" y2="24" stroke="var(--accent)" stroke-width="1.5"/>
+            <line x1="8" y1="12" x2="12" y2="14" stroke="var(--accent)" stroke-width="1.5"/>
+            <line x1="20" y1="14" x2="24" y2="12" stroke="var(--accent)" stroke-width="1.5"/>
+          </svg>
+          <span class="login-title">5G TESTBED</span>
+        </div>
+        <div class="form-group" style="margin-bottom:14px">
+          <label class="login-form-label">Username</label>
+          <input class="login-form-input" type="text" value="admin" autocomplete="off"/>
+        </div>
+        <div class="form-group" style="margin-bottom:14px">
+          <label class="login-form-label">Password</label>
+          <input class="login-form-input" type="password" value="password"/>
+        </div>
+        <button class="btn-auth">AUTHENTICATE</button>
+        <div class="login-note">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2" style="vertical-align:middle;margin-right:4px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Secure JWT Authentication
+        </div>
+      </div>
+    </div>
+  </div>
+
+  </div><!-- end main-content -->
+</div><!-- end main -->
+</div><!-- end layout -->
+</div><!-- end app -->
+
+<!-- ══ DEMO LOGIC ════════════════════════════════════ -->
+<script>
+const pages = {
+  dashboard:  { title:'DASHBOARD',                sub:'System overview and real-time NF status' },
+  core:       { title:'CORE NETWORK',             sub:'Open5GS NF management and configuration' },
+  ran:        { title:'RAN',                      sub:'UERANSIM gNB + UE simulator control' },
+  uemanager:  { title:'UE MANAGER',               sub:'Configure simulated UEs · register in Open5GS · ping · PDU session status' },
+  slices:     { title:'NETWORK SLICES',           sub:'5G slice management — create, configure, assign NFs' },
+  subs:       { title:'SUBSCRIBERS',              sub:'UE subscription data in Open5GS MongoDB — live CRUD' },
+  topo:       { title:'TOPOLOGY',                 sub:'Live 5G architecture visualization' },
+  tracing:    { title:'TRACING',                  sub:'Packet capture (PCAP) — start, stop, download' },
+  throughput: { title:'THROUGHPUT TEST',          sub:'iPerf3 DL / UL / BiDir tests through live PDU session' },
+  logs:       { title:'SYSTEM LOGS',              sub:'Aggregated logs from all NFs' },
+  ids:        { title:'IDS MONITOR',              sub:'Zeek intrusion detection — SBI/N2 control-plane anomaly detection' },
+  ddos:       { title:'DDOS ATTACK',              sub:'Scapy-based DDoS simulation — control-plane NGAP flood + data-plane GTP-U flood' },
+  nef:        { title:'NEF — NETWORK EXPOSURE FUNCTION', sub:'Free5GC Northbound API — event exposure · PFD · traffic influence' },
+  camara:     { title:'CAMARA APIs',              sub:'CAMARA-Project standardised APIs — device-status · QoD · location · reachability' },
+  login:      { title:'LOGIN',                    sub:'JWT authentication — admin access' },
+};
+
+function show(page) {
+  // Hide all panels
+  document.querySelectorAll('[id^="pg-"]').forEach(el => {
+    el.style.display = 'none';
+  });
+
+  // Show selected panel
+  const pg = document.getElementById('pg-' + page);
+  if (pg) pg.style.display = (page === 'login') ? 'flex' : 'block';
+
+  // Update active nav item
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  const navBtn = document.querySelector(`.nav-item[onclick="show('${page}')"]`);
+  if (navBtn) navBtn.classList.add('active');
+
+  // Update page header
+  const info = pages[page] || { title: page.toUpperCase(), sub: '' };
+  document.getElementById('page-title-text').textContent = info.title;
+  document.getElementById('page-sub-text').textContent   = info.sub;
+
+  // Hide main-header for login page (show full-screen login)
+  const header = document.getElementById('page-header');
+  if (header) header.style.display = (page === 'login') ? 'none' : '';
+}
+
+function ueTab(tab) {
+  document.getElementById('ue-config').style.display = tab === 'config' ? 'block' : 'none';
+  document.getElementById('ue-ops').style.display    = tab === 'ops'    ? 'block' : 'none';
+  const tabs = document.querySelectorAll('#pg-uemanager .tab-btn');
+  tabs.forEach((b, i) => b.classList.toggle('active', i === (tab === 'config' ? 0 : 1)));
+}
+
+function toggleModal() {
+  const m = document.getElementById('sub-modal');
+  m.style.display = m.style.display === 'none' ? 'flex' : 'none';
+}
+
+function ddosPlane(plane) {
+  const ctrlBtn  = document.getElementById('ptab-control');
+  const dataBtn  = document.getElementById('ptab-data');
+  const extras   = document.getElementById('data-plane-extras');
+
+  ctrlBtn.classList.toggle('active', plane === 'control');
+  dataBtn.classList.toggle('active', plane === 'data');
+
+  // Show/enable data plane extras only when data plane selected
+  if (extras) {
+    extras.style.opacity    = plane === 'data' ? '1'     : '0.45';
+    extras.style.pointerEvents = plane === 'data' ? 'auto' : 'none';
+  }
+}
+
+// Live clock
+setInterval(() => {
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+}, 1000);
+
+// Default: open DDoS Attack page
+show('ddos');
+</script>
+</body>
+</html>
