@@ -369,6 +369,7 @@ function Icon({ name, size=16 }) {
     nef:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polygon points="12,2 22,7 22,17 12,22 2,17 2,7"/><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="7" x2="22" y2="7"/><line x1="2" y1="17" x2="22" y2="17"/></svg>,
     camara: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4"/><path d="M17.7 6.3a8 8 0 0 1 0 11.4"/><path d="M3.5 3.5a13.5 13.5 0 0 0 0 17"/><path d="M20.5 3.5a13.5 13.5 0 0 1 0 17"/></svg>,
     sim:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M15 2l-6 5h6"/><rect x="8" y="12" width="3" height="3"/><rect x="13" y="12" width="3" height="3"/><rect x="8" y="16" width="3" height="3"/><rect x="13" y="16" width="3" height="3"/></svg>,
+    attack: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
   };
   return icons[name] || null;
 }
@@ -1891,60 +1892,124 @@ function ThroughputTest() {
 }
 
 // ── IDS Monitor Page ──────────────────────────────────────
-function SecurityIDS() {
-  const SEV_COLOR = {
-    CRITICAL: 'var(--danger)',
-    HIGH:     '#ff7020',
-    MEDIUM:   'var(--warn)',
-    LOW:      'var(--accent)',
-    INFO:     'var(--muted)',
-  };
-  const SEV_RGB = { CRITICAL:'255,59,92', HIGH:'255,112,32', MEDIUM:'255,184,0', LOW:'0,200,255', INFO:'74,112,144' };
+// ── Shared IDS alert feed (used by both ZeekIDS and DDoSAttack) ─────────
+function IdsAlertFeed({ alerts, stats, sevFilter, setSevFilter, onClear, clearing, engineFilter }) {
+  const SEV_COLOR = { CRITICAL:'var(--danger)', HIGH:'#ff7020', MEDIUM:'var(--warn)', LOW:'var(--accent)', INFO:'var(--muted)' };
+  const SEV_RGB   = { CRITICAL:'255,59,92', HIGH:'255,112,32', MEDIUM:'255,184,0', LOW:'0,200,255', INFO:'74,112,144' };
+  const mono = { fontFamily:'var(--font-mono)' };
+  const head = { fontFamily:'var(--font-head)', letterSpacing:2 };
+  const filtered = engineFilter ? alerts.filter(a => a.engine === engineFilter) : alerts;
+  const filtStats = { total: filtered.length, bySev: {} };
+  for (const a of filtered) filtStats.bySev[a.severity] = (filtStats.bySev[a.severity]||0) + 1;
+  const maxTypeCnt = Math.max(1, ...Object.values(stats.byType||{}));
 
-  const [engines, setEngines] = useState({
-    'zeek-ids':  { label:'Zeek (Control Plane)',  running:false, status:'unknown', startedAt:null },
-    'scapy-ids': { label:'Scapy (Data Plane)',    running:false, status:'unknown', startedAt:null },
-  });
-  const [totals,   setTotals]   = useState({ zeekAlerts:0, scapyAlerts:0, totalAlerts:0 });
-  const [alerts,   setAlerts]   = useState([]);
-  const [stats,    setStats]    = useState({ total:0, bySeverity:{}, byType:{} });
-  const [sevFilter, setSevFilter] = useState('ALL');
-  const [actionMsg, setActionMsg] = useState('');
-  const [busy,     setBusy]     = useState(false);
-  const [clearing, setClearing] = useState(false);
+  return (
+    <React.Fragment>
+      {/* Severity filter + clear */}
+      <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'center'}}>
+        {['ALL','CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(s => {
+          const active = sevFilter === s;
+          const col = SEV_COLOR[s] || 'var(--accent)';
+          const rgb = SEV_RGB[s]   || '0,200,255';
+          return (
+            <button key={s} onClick={() => setSevFilter(s)}
+              style={{padding:'4px 11px',borderRadius:4,border:`1px solid ${active?col:'var(--border)'}`,background:active?`rgba(${rgb},.12)`:'transparent',color:active?col:'var(--muted)',cursor:'pointer',...mono,fontSize:11,fontWeight:active?700:400,transition:'all .15s'}}>
+              {s}{s!=='ALL'&&(filtStats.bySev[s]||0)>0&&<span style={{marginLeft:4,background:`rgba(${rgb},.2)`,padding:'1px 4px',borderRadius:3}}>{filtStats.bySev[s]}</span>}
+            </button>
+          );
+        })}
+        <div style={{flex:1}}/>
+        <button onClick={onClear} disabled={clearing||filtered.length===0}
+          style={{padding:'4px 12px',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:4,color:filtered.length===0?'var(--text3)':'var(--muted)',cursor:'pointer',...mono,fontSize:11}}>
+          {clearing ? 'Clearing…' : 'Clear Alerts'}
+        </button>
+      </div>
 
+      {/* Alert feed */}
+      <div style={{display:'flex',flexDirection:'column',gap:5,overflowY:'auto',maxHeight:320}}>
+        {filtered.length === 0 ? (
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'24px 0',opacity:.4}}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span style={{...mono,fontSize:12,color:'var(--muted)'}}>No alerts</span>
+          </div>
+        ) : filtered.map((a,i) => {
+          const col = SEV_COLOR[a.severity] || 'var(--muted)';
+          const rgb = SEV_RGB[a.severity]   || '74,112,144';
+          return (
+            <div key={a.id||i} style={{padding:'8px 12px',background:'var(--panel)',border:`1px solid rgba(${rgb},.2)`,borderLeft:`3px solid ${col}`,borderRadius:5,display:'flex',gap:10,alignItems:'flex-start'}}>
+              <div style={{minWidth:58,paddingTop:1}}>
+                <span style={{...mono,fontSize:9,background:`rgba(${rgb},.15)`,color:col,padding:'2px 6px',borderRadius:3,fontWeight:700,display:'block',textAlign:'center',letterSpacing:1}}>{a.severity}</span>
+              </div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:3,flexWrap:'wrap'}}>
+                  <span style={{...mono,fontSize:9,background:'var(--bg3)',color:a.engine==='zeek'?'var(--accent)':'var(--accent3)',padding:'1px 6px',borderRadius:3}}>{(a.engine||'').toUpperCase()}</span>
+                  <span style={{...head,fontSize:9,color:'var(--text2)'}}>{a.type}</span>
+                  <span style={{...mono,fontSize:9,color:'var(--text3)',marginLeft:'auto'}}>{(a.timestamp||'').slice(11,19)} UTC</span>
+                </div>
+                <div style={{...mono,fontSize:11,color:'var(--text)',lineHeight:1.5}}>{a.message}</div>
+                {a.source&&a.source!=='unknown'&&<div style={{...mono,fontSize:10,color:'var(--text3)',marginTop:2}}>src: {a.source}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Top types chart */}
+      {Object.keys(stats.byType||{}).length > 0 && (
+        <div style={{padding:'10px 14px',background:'var(--panel)',border:'1px solid var(--border)',borderRadius:6}}>
+          <div style={{...head,fontSize:9,color:'var(--muted)',marginBottom:8}}>TOP ALERT TYPES</div>
+          {Object.entries(stats.byType||{}).sort(([,a],[,b])=>b-a).slice(0,5).map(([type,cnt])=>(
+            <div key={type} style={{display:'flex',alignItems:'center',gap:8,marginBottom:4}}>
+              <span style={{...mono,fontSize:10,color:'var(--text2)',minWidth:150,flexShrink:0}}>{type}</span>
+              <div style={{flex:1,height:3,background:'var(--bg3)',borderRadius:2,overflow:'hidden'}}><div style={{width:`${(cnt/maxTypeCnt)*100}%`,height:'100%',background:'var(--accent2)',borderRadius:2,transition:'width .4s'}}/></div>
+              <span style={{...mono,fontSize:10,color:'var(--accent)',minWidth:20,textAlign:'right'}}>{cnt}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </React.Fragment>
+  );
+}
+
+// ── IDS Monitor (Zeek only) ───────────────────────────────
+function ZeekIDS() {
+  const SEV_COLOR = { CRITICAL:'var(--danger)', HIGH:'#ff7020', MEDIUM:'var(--warn)', LOW:'var(--accent)', INFO:'var(--muted)' };
+  const SEV_RGB   = { CRITICAL:'255,59,92', HIGH:'255,112,32', MEDIUM:'255,184,0', LOW:'0,200,255', INFO:'74,112,144' };
   const head = { fontFamily:'var(--font-head)', letterSpacing:2 };
   const mono = { fontFamily:'var(--font-mono)' };
 
-  const fetchStatus = async () => {
+  const [zeekEng,   setZeekEng]   = useState({ running:false, status:'unknown', startedAt:null });
+  const [alerts,    setAlerts]    = useState([]);
+  const [stats,     setStats]     = useState({ total:0, bySeverity:{}, byType:{} });
+  const [sevFilter, setSevFilter] = useState('ALL');
+  const [busy,      setBusy]      = useState(false);
+  const [clearing,  setClearing]  = useState(false);
+
+  const fetchAll = async () => {
     const d = await apiFetch('/ids/status');
-    if (d) { setEngines(d.engines || {}); setTotals({ zeekAlerts:d.zeekAlerts||0, scapyAlerts:d.scapyAlerts||0, totalAlerts:d.totalAlerts||0 }); }
-  };
-  const fetchAlerts = async () => {
+    if (d?.engines?.['zeek-ids']) setZeekEng(d.engines['zeek-ids']);
     const qs = sevFilter !== 'ALL' ? `?severity=${sevFilter}` : '';
-    const d = await apiFetch(`/ids/alerts${qs}`);
-    if (d) setAlerts(d);
-  };
-  const fetchStats = async () => {
-    const d = await apiFetch('/ids/stats');
-    if (d) setStats(d);
+    const al = await apiFetch(`/ids/alerts${qs}`);
+    if (al) setAlerts(al);
+    const st = await apiFetch('/ids/stats');
+    if (st) setStats(st);
   };
 
   useEffect(() => {
-    fetchStatus(); fetchAlerts(); fetchStats();
-    const t = setInterval(() => { fetchStatus(); fetchAlerts(); fetchStats(); }, 5000);
+    fetchAll();
+    const t = setInterval(fetchAll, 5000);
     return () => clearInterval(t);
   }, [sevFilter]);
 
-  const startIDS = async () => {
-    setBusy(true); setActionMsg('Starting IDS engines...');
-    await apiFetch('/ids/start', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
-    setTimeout(() => { setBusy(false); setActionMsg(''); fetchStatus(); }, 2500);
+  const startZeek = async () => {
+    setBusy(true);
+    await apiFetch('/ids/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ engine:'zeek-ids' }) });
+    setTimeout(() => { setBusy(false); fetchAll(); }, 2000);
   };
-  const stopIDS = async () => {
-    setBusy(true); setActionMsg('Stopping IDS engines...');
-    await apiFetch('/ids/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
-    setTimeout(() => { setBusy(false); setActionMsg(''); fetchStatus(); }, 2500);
+  const stopZeek = async () => {
+    setBusy(true);
+    await apiFetch('/ids/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ engine:'zeek-ids' }) });
+    setTimeout(() => { setBusy(false); fetchAll(); }, 2000);
   };
   const clearAlerts = async () => {
     setClearing(true);
@@ -1953,49 +2018,39 @@ function SecurityIDS() {
     setTimeout(() => setClearing(false), 600);
   };
 
-  const allRunning = Object.values(engines).length > 0 && Object.values(engines).every(e => e.running);
-  const anyRunning = Object.values(engines).some(e => e.running);
-  const maxTypeCnt = Math.max(1, ...Object.values(stats.byType || {}));
+  const col = zeekEng.running ? 'var(--success)' : 'var(--danger)';
 
   return (
     <div style={{padding:'16px 24px',display:'flex',flexDirection:'column',gap:14,height:'100%',overflowY:'auto'}}>
 
-      {/* ── Engine status cards ─────────────────────────── */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
-        {Object.entries(engines).map(([id, eng]) => {
-          const isZeek = id === 'zeek-ids';
-          const color  = eng.running ? 'var(--success)' : 'var(--danger)';
-          return (
-            <div key={id} style={{padding:'14px 16px',background:'var(--panel)',border:`1px solid ${eng.running?'rgba(0,230,118,.3)':'var(--border)'}`,borderRadius:8,display:'flex',flexDirection:'column',gap:8,boxShadow:eng.running?'0 0 14px rgba(0,230,118,.1)':'none'}}>
-              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <span style={{...head,fontSize:11,color:'var(--accent)'}}>
-                  {isZeek ? 'ZEEK IDS' : 'SCAPY IDS'}
-                </span>
-                <span style={{...mono,fontSize:10,color,fontWeight:700}}>
-                  {eng.running ? '● ACTIVE' : '○ STOPPED'}
-                </span>
-              </div>
-              <div style={{...mono,fontSize:11,color:'var(--text2)'}}>{eng.label}</div>
-              <div style={{display:'flex',alignItems:'center',gap:8,marginTop:2}}>
-                <span style={{fontSize:9,color:'var(--muted)',...mono,textTransform:'uppercase'}}>
-                  {isZeek ? 'SBI / N2' : 'N3 / N4'}
-                </span>
-                <span style={{fontSize:9,color:'var(--text3)',...mono}}>
-                  {eng.status || '—'}
-                </span>
-              </div>
-              {eng.startedAt && eng.running && (
-                <div style={{...mono,fontSize:9,color:'var(--muted)'}}>
-                  up since {new Date(eng.startedAt).toLocaleTimeString()}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      {/* ── Engine card + stats ─────────────────────────────── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        {/* Zeek engine card */}
+        <div style={{padding:'14px 16px',background:'var(--panel)',border:`1px solid ${zeekEng.running?'rgba(0,230,118,.3)':'var(--border)'}`,borderRadius:8,display:'flex',flexDirection:'column',gap:8,boxShadow:zeekEng.running?'0 0 14px rgba(0,230,118,.1)':'none'}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{...head,fontSize:11,color:'var(--accent)'}}>ZEEK IDS</span>
+            <span style={{...mono,fontSize:10,color:col,fontWeight:700}}>{zeekEng.running?'● ACTIVE':'○ STOPPED'}</span>
+          </div>
+          <div style={{...mono,fontSize:11,color:'var(--text2)'}}>Control Plane (SBI / N2)</div>
+          <div style={{...mono,fontSize:10,color:'var(--text3)'}}>{zeekEng.status || '—'}</div>
+          {zeekEng.startedAt && zeekEng.running && (
+            <div style={{...mono,fontSize:9,color:'var(--muted)'}}>up since {new Date(zeekEng.startedAt).toLocaleTimeString()}</div>
+          )}
+          <div style={{display:'flex',gap:8,marginTop:4}}>
+            <button onClick={startZeek} disabled={busy||zeekEng.running}
+              style={{flex:1,padding:'5px 0',background:zeekEng.running?'var(--bg3)':'rgba(0,230,118,.1)',border:`1px solid ${zeekEng.running?'var(--border)':'var(--success)'}`,borderRadius:5,color:zeekEng.running?'var(--muted)':'var(--success)',cursor:busy||zeekEng.running?'not-allowed':'pointer',...mono,fontSize:11,fontWeight:700}}>
+              ▶ Start
+            </button>
+            <button onClick={stopZeek} disabled={busy||!zeekEng.running}
+              style={{flex:1,padding:'5px 0',background:!zeekEng.running?'var(--bg3)':'rgba(255,59,92,.1)',border:`1px solid ${!zeekEng.running?'var(--border)':'var(--danger)'}`,borderRadius:5,color:!zeekEng.running?'var(--muted)':'var(--danger)',cursor:busy||!zeekEng.running?'not-allowed':'pointer',...mono,fontSize:11,fontWeight:700}}>
+              ■ Stop
+            </button>
+          </div>
+        </div>
 
-        {/* Stats card */}
+        {/* Alert severity breakdown */}
         <div style={{padding:'14px 16px',background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,display:'flex',flexDirection:'column',gap:6}}>
-          <div style={{...head,fontSize:10,color:'var(--accent)',marginBottom:2}}>ALERT COUNTS</div>
+          <div style={{...head,fontSize:10,color:'var(--accent)',marginBottom:2}}>ZEEK ALERT BREAKDOWN</div>
           {['CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(s => (
             <div key={s} style={{display:'flex',alignItems:'center',gap:8}}>
               <span style={{...mono,fontSize:9,color:SEV_COLOR[s],minWidth:58}}>{s}</span>
@@ -2006,129 +2061,294 @@ function SecurityIDS() {
             </div>
           ))}
           <div style={{...mono,fontSize:10,color:'var(--muted)',marginTop:4,borderTop:'1px solid var(--border)',paddingTop:4}}>
-            Total: {stats.total} &nbsp;·&nbsp; Zeek: {totals.zeekAlerts} &nbsp;·&nbsp; Scapy: {totals.scapyAlerts}
+            Zeek total: {stats.total} alerts
           </div>
         </div>
       </div>
 
-      {/* ── Controls row ───────────────────────────────────── */}
-      <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap'}}>
-        <button onClick={startIDS} disabled={busy||allRunning}
-          style={{padding:'7px 18px',background:allRunning?'var(--bg3)':'rgba(0,230,118,.1)',border:`1px solid ${allRunning?'var(--border)':'var(--success)'}`,borderRadius:6,color:allRunning?'var(--muted)':'var(--success)',cursor:busy||allRunning?'not-allowed':'pointer',...mono,fontSize:12,fontWeight:700,letterSpacing:1}}>
-          ▶ Start IDS
-        </button>
-        <button onClick={stopIDS} disabled={busy||!anyRunning}
-          style={{padding:'7px 18px',background:!anyRunning?'var(--bg3)':'rgba(255,59,92,.1)',border:`1px solid ${!anyRunning?'var(--border)':'var(--danger)'}`,borderRadius:6,color:!anyRunning?'var(--muted)':'var(--danger)',cursor:busy||!anyRunning?'not-allowed':'pointer',...mono,fontSize:12,fontWeight:700,letterSpacing:1}}>
-          ■ Stop IDS
-        </button>
-        {actionMsg && <span style={{...mono,fontSize:11,color:'var(--accent)',marginLeft:4}}>{actionMsg}</span>}
-        <div style={{flex:1}}/>
-        <button onClick={clearAlerts} disabled={clearing||stats.total===0}
-          style={{padding:'6px 14px',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,color:stats.total===0?'var(--text3)':'var(--muted)',cursor:'pointer',...mono,fontSize:11}}>
-          {clearing ? 'Clearing…' : 'Clear Alerts'}
-        </button>
-      </div>
+      {/* Alert feed (Zeek only) */}
+      <IdsAlertFeed alerts={alerts} stats={stats} sevFilter={sevFilter} setSevFilter={setSevFilter}
+        onClear={clearAlerts} clearing={clearing} engineFilter="zeek"/>
 
-      {/* ── Severity filter tabs ────────────────────────────── */}
-      <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-        {['ALL','CRITICAL','HIGH','MEDIUM','LOW','INFO'].map(s => {
-          const active = sevFilter === s;
-          const col    = SEV_COLOR[s] || 'var(--accent)';
-          const rgb    = SEV_RGB[s]   || '0,200,255';
-          return (
-            <button key={s} onClick={() => setSevFilter(s)}
-              style={{padding:'4px 13px',borderRadius:4,border:`1px solid ${active?col:'var(--border)'}`,background:active?`rgba(${rgb},.12)`:'transparent',color:active?col:'var(--muted)',cursor:'pointer',...mono,fontSize:11,fontWeight:active?700:400,transition:'all .15s'}}>
-              {s}
-              {s !== 'ALL' && (stats.bySeverity[s]||0) > 0 &&
-                <span style={{marginLeft:5,background:`rgba(${rgb},.2)`,padding:'1px 5px',borderRadius:3}}>{stats.bySeverity[s]}</span>}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* ── Alert feed ─────────────────────────────────────── */}
-      <div style={{flex:1,display:'flex',flexDirection:'column',gap:6,overflowY:'auto',minHeight:200}}>
-        {alerts.length === 0 ? (
-          <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',flex:1,gap:10,opacity:.4,padding:'40px 0'}}>
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
-            <div style={{...mono,fontSize:12,color:'var(--muted)'}}>{!anyRunning ? 'Start IDS engines to begin monitoring' : 'No alerts detected'}</div>
+      {/* Coverage */}
+      <div style={{padding:'12px 16px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8}}>
+        <div style={{...head,fontSize:9,color:'var(--muted)',marginBottom:6}}>ZEEK DETECTION COVERAGE</div>
+        <div style={{padding:10,background:'var(--bg3)',borderRadius:6,borderLeft:'2px solid var(--accent2)'}}>
+          <div style={{...mono,fontSize:10,color:'var(--text3)',lineHeight:1.7}}>
+            SBI auth failures (HTTP 4xx bursts) · NRF registration floods · NF 5xx error spikes · N2 NGAP connection floods
           </div>
-        ) : alerts.map((a, i) => {
-          const col = SEV_COLOR[a.severity] || 'var(--muted)';
-          const rgb = SEV_RGB[a.severity]   || '74,112,144';
-          return (
-            <div key={a.id||i} style={{padding:'10px 14px',background:'var(--panel)',border:`1px solid rgba(${rgb},.2)`,borderLeft:`3px solid ${col}`,borderRadius:6,display:'flex',gap:12,alignItems:'flex-start'}}>
-              {/* Severity badge */}
-              <div style={{minWidth:64,paddingTop:2}}>
-                <span style={{...mono,fontSize:9,background:`rgba(${rgb},.15)`,color:col,padding:'3px 7px',borderRadius:3,fontWeight:700,display:'block',textAlign:'center',letterSpacing:1}}>
-                  {a.severity}
-                </span>
-              </div>
-              {/* Content */}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:4}}>
-                  <span style={{...mono,fontSize:10,background:'var(--bg3)',color:a.engine==='zeek'?'var(--accent)':'var(--accent3)',padding:'1px 7px',borderRadius:3,letterSpacing:.5}}>
-                    {(a.engine||'').toUpperCase()}
-                  </span>
-                  <span style={{...head,fontSize:10,color:'var(--text2)',letterSpacing:1}}>{a.type}</span>
-                  <span style={{...mono,fontSize:10,color:'var(--text3)',marginLeft:'auto'}}>{(a.timestamp||'').slice(11,19)} UTC</span>
-                </div>
-                <div style={{...mono,fontSize:11,color:'var(--text)',lineHeight:1.6}}>{a.message}</div>
-                {a.source && a.source !== 'unknown' && (
-                  <div style={{...mono,fontSize:10,color:'var(--text3)',marginTop:3}}>src: {a.source}</div>
-                )}
-                {a.details && Object.keys(a.details).filter(k => a.details[k] != null && a.details[k] !== '' && a.details[k] !== 0).length > 0 && (
-                  <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:5}}>
-                    {Object.entries(a.details).filter(([,v]) => v != null && v !== '' && v !== 0).map(([k,v]) => (
-                      <span key={k} style={{...mono,fontSize:9,background:'var(--bg3)',color:'var(--muted)',padding:'2px 7px',borderRadius:3}}>
-                        {k}: {typeof v === 'object' ? JSON.stringify(v).slice(0,50) : String(v).slice(0,50)}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
+        </div>
+        <div style={{...mono,fontSize:10,color:'var(--text3)',marginTop:8}}>
+          Zeek runs with <code style={{color:'var(--accent2)'}}>network_mode: host</code> to see all Docker bridge traffic.
+          Start with <code style={{color:'var(--accent2)'}}>make ids-up</code> or the Start button above.
+        </div>
       </div>
+    </div>
+  );
+}
 
-      {/* ── Top alert types bar chart ──────────────────────── */}
-      {Object.keys(stats.byType||{}).length > 0 && (
-        <div style={{padding:'12px 16px',background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8}}>
-          <div style={{...head,fontSize:9,color:'var(--muted)',marginBottom:10}}>TOP ALERT TYPES</div>
-          <div style={{display:'flex',flexDirection:'column',gap:5}}>
-            {Object.entries(stats.byType||{}).sort(([,a],[,b])=>b-a).slice(0,6).map(([type,cnt]) => (
-              <div key={type} style={{display:'flex',alignItems:'center',gap:10}}>
-                <span style={{...mono,fontSize:10,color:'var(--text2)',minWidth:160,flexShrink:0}}>{type}</span>
-                <div style={{flex:1,height:4,background:'var(--bg3)',borderRadius:2,overflow:'hidden'}}>
-                  <div style={{width:`${(cnt/maxTypeCnt)*100}%`,height:'100%',background:'var(--accent2)',borderRadius:2,transition:'width .4s'}}/>
-                </div>
-                <span style={{...mono,fontSize:10,color:'var(--accent)',minWidth:24,textAlign:'right'}}>{cnt}</span>
-              </div>
+// ── DDoS Attack Page (Scapy attack + Scapy IDS detection) ────────────────
+function DDoSAttack() {
+  const head = { fontFamily:'var(--font-head)', letterSpacing:2 };
+  const mono = { fontFamily:'var(--font-mono)' };
+  const SEV_COLOR = { CRITICAL:'var(--danger)', HIGH:'#ff7020', MEDIUM:'var(--warn)', LOW:'var(--accent)', INFO:'var(--muted)' };
+  const SEV_RGB   = { CRITICAL:'255,59,92', HIGH:'255,112,32', MEDIUM:'255,184,0', LOW:'0,200,255', INFO:'74,112,144' };
+
+  // ── Attack config state
+  const [plane,      setPlane]      = useState('control');
+  const [burstSize,  setBurstSize]  = useState(4);
+  const [duration,   setDuration]   = useState(1);
+  const [waitSecs,   setWaitSecs]   = useState(5);
+  const [upfs,       setUpfs]       = useState([]);
+  const [selUpf,     setSelUpf]     = useState('');
+  const [source,     setSource]     = useState('ue');
+  const [atkStatus,  setAtkStatus]  = useState({ running:false, attackerReady:false, attack:null });
+  const [atkBusy,    setAtkBusy]    = useState(false);
+  const [atkMsg,     setAtkMsg]     = useState('');
+  const [timeLeft,   setTimeLeft]   = useState(null);
+
+  // ── Scapy IDS state
+  const [scapyEng,   setScapyEng]   = useState({ running:false, status:'unknown', startedAt:null });
+  const [alerts,     setAlerts]     = useState([]);
+  const [stats,      setStats]      = useState({ total:0, bySeverity:{}, byType:{} });
+  const [sevFilter,  setSevFilter]  = useState('ALL');
+  const [idsBusy,    setIdsBusy]    = useState(false);
+  const [clearing,   setClearing]   = useState(false);
+
+  // Load UPF list on mount + when switching to data plane
+  const loadUpfs = async () => {
+    const d = await apiFetch('/ddos/upfs');
+    if (d) { setUpfs(d); if (!selUpf && d.length > 0) setSelUpf(d[0].containerName); }
+  };
+  useEffect(() => { if (plane === 'data') loadUpfs(); }, [plane]);
+
+  // Poll attack status + scapy IDS
+  const pollAll = async () => {
+    const as = await apiFetch('/ddos/status');
+    if (as) setAtkStatus(as);
+    const ds = await apiFetch('/ids/status');
+    if (ds?.engines?.['scapy-ids']) setScapyEng(ds.engines['scapy-ids']);
+    const qs = sevFilter !== 'ALL' ? `?severity=${sevFilter}` : '';
+    const al = await apiFetch(`/ids/alerts${qs}`);
+    if (al) setAlerts(al);
+    const st = await apiFetch('/ids/stats');
+    if (st) setStats(st);
+  };
+  useEffect(() => {
+    loadUpfs();
+    pollAll();
+    const t = setInterval(pollAll, 4000);
+    return () => clearInterval(t);
+  }, [sevFilter]);
+
+  // Countdown timer
+  useEffect(() => {
+    if (!atkStatus.running || !atkStatus.attack?.endTime) { setTimeLeft(null); return; }
+    const update = () => {
+      const left = Math.max(0, new Date(atkStatus.attack.endTime).getTime() - Date.now());
+      const m = Math.floor(left / 60000);
+      const s = Math.floor((left % 60000) / 1000);
+      setTimeLeft(left > 0 ? `${m}:${String(s).padStart(2,'0')}` : null);
+    };
+    update();
+    const t = setInterval(update, 1000);
+    return () => clearInterval(t);
+  }, [atkStatus.running, atkStatus.attack?.endTime]);
+
+  const launchAttack = async () => {
+    if (plane === 'data' && !selUpf) { setAtkMsg('Select a target UPF first'); return; }
+    setAtkBusy(true); setAtkMsg('Launching attack...');
+    const body = { plane, burstSize: Number(burstSize), duration: Number(duration), waitSecs: Number(waitSecs) };
+    if (plane === 'data') { body.targetContainer = selUpf; body.source = source; }
+    const r = await apiFetch('/ddos/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    setAtkBusy(false);
+    if (!r?.ok) { setAtkMsg(r?.error || 'Failed to start attack'); return; }
+    setAtkMsg('');
+    pollAll();
+  };
+
+  const stopAttack = async () => {
+    setAtkBusy(true); setAtkMsg('Stopping...');
+    await apiFetch('/ddos/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    setAtkBusy(false); setAtkMsg(''); setTimeLeft(null);
+    pollAll();
+  };
+
+  const startScapy = async () => {
+    setIdsBusy(true);
+    await apiFetch('/ids/start', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ engine:'scapy-ids' }) });
+    setTimeout(() => { setIdsBusy(false); pollAll(); }, 2000);
+  };
+  const stopScapy = async () => {
+    setIdsBusy(true);
+    await apiFetch('/ids/stop', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ engine:'scapy-ids' }) });
+    setTimeout(() => { setIdsBusy(false); pollAll(); }, 2000);
+  };
+  const clearAlerts = async () => {
+    setClearing(true);
+    await apiFetch('/ids/alerts', { method:'DELETE' });
+    setAlerts([]); setStats({ total:0, bySeverity:{}, byType:{} });
+    setTimeout(() => setClearing(false), 600);
+  };
+
+  const isRunning   = atkStatus.running;
+  const isReady     = atkStatus.attackerReady;
+  const atkInfo     = atkStatus.attack;
+
+  return (
+    <div style={{padding:'16px 24px',display:'flex',flexDirection:'column',gap:16,height:'100%',overflowY:'auto'}}>
+
+      {/* ══ Attack Configuration ══════════════════════════════ */}
+      <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,overflow:'hidden'}}>
+
+        {/* Header with attacker status */}
+        <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--bg2)'}}>
+          <span style={{...head,fontSize:11,color:'var(--accent)'}}>ATTACK CONFIGURATION</span>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{...mono,fontSize:10,color:isReady?'var(--success)':'var(--muted)'}}>
+              {isReady?'● Attacker Ready':'○ Attacker Offline'}
+            </span>
+            {!isReady && <span style={{...mono,fontSize:9,color:'var(--muted)'}}>run: make ids-up</span>}
+          </div>
+        </div>
+
+        <div style={{padding:'16px'}}>
+          {/* Plane tabs */}
+          <div style={{display:'flex',gap:0,marginBottom:16,borderRadius:6,overflow:'hidden',border:'1px solid var(--border)',width:'fit-content'}}>
+            {['control','data'].map(p => (
+              <button key={p} onClick={() => setPlane(p)} disabled={isRunning}
+                style={{padding:'7px 22px',border:'none',background:plane===p?'var(--accent2)':'var(--bg3)',color:plane===p?'white':'var(--muted)',cursor:isRunning?'not-allowed':'pointer',...mono,fontSize:12,fontWeight:plane===p?700:400,transition:'all .15s'}}>
+                {p === 'control' ? '⚡ Control Plane' : '📡 Data Plane'}
+              </button>
             ))}
           </div>
-        </div>
-      )}
 
-      {/* ── Coverage info panel ────────────────────────────── */}
-      <div style={{padding:'12px 16px',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8}}>
-        <div style={{...head,fontSize:9,color:'var(--muted)',marginBottom:8}}>IDS COVERAGE</div>
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-          {[
-            ['ZEEK — Control Plane (SBI / N2)',
-             'SBI auth failures (HTTP 4xx bursts) · NRF registration floods · NF 5xx error spikes · N2 NGAP connection floods'],
-            ['SCAPY — Data Plane (N3 / N4)',
-             'GTP-U packet rate flood · High-volume GTP tunnel (>100 MB) · Inner-GTP port scan detection · PFCP session establishment floods'],
-          ].map(([t,d]) => (
-            <div key={t} style={{padding:10,background:'var(--bg3)',borderRadius:6,borderLeft:'2px solid var(--accent2)'}}>
-              <div style={{...head,fontSize:9,color:'var(--accent)',marginBottom:4}}>{t}</div>
-              <div style={{...mono,fontSize:10,color:'var(--text3)',lineHeight:1.6}}>{d}</div>
+          {/* Common params */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:14,marginBottom:14}}>
+            <div>
+              <label style={{...mono,fontSize:10,color:'var(--muted)',display:'block',marginBottom:5}}>BURST RATE (msgs/burst)</label>
+              <input type="number" min="1" max="500" value={burstSize} onChange={e=>setBurstSize(e.target.value)}
+                disabled={isRunning}
+                style={{width:'100%',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:5,padding:'7px 10px',color:'var(--text)',...mono,fontSize:13,boxSizing:'border-box'}}/>
+              <div style={{...mono,fontSize:9,color:'var(--muted)',marginTop:3}}>default: 4</div>
             </div>
-          ))}
+            <div>
+              <label style={{...mono,fontSize:10,color:'var(--muted)',display:'block',marginBottom:5}}>DURATION (minutes)</label>
+              <input type="number" min="0.1" max="60" step="0.5" value={duration} onChange={e=>setDuration(e.target.value)}
+                disabled={isRunning}
+                style={{width:'100%',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:5,padding:'7px 10px',color:'var(--text)',...mono,fontSize:13,boxSizing:'border-box'}}/>
+              <div style={{...mono,fontSize:9,color:'var(--muted)',marginTop:3}}>default: 1 min</div>
+            </div>
+            <div>
+              <label style={{...mono,fontSize:10,color:'var(--muted)',display:'block',marginBottom:5}}>WAIT BETWEEN BURSTS (secs)</label>
+              <input type="number" min="0.5" max="120" step="0.5" value={waitSecs} onChange={e=>setWaitSecs(e.target.value)}
+                disabled={isRunning}
+                style={{width:'100%',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:5,padding:'7px 10px',color:'var(--text)',...mono,fontSize:13,boxSizing:'border-box'}}/>
+              <div style={{...mono,fontSize:9,color:'var(--muted)',marginTop:3}}>default: 5 s</div>
+            </div>
+          </div>
+
+          {/* Data plane extras */}
+          {plane === 'data' && (
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14,padding:'12px 14px',background:'var(--bg3)',borderRadius:6,border:'1px solid var(--border)'}}>
+              <div>
+                <label style={{...mono,fontSize:10,color:'var(--muted)',display:'block',marginBottom:5}}>TARGET UPF (destination)</label>
+                <select value={selUpf} onChange={e=>setSelUpf(e.target.value)} disabled={isRunning}
+                  style={{width:'100%',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:5,padding:'7px 10px',color:'var(--text)',...mono,fontSize:12,boxSizing:'border-box'}}>
+                  {upfs.length === 0 && <option value="">Loading UPFs…</option>}
+                  {upfs.map(u => (
+                    <option key={u.containerName} value={u.containerName}>
+                      {u.containerName} {u.primaryIp ? `(${u.primaryIp})` : ''} {!u.running ? '[stopped]' : ''}
+                    </option>
+                  ))}
+                </select>
+                <div style={{...mono,fontSize:9,color:'var(--muted)',marginTop:3}}>GTP-U flood → port 2152</div>
+              </div>
+              <div>
+                <label style={{...mono,fontSize:10,color:'var(--muted)',display:'block',marginBottom:5}}>ATTACK SOURCE</label>
+                <div style={{display:'flex',flexDirection:'column',gap:8,marginTop:6}}>
+                  {[
+                    { val:'ue',       label:'UE Data Interface',  desc:'Simulates rogue UE (src: 192.168.70.91)' },
+                    { val:'internet', label:'Internet / WAN',     desc:'Spoofed external IP (src: 1.2.3.4)' },
+                  ].map(opt => (
+                    <label key={opt.val} style={{display:'flex',alignItems:'flex-start',gap:8,cursor:isRunning?'not-allowed':'pointer'}}>
+                      <input type="radio" name="source" value={opt.val} checked={source===opt.val}
+                        onChange={()=>setSource(opt.val)} disabled={isRunning} style={{marginTop:2}}/>
+                      <div>
+                        <div style={{...mono,fontSize:12,color:source===opt.val?'var(--accent)':'var(--text)'}}>{opt.label}</div>
+                        <div style={{...mono,fontSize:9,color:'var(--muted)'}}>{opt.desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Status + launch */}
+          <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+            {/* Status indicator */}
+            <div style={{padding:'6px 14px',borderRadius:6,border:`1px solid ${isRunning?'var(--danger)':'var(--border)'}`,background:isRunning?'rgba(255,59,92,.08)':'var(--bg3)',display:'flex',alignItems:'center',gap:8}}>
+              <span style={{...mono,fontSize:11,color:isRunning?'var(--danger)':'var(--muted)',fontWeight:700}}>
+                {isRunning ? '● RUNNING' : '○ IDLE'}
+              </span>
+              {isRunning && timeLeft && (
+                <span style={{...mono,fontSize:11,color:'var(--warn)'}}>— {timeLeft} remaining</span>
+              )}
+              {isRunning && atkInfo && (
+                <span style={{...mono,fontSize:10,color:'var(--text3)'}}>
+                  · {atkInfo.burstSize} pkts/burst · {atkInfo.plane} plane · {atkInfo.targetIp}
+                </span>
+              )}
+            </div>
+
+            <button onClick={launchAttack} disabled={atkBusy||isRunning||!isReady}
+              style={{padding:'7px 20px',background:isRunning||!isReady?'var(--bg3)':'rgba(255,59,92,.12)',border:`1px solid ${isRunning||!isReady?'var(--border)':'var(--danger)'}`,borderRadius:6,color:isRunning||!isReady?'var(--muted)':'var(--danger)',cursor:atkBusy||isRunning||!isReady?'not-allowed':'pointer',...mono,fontSize:12,fontWeight:700,letterSpacing:1}}>
+              ⚡ Launch Attack
+            </button>
+            <button onClick={stopAttack} disabled={atkBusy||!isRunning}
+              style={{padding:'7px 20px',background:!isRunning?'var(--bg3)':'rgba(255,184,0,.1)',border:`1px solid ${!isRunning?'var(--border)':'var(--warn)'}`,borderRadius:6,color:!isRunning?'var(--muted)':'var(--warn)',cursor:atkBusy||!isRunning?'not-allowed':'pointer',...mono,fontSize:12,fontWeight:700}}>
+              ■ Stop Attack
+            </button>
+            {atkMsg && <span style={{...mono,fontSize:11,color:'var(--accent)'}}>{atkMsg}</span>}
+          </div>
         </div>
-        <div style={{...mono,fontSize:10,color:'var(--text3)',marginTop:10}}>
-          Both engines run with <code style={{color:'var(--accent2)'}}>network_mode: host</code> to see all Docker bridge traffic.
-          Start with <code style={{color:'var(--accent2)'}}>make ids-up</code> or the button above.
+      </div>
+
+      {/* ══ Scapy IDS Detection ══════════════════════════════ */}
+      <div style={{background:'var(--panel)',border:`1px solid ${scapyEng.running?'rgba(0,200,255,.3)':'var(--border)'}`,borderRadius:8,overflow:'hidden',boxShadow:scapyEng.running?'0 0 14px rgba(0,200,255,.08)':'none'}}>
+
+        {/* Scapy IDS header */}
+        <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between',background:'var(--bg2)'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{...head,fontSize:11,color:'var(--accent2)'}}>SCAPY IDS DETECTION</span>
+            <span style={{...mono,fontSize:10,color:scapyEng.running?'var(--success)':'var(--danger)',fontWeight:700}}>
+              {scapyEng.running ? '● ACTIVE' : '○ STOPPED'}
+            </span>
+            <span style={{...mono,fontSize:9,color:'var(--text3)'}}>Data Plane N3/N4</span>
+          </div>
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={startScapy} disabled={idsBusy||scapyEng.running}
+              style={{padding:'4px 12px',background:scapyEng.running?'var(--bg3)':'rgba(0,230,118,.1)',border:`1px solid ${scapyEng.running?'var(--border)':'var(--success)'}`,borderRadius:4,color:scapyEng.running?'var(--muted)':'var(--success)',cursor:idsBusy||scapyEng.running?'not-allowed':'pointer',...mono,fontSize:11,fontWeight:700}}>
+              ▶ Start Scapy
+            </button>
+            <button onClick={stopScapy} disabled={idsBusy||!scapyEng.running}
+              style={{padding:'4px 12px',background:!scapyEng.running?'var(--bg3)':'rgba(255,59,92,.1)',border:`1px solid ${!scapyEng.running?'var(--border)':'var(--danger)'}`,borderRadius:4,color:!scapyEng.running?'var(--muted)':'var(--danger)',cursor:idsBusy||!scapyEng.running?'not-allowed':'pointer',...mono,fontSize:11,fontWeight:700}}>
+              ■ Stop Scapy
+            </button>
+          </div>
+        </div>
+
+        <div style={{padding:'14px 16px',display:'flex',flexDirection:'column',gap:10}}>
+          <IdsAlertFeed alerts={alerts} stats={stats} sevFilter={sevFilter} setSevFilter={setSevFilter}
+            onClear={clearAlerts} clearing={clearing} engineFilter="scapy"/>
+
+          {/* Scapy coverage */}
+          <div style={{padding:'8px 12px',background:'var(--bg3)',borderRadius:6,borderLeft:'2px solid var(--accent2)'}}>
+            <div style={{...mono,fontSize:10,color:'var(--text3)',lineHeight:1.7}}>
+              Detects: GTP-U packet rate flood · High-volume GTP tunnel (&gt;100 MB) · Inner-GTP port scan · PFCP session flood
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -4431,6 +4651,7 @@ function App() {
     {id:'logs',       label:'Logs',        icon:'logs',      group:'ops'},
     {id:'grafana',    label:'Dashboards',  icon:'chart',     group:'obs', external: `http://${location.hostname}:3001`},
     {id:'ids',        label:'IDS Monitor', icon:'shield',    group:'security'},
+    {id:'ddos',       label:'DDoS Attack', icon:'attack',    group:'security'},
     {id:'nef',        label:'NEF',         icon:'nef',       group:'security'},
     {id:'camara',     label:'CAMARA APIs', icon:'camara',    group:'security'},
     ...(isAdmin ? [{id:'users', label:'Users', icon:'shield', group:'admin'}] : []),
@@ -4454,7 +4675,8 @@ function App() {
     throughput: ['THROUGHPUT TEST','iPerf3 DL / UL / BiDir tests through live PDU session'],
     logs:       ['SYSTEM LOGS',    'Aggregated logs from all NFs'],
     grafana:    ['GRAFANA',        'Opens Grafana dashboards in a new tab'],
-    ids:        ['IDS MONITOR',    'Zeek + Scapy intrusion detection — SBI/N2 control plane + N3/N4 data plane'],
+    ids:        ['IDS MONITOR',    'Zeek intrusion detection — SBI/N2 control-plane anomaly detection'],
+    ddos:       ['DDoS ATTACK',    'Scapy-based DDoS simulation — control-plane NGAP flood + data-plane GTP-U flood'],
     nef:        ['NEF — NETWORK EXPOSURE FUNCTION', 'Free5GC Northbound API — event exposure · PFD management · traffic influence'],
     camara:     ['CAMARA APIs', 'CAMARA-Project standardised APIs — device-status · QoD · location · reachability · edge discovery'],
     users:      ['USER MANAGEMENT','Manage researcher accounts and permissions'],
@@ -4552,7 +4774,8 @@ function App() {
             {page === 'tracing'    && <Tracing/>}
             {page === 'throughput' && <ThroughputTest/>}
             {page === 'logs'       && <LogsPage/>}
-            {page === 'ids'        && <SecurityIDS/>}
+            {page === 'ids'        && <ZeekIDS/>}
+            {page === 'ddos'       && <DDoSAttack/>}
             {page === 'nef'        && <NEFPage/>}
             {page === 'camara'     && <CamaraAPIs/>}
             {page === 'users' && isAdmin && <UsersPage/>}

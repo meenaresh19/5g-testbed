@@ -704,6 +704,30 @@ services:
       com.5g-testbed.nf: "scapy-ids"
       com.5g-testbed.type: "ids"
 
+  # Scapy Attacker — DDoS simulation engine for control/data plane testing
+  # Used by the UI DDoS Attack panel to launch simulated attack bursts
+  # Networks: ran-net (UE-side perspective) + 5g-core-net (core-side)
+  scapy-attacker:
+    image: python:3.11-slim
+    container_name: 5g-scapy-attacker
+    profiles: [ids]
+    restart: unless-stopped
+    networks:
+      5g-core-net:
+        ipv4_address: 10.45.0.91        # Core-side — can reach AMF, UPF
+      ran-net:
+        ipv4_address: 192.168.70.91     # RAN-side  — UE source perspective
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.conf.all.rp_filter=0   # Allow spoofed-source GTP-U packets
+    command: >
+      sh -c "pip install scapy --quiet --no-cache-dir 2>&1 | tail -2 && sleep infinity"
+    labels:
+      com.5g-testbed.nf: "scapy-attacker"
+      com.5g-testbed.type: "attack"
+
   # ============================================================
   # NEF — Network Exposure Function (Free5GC)
   # Provides Nnef Northbound API for Application Functions:
