@@ -26,8 +26,8 @@ help:
 	@echo "  oai-down      Stop OAI RAN"
 	@echo "  iperf-ping    Quick iPerf3 DL test from UE1 (10s)"
 	@echo "  ─────────────────────────────────────────────────"
-	@echo "  ids-up        Start IDS engines (Zeek + Scapy)"
-	@echo "  ids-down      Stop IDS engines"
+	@echo "  ids-up        Start IDS + DDoS attacker (Zeek + Scapy + Attacker)"
+	@echo "  ids-down      Stop IDS + DDoS attacker"
 	@echo "  ids-status    Show IDS engine status + alert counts"
 	@echo "  ids-clear     Clear all IDS alert files"
 	@echo "  ─────────────────────────────────────────────────"
@@ -107,20 +107,22 @@ iperf-ping:
 
 # ── IDS Engines (Zeek + Scapy) ────────────────────────────
 ids-up:
-	$(COMPOSE) --profile ids up -d zeek-ids scapy-ids
+	$(COMPOSE) --profile ids up -d zeek-ids scapy-ids scapy-attacker
 	@echo "IDS engines starting..."
-	@echo "  Zeek  — control-plane monitor (SBI/N2)"
-	@echo "  Scapy — data-plane monitor (N3/GTP-U + N4/PFCP)"
-	@echo "  UI: http://localhost:3000  → IDS Monitor tab"
+	@echo "  Zeek           — control-plane monitor (SBI/N2)"
+	@echo "  Scapy IDS      — data-plane monitor (N3/GTP-U + N4/PFCP)"
+	@echo "  Scapy Attacker — DDoS simulation engine (ran-net + core-net)"
+	@echo "  UI: http://localhost:3000  → IDS Monitor / DDoS Attack tabs"
 
 ids-down:
-	$(COMPOSE) --profile ids stop zeek-ids scapy-ids
+	$(COMPOSE) --profile ids stop zeek-ids scapy-ids scapy-attacker
 	@echo "IDS engines stopped"
 
 ids-status:
 	@echo "=== IDS Engine Status ==="
-	@docker inspect 5g-zeek-ids  --format '  Zeek  : {{.State.Status}} ({{.Name}})' 2>/dev/null || echo "  Zeek  : not found"
-	@docker inspect 5g-scapy-ids --format '  Scapy : {{.State.Status}} ({{.Name}})' 2>/dev/null || echo "  Scapy : not found"
+	@docker inspect 5g-zeek-ids      --format '  Zeek     : {{.State.Status}} ({{.Name}})' 2>/dev/null || echo "  Zeek     : not found"
+	@docker inspect 5g-scapy-ids     --format '  Scapy    : {{.State.Status}} ({{.Name}})' 2>/dev/null || echo "  Scapy    : not found"
+	@docker inspect 5g-scapy-attacker --format '  Attacker : {{.State.Status}} ({{.Name}})' 2>/dev/null || echo "  Attacker : not found"
 	@echo ""
 	@echo "=== IDS Alert Counts ==="
 	@ZEEK=$$(docker exec 5g-testbed-api sh -c 'wc -l /ids/zeek/notice.log 2>/dev/null || echo 0' | awk '{print $$1}'); \

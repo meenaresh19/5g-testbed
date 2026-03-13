@@ -346,6 +346,13 @@ async function runExec(container, cmd, timeoutMs = 30000) {
     stream.socket?.on('error', resolve);
     setTimeout(resolve, timeoutMs);
   });
+  // Check exit code — log non-zero results so silent failures are visible
+  try {
+    const info = await exec.inspect();
+    if (info.ExitCode !== 0) {
+      console.warn(`[runExec] non-zero exit ${info.ExitCode} for cmd: ${cmd.join(' ')}`);
+    }
+  } catch { /* inspect may fail for short-lived execs — ignore */ }
 }
 
 // Run exec and capture stdout+stderr output as a string
@@ -361,6 +368,13 @@ async function runExecOutput(container, cmd, timeoutMs = 30000) {
     stream.socket?.on('error', resolve);
     setTimeout(resolve, timeoutMs);
   });
+  // Check exit code — log non-zero so silent failures surface in API logs
+  try {
+    const info = await exec.inspect();
+    if (info.ExitCode !== 0) {
+      console.warn(`[runExecOutput] non-zero exit ${info.ExitCode} for cmd: ${cmd.join(' ')}`);
+    }
+  } catch { /* inspect may fail for short-lived execs — ignore */ }
   return demuxLogs(Buffer.concat(bufs));
 }
 
@@ -1198,7 +1212,7 @@ app.get('/nef/status', async (req, res) => {
 // ALL /nef-api/* — Northbound API proxy → Free5GC NEF SBI
 // Allows the UI (and external AFs) to call NEF APIs through the management API.
 app.all('/nef-api/*', async (req, res) => {
-  const nefPath = req.url.replace('/nef-api', '') || '/';
+  const nefPath = req.url.slice('/nef-api'.length) || '/';
   const opts    = {
     method : req.method,
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -1229,7 +1243,7 @@ app.all('/nef-api/*', async (req, res) => {
 const CAMARA_BASE = process.env.CAMARA_URL || 'http://5g-camara-api:8080';
 
 app.all('/camara-api/*', async (req, res) => {
-  const camaraPath = req.url.replace('/camara-api', '') || '/';
+  const camaraPath = req.url.slice('/camara-api'.length) || '/';
   const opts = {
     method:  req.method,
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },

@@ -1,4 +1,4 @@
-version: "3.8"
+# Compose v2 — no version field needed
 
 # ============================================================
 # 5G Testbed: OAI RAN + Open5GS Core + Management UI
@@ -748,7 +748,7 @@ services:
         ipv4_address: 10.45.0.25
     depends_on:
       - open5gs-nrf
-      - open5gs-mongodb
+      - mongodb
     profiles: [nef]
     restart: unless-stopped
     healthcheck:

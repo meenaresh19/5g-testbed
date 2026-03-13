@@ -239,7 +239,9 @@ setup_testbed() {
     docker compose -f docker/docker-compose.yml --project-directory . pull 2>&1 | tee -a "$LOG" \
       || warn "Some images could not be pulled; will try on 'up'"
     log "Starting services..."
-    docker compose -f docker/docker-compose.yml --project-directory . up -d 2>&1 | tee -a "$LOG"
+    if ! docker compose -f docker/docker-compose.yml --project-directory . up -d 2>&1 | tee -a "$LOG"; then
+      err "docker compose up failed — check $LOG for details"
+    fi
     docker compose -f docker/docker-compose.yml --project-directory . ps
   fi
 }
