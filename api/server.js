@@ -1129,6 +1129,144 @@ app.post('/ue/:imsi/ping', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════
+// UE MANAGER — PDU session control + NAS status (nr-cli)
+// ═══════════════════════════════════════════════════════════
+
+// Run an nr-cli command inside a UERANSIM container
+// Tries /ueransim/build/nr-cli first, falls back to PATH
+async function runNrCli(containerName, imsi, cmd, timeout = 12000) {
+  const c   = docker.getContainer(containerName);
+  const key = `imsi-${imsi}`;
+  // Use sh -c so the fallback chain works without extra exec calls
+  const shell = `nr-cli ${key} --exec '${cmd}' 2>&1 || /ueransim/build/nr-cli ${key} --exec '${cmd}' 2>&1`;
+  return (await runExecOutput(c, ['sh', '-c', shell], timeout)).trim();
+}
+
+// Parse UERANSIM ps-list output into [{psi, state, type, dnn, ip}]
+function parsePsList(raw) {
+  const sessions = [];
+  // Split on "PDU Session[N]" blocks
+  const blocks = raw.split(/(?=PDU Session\s*\[?\d+\]?)/i);
+  for (const block of blocks) {
+    const psiM = block.match(/PDU Session\s*\[?(\d+)\]?/i);
+    if (!psiM) continue;
+    const get = (keys) => {
+      for (const k of keys) {
+        const m = block.match(new RegExp(`${k}\\s*[:\\[\\s]\\s*([^\\]\\n]+)`, 'i'));
+        if (m) return m[1].replace(/\].*/, '').trim();
+      }
+      return null;
+    };
+    sessions.push({
+      psi:   parseInt(psiM[1]),
+      state: get(['State', 'status']),
+      type:  get(['Session Type', 'session-type', 'Type']),
+      dnn:   get(['APN/DNN', 'DNN', 'apn']),
+      ip:    get(['Address', 'PDU address', 'IP', 'IPv4']),
+    });
+  }
+  return sessions;
+}
+
+// Parse UERANSIM UE status output into flat object
+function parseNasStatus(raw) {
+  const get = (keys) => {
+    for (const k of keys) {
+      const m = raw.match(new RegExp(`${k}\\s*[:\\[\\s]\\s*([^\\]\\n]+)`, 'i'));
+      if (m) return m[1].replace(/\].*/, '').trim();
+    }
+    return null;
+  };
+  return {
+    cmState:  get(['cm-state', 'CM-STATE']),
+    mmState:  get(['mm-state', '5GMM-STATE', '5gmm-state']),
+    rmState:  get(['rm-state', 'RM-STATE']),
+    sim:      get(['sim-inserted']),
+  };
+}
+
+// GET /ue/:imsi/sessions — list active PDU sessions via nr-cli ps-list
+app.get('/ue/:imsi/sessions', async (req, res) => {
+  const { imsi } = req.params;
+  const cn = IMSI_TO_CONTAINER[imsi];
+  if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
+  try {
+    const out  = await runNrCli(cn, imsi, 'ps-list');
+    res.json({ ok: true, output: out, sessions: parsePsList(out) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /ue/:imsi/sessions — establish a new PDU session
+// body: { type:'IPv4'|'IPv6'|'IPv4v6', dnn, sst, sd }
+app.post('/ue/:imsi/sessions', async (req, res) => {
+  const { imsi } = req.params;
+  const cn = IMSI_TO_CONTAINER[imsi];
+  if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
+  const { type = 'IPv4', dnn, sst, sd } = req.body || {};
+  // Validate type
+  if (!['IPv4','IPv6','IPv4v6'].includes(type))
+    return res.status(400).json({ error: 'type must be IPv4, IPv6, or IPv4v6' });
+  let cmd = `ps-establish ${type}`;
+  if (sst)  cmd += ` --sst ${Number(sst)}`;
+  if (sd)   cmd += ` --sd ${sd.replace(/^0x/i, '')}`;
+  if (dnn)  cmd += ` --dnn ${dnn}`;
+  try {
+    const out = await runNrCli(cn, imsi, cmd, 25000);
+    res.json({ ok: true, output: out, cmd });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /ue/:imsi/sessions — release all PDU sessions (ps-release-all)
+app.delete('/ue/:imsi/sessions', async (req, res) => {
+  const { imsi } = req.params;
+  const cn = IMSI_TO_CONTAINER[imsi];
+  if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
+  try {
+    const out = await runNrCli(cn, imsi, 'ps-release-all', 20000);
+    res.json({ ok: true, output: out });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /ue/:imsi/sessions/:psi — release a specific PDU session by PSI
+app.delete('/ue/:imsi/sessions/:psi', async (req, res) => {
+  const { imsi, psi } = req.params;
+  const cn = IMSI_TO_CONTAINER[imsi];
+  if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
+  const psiN = parseInt(psi);
+  if (isNaN(psiN) || psiN < 1 || psiN > 15)
+    return res.status(400).json({ error: 'PSI must be 1–15' });
+  try {
+    const out = await runNrCli(cn, imsi, `ps-release ${psiN}`, 20000);
+    res.json({ ok: true, output: out });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /ue/:imsi/nas-status — NAS / CM state from nr-cli status
+app.get('/ue/:imsi/nas-status', async (req, res) => {
+  const { imsi } = req.params;
+  const cn = IMSI_TO_CONTAINER[imsi];
+  if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
+  try {
+    const out = await runNrCli(cn, imsi, 'status', 10000);
+    res.json({ ok: true, output: out, parsed: parseNasStatus(out) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /ue/:imsi/nas-deregister — NAS de-registration via nr-cli
+// body: { type: 'normal'|'switch-off'|'disable-5g' }
+app.post('/ue/:imsi/nas-deregister', async (req, res) => {
+  const { imsi } = req.params;
+  const cn = IMSI_TO_CONTAINER[imsi];
+  if (!cn) return res.status(400).json({ error: 'No UERANSIM container mapped for this IMSI' });
+  const type = ['normal', 'switch-off', 'disable-5g'].includes(req.body?.type)
+    ? req.body.type : 'normal';
+  try {
+    const out = await runNrCli(cn, imsi, `deregister ${type}`, 20000);
+    res.json({ ok: true, output: out, type });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── 404 ───────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

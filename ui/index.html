@@ -3140,9 +3140,13 @@ function UEManager() {
   const [form,        setForm]        = useState({});
   // Ops tab
   const [ueStatus,    setUeStatus]    = useState({});
+  const [sessions,    setSessions]    = useState({});   // imsi → {output, sessions:[]}
+  const [nasStatus,   setNasStatus]   = useState({});   // imsi → {output, parsed:{}}
   const [pingResult,  setPingResult]  = useState({});
   const [pingTarget,  setPingTarget]  = useState('8.8.8.8');
   const [expanded,    setExpanded]    = useState(null);
+  const [pduForm,     setPduForm]     = useState({});   // imsi → {dnn,sst,type}
+  const [showPduForm, setShowPduForm] = useState({});   // imsi → bool
 
   const DEF = { key:'fec86ba6eb707ed08905757b1bb44b8f', opc:'C42449363BBAD02B66D16BC975D77CC1',
     dnn:'internet', sst:1, sd:'000000', ambrDl:1024, ambrUl:1024 };
@@ -3155,12 +3159,23 @@ function UEManager() {
     const d = await apiFetch(`/ue/${imsi}/status`);
     if (d && !d.error) setUeStatus(p=>({...p,[imsi]:d}));
   };
+  const loadSessions = async (imsi) => {
+    const d = await apiFetch(`/ue/${imsi}/sessions`);
+    if (d && !d.error) setSessions(p=>({...p,[imsi]:d}));
+  };
+  const loadNasStatus = async (imsi) => {
+    const d = await apiFetch(`/ue/${imsi}/nas-status`);
+    if (d && !d.error) setNasStatus(p=>({...p,[imsi]:d}));
+  };
+  const refreshAll = async (imsi) => {
+    await Promise.all([loadStatus(imsi), loadSessions(imsi), loadNasStatus(imsi)]);
+  };
 
   useEffect(() => { loadUes(); }, []);
   useEffect(() => {
     if (tab !== 'ops') return;
     const reg = ues.filter(u=>u.registered);
-    reg.forEach(u=>loadStatus(u.imsi));
+    reg.forEach(u=>refreshAll(u.imsi));
     const t = setInterval(()=>reg.forEach(u=>loadStatus(u.imsi)), 5000);
     return ()=>clearInterval(t);
   }, [tab, ues]);
@@ -3226,6 +3241,48 @@ function UEManager() {
       headers:{'Content-Type':'application/json'}, body:JSON.stringify({target:pingTarget, count:4}) });
     setPingResult(p=>({...p,[imsi]:d}));
     setBusyKey(`ping-${imsi}`, false);
+  };
+
+  const establishSession = async (imsi) => {
+    const f = pduForm[imsi] || {};
+    setBusyKey(`pdu-est-${imsi}`, true);
+    flash(`Establishing PDU session for ${imsi}…`);
+    const d = await apiFetch(`/ue/${imsi}/sessions`, { method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ type: f.type||'IPv4', dnn: f.dnn||'internet',
+        sst: f.sst ? parseInt(f.sst) : undefined }) });
+    setBusyKey(`pdu-est-${imsi}`, false);
+    if (d?.ok) {
+      flash(`✓ PDU session established for ${imsi}`);
+      setShowPduForm(s=>({...s,[imsi]:false}));
+      await refreshAll(imsi);
+    } else flash(d?.error || 'Failed to establish PDU session', false);
+  };
+
+  const releaseSession = async (imsi, psi) => {
+    setBusyKey(`pdu-rel-${imsi}-${psi}`, true);
+    const d = await apiFetch(`/ue/${imsi}/sessions/${psi}`, { method:'DELETE' });
+    setBusyKey(`pdu-rel-${imsi}-${psi}`, false);
+    if (d?.ok) { flash(`PDU session [${psi}] released`); await refreshAll(imsi); }
+    else flash(d?.error || 'Failed to release session', false);
+  };
+
+  const releaseAllSessions = async (imsi) => {
+    setBusyKey(`pdu-rel-all-${imsi}`, true);
+    const d = await apiFetch(`/ue/${imsi}/sessions`, { method:'DELETE' });
+    setBusyKey(`pdu-rel-all-${imsi}`, false);
+    if (d?.ok) { flash(`All PDU sessions released for ${imsi}`); await refreshAll(imsi); }
+    else flash(d?.error || 'Failed to release sessions', false);
+  };
+
+  const nasDeregister = async (imsi, type='normal') => {
+    setBusyKey(`nas-dereg-${imsi}`, true);
+    flash(`NAS de-registering ${imsi} (${type})…`);
+    const d = await apiFetch(`/ue/${imsi}/nas-deregister`, { method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type }) });
+    setBusyKey(`nas-dereg-${imsi}`, false);
+    if (d?.ok) { flash(`✓ ${imsi} NAS de-registered (${type})`); await refreshAll(imsi); }
+    else flash(d?.error || 'NAS de-register failed', false);
   };
 
   const regCount = ues.filter(u=>u.registered).length;
@@ -3417,97 +3474,314 @@ function UEManager() {
           ) : (<>
             {/* Ping target bar */}
             <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:14, background:C.card, border:`1px solid ${C.border}`, borderRadius:6, padding:'10px 14px'}}>
-              <span style={{fontSize:12, color:C.muted, fontWeight:600, whiteSpace:'nowrap'}}>Ping target:</span>
+              <span style={{fontSize:12, color:C.muted, fontWeight:600, whiteSpace:'nowrap'}}>🏓 Ping target:</span>
               <input style={{...inputSt, width:170}} value={pingTarget} onChange={e=>setPingTarget(e.target.value)} placeholder="8.8.8.8"/>
-              <span style={{fontSize:11, color:C.muted}}>Used by all UE ping tests</span>
+              <span style={{fontSize:11, color:C.muted}}>Used by all UE ping tests below</span>
             </div>
 
             {ues.filter(u=>u.registered).map(ue=>{
-              const st   = ueStatus[ue.imsi] || {};
+              const st   = ueStatus[ue.imsi]  || {};
+              const ss   = sessions[ue.imsi]  || {};
+              const ns   = nasStatus[ue.imsi] || {};
               const pr   = pingResult[ue.imsi];
               const open = expanded===ue.imsi;
-              const hasCont = !!st.containerName;
-              const stColor = st.hasPduSession?C.accent : st.containerRunning?'#f59e0b' : '#ef4444';
+              const hasCont   = !!st.containerName;
+              const pduList   = ss.sessions || [];
+              const pduF      = pduForm[showPduForm[ue.imsi] ? ue.imsi : ''] || {};
+              const nasP      = ns.parsed || {};
+              const stColor   = st.hasPduSession ? C.accent : st.containerRunning ? '#f59e0b' : '#ef4444';
+              const nasColor  = nasP.cmState?.includes('CONNECTED') ? C.accent
+                              : nasP.mmState?.includes('REGISTERED') ? '#f59e0b' : C.muted;
 
               return (
-                <div key={ue.imsi} style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, marginBottom:12, overflow:'hidden'}}>
-                  {/* Header row (clickable to expand) */}
-                  <div style={{display:'flex', alignItems:'center', gap:12, padding:'12px 16px', cursor:'pointer'}}
+                <div key={ue.imsi} style={{background:C.card, border:`1px solid ${C.border}`, borderRadius:6, marginBottom:14, overflow:'hidden'}}>
+
+                  {/* ── Header row (always visible) ── */}
+                  <div style={{display:'flex', alignItems:'center', gap:10, padding:'11px 16px', cursor:'pointer', flexWrap:'wrap'}}
                     onClick={()=>setExpanded(open?null:ue.imsi)}>
                     <span style={{width:10,height:10,borderRadius:'50%',flexShrink:0,background:stColor,boxShadow:`0 0 6px ${stColor}`}}/>
-                    <span style={{fontFamily:'monospace',fontWeight:700,color:C.accent,fontSize:14,flex:1}}>{ue.imsi}</span>
-                    <span style={{fontSize:10,background:'#00c89620',color:'#00c896',border:'1px solid #00c89644',padding:'2px 8px',borderRadius:3,fontWeight:700}}>✓ In Core</span>
-                    {hasCont && (
-                      <span style={{fontSize:10,background:st.containerRunning?'#60a5fa20':'#ef444420',
-                        color:st.containerRunning?'#60a5fa':'#ef4444',
-                        border:`1px solid ${st.containerRunning?'#60a5fa44':'#ef444444'}`,
-                        padding:'2px 8px',borderRadius:3,fontWeight:700}}>
-                        {st.containerName}: {st.containerState||'…'}
-                      </span>
-                    )}
-                    {st.hasPduSession
-                      ? <span style={{fontSize:11,fontFamily:'monospace',color:C.accent,whiteSpace:'nowrap'}}>⇆ {st.tunIp}</span>
-                      : <span style={{fontSize:10,color:'#f59e0b',whiteSpace:'nowrap'}}>○ No PDU session</span>
+                    <span style={{fontFamily:'monospace',fontWeight:700,color:C.accent,fontSize:14,flex:'0 0 auto'}}>{ue.imsi}</span>
+                    {/* Core badge */}
+                    <span style={{fontSize:10,background:'#00c89615',color:'#00c896',border:'1px solid #00c89633',padding:'2px 7px',borderRadius:3,fontWeight:700,flexShrink:0}}>✓ Core</span>
+                    {/* Container state */}
+                    {hasCont && <span style={{fontSize:10,background:st.containerRunning?'#60a5fa15':'#ef444415',
+                      color:st.containerRunning?'#60a5fa':'#ef4444',
+                      border:`1px solid ${st.containerRunning?'#60a5fa33':'#ef444433'}`,
+                      padding:'2px 7px',borderRadius:3,fontWeight:700,flexShrink:0}}>
+                      {st.containerName?.replace('ueransim-','')} {st.containerState}
+                    </span>}
+                    {/* NAS state */}
+                    {nasP.cmState && <span style={{fontSize:10,color:nasColor,fontFamily:'monospace',flexShrink:0}}>{nasP.cmState}</span>}
+                    {/* PDU sessions count */}
+                    {pduList.length > 0
+                      ? <span style={{fontSize:10,color:C.accent,fontFamily:'monospace',flexShrink:0}}>
+                          ⇆ {pduList.length} PDU {pduList.length===1?'session':'sessions'}
+                          {pduList[0]?.ip && ` · ${pduList[0].ip}`}
+                        </span>
+                      : <span style={{fontSize:10,color:'#f59e0b',flexShrink:0}}>○ No PDU session</span>
                     }
-                    <span style={{fontSize:11,color:C.muted}}>{open?'▲':'▼'}</span>
+                    <span style={{marginLeft:'auto',fontSize:11,color:C.muted,flexShrink:0}}>{open?'▲':'▼'}</span>
                   </div>
 
-                  {/* Expanded detail panel */}
+                  {/* ── Expanded panel ── */}
                   {open && (
-                    <div style={{borderTop:`1px solid ${C.border}`, padding:'14px 16px'}}>
-                      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:16}}>
-                        {/* Details column */}
-                        <div>
-                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',marginBottom:10}}>UE Details</div>
-                          {[['IMSI',ue.imsi],['DNN',ue.dnn],['S-NSSAI',`SST:${ue.sst} SD:${ue.sd}`],
-                            ['Container',st.containerName||'—'],['State',st.containerState||'—'],
-                            ['Tunnel IP',st.tunIp||'No PDU session'],['In MongoDB',st.inMongo?'✓ Present':'✗ Not found'],
-                            ['Registered at',ue.registeredAt?new Date(ue.registeredAt).toLocaleString():'—'],
-                          ].map(([k,v])=>(
-                            <div key={k} style={{display:'flex',gap:8,padding:'4px 0',borderBottom:`1px solid ${C.border}22`}}>
-                              <span style={{fontSize:11,color:C.muted,width:120,flexShrink:0}}>{k}</span>
-                              <span style={{fontSize:11,color:['IMSI','Tunnel IP'].includes(k)?C.accent:C.text,
-                                fontFamily:['IMSI','Tunnel IP','Container'].includes(k)?'monospace':'inherit'}}>{v}</span>
+                    <div style={{borderTop:`1px solid ${C.border}`, padding:'16px'}}>
+
+                      {/* ── Row 1: UE info + NAS status (2 col) ── */}
+                      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14}}>
+
+                        {/* UE details */}
+                        <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:5, padding:'12px 14px'}}>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:8}}>UE Details</div>
+                          {[
+                            ['IMSI',        ue.imsi,          true],
+                            ['DNN',         ue.dnn,           false],
+                            ['S-NSSAI',     `SST:${ue.sst} SD:${ue.sd}`, false],
+                            ['AMBR',        `↓${ue.ambrDl} / ↑${ue.ambrUl} Mbps`, false],
+                            ['Container',   st.containerName||'—',  true],
+                            ['Registered',  ue.registeredAt ? new Date(ue.registeredAt).toLocaleString() : '—', false],
+                            ['MongoDB',     st.inMongo ? '✓ Present' : '✗ Not found', false],
+                          ].map(([k,v,mono])=>(
+                            <div key={k} style={{display:'flex',gap:8,padding:'3px 0',borderBottom:`1px solid ${C.border}22`}}>
+                              <span style={{fontSize:11,color:C.muted,width:90,flexShrink:0}}>{k}</span>
+                              <span style={{fontSize:11,color:mono?C.accent:C.text,fontFamily:mono?'monospace':'inherit',wordBreak:'break-all'}}>{v}</span>
                             </div>
                           ))}
                         </div>
 
-                        {/* Operations column */}
-                        <div>
-                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',marginBottom:10}}>Operations</div>
-                          <div style={{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}}>
-                            <button onClick={()=>doPing(ue.imsi)} disabled={!st.hasPduSession||busy[`ping-${ue.imsi}`]}
-                              style={btnP(!st.hasPduSession||busy[`ping-${ue.imsi}`])}>
-                              {busy[`ping-${ue.imsi}`]?'⏳ Pinging…':'🏓 Ping'}
-                            </button>
-                            <button onClick={()=>loadStatus(ue.imsi)} style={btnTiny('#60a5fa')}>↺ Refresh</button>
-                            <button onClick={()=>deregister(ue.imsi)} disabled={!!busy[ue.imsi]} style={btnTiny('#f59e0b',!!busy[ue.imsi])}>
-                              {busy[ue.imsi]==='dereg'?'…':'✕ Deregister'}
-                            </button>
-                            <button onClick={()=>register(ue.imsi)} disabled={!!busy[ue.imsi]} style={btnTiny('#00c896',!!busy[ue.imsi])}>
-                              {busy[ue.imsi]==='reg'?'…':'↺ Re-Register'}
-                            </button>
+                        {/* NAS status */}
+                        <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:5, padding:'12px 14px'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                            <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>NAS / CM State</div>
+                            <button onClick={()=>loadNasStatus(ue.imsi)} style={btnTiny('#60a5fa')}>↺</button>
                           </div>
-
-                          {!st.hasPduSession && hasCont && st.containerRunning && (
-                            <div style={{background:'#1c1207',border:'1px solid #f59e0b44',borderRadius:5,padding:10,fontSize:11,color:'#f59e0b',marginBottom:10}}>
-                              ⚠ Container running but no PDU session tunnel.<br/>
-                              Check: <code style={{background:C.bg,padding:'1px 5px',borderRadius:3}}>docker logs {st.containerName}</code>
-                            </div>
-                          )}
-
-                          {pr && (
-                            <div>
-                              <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:6}}>
-                                PING → {pr.target} via {pr.tunIp}
+                          {ns.output ? (<>
+                            {[
+                              ['CM State',  nasP.cmState  || '—'],
+                              ['5GMM State',nasP.mmState  || '—'],
+                              ['RM State',  nasP.rmState  || '—'],
+                            ].map(([k,v])=>(
+                              <div key={k} style={{display:'flex',gap:8,padding:'3px 0',borderBottom:`1px solid ${C.border}22`}}>
+                                <span style={{fontSize:11,color:C.muted,width:90,flexShrink:0}}>{k}</span>
+                                <span style={{fontSize:11,color:
+                                  v.includes('CONNECTED')||v.includes('REGISTERED') ? C.accent
+                                  : v.includes('IDLE') ? '#f59e0b' : C.text,fontFamily:'monospace'}}>{v}</span>
                               </div>
-                              <pre style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:5,padding:'10px',
-                                fontSize:10.5,color:pr.ok?C.accent:'#ef4444',overflow:'auto',maxHeight:180,margin:0,lineHeight:1.5}}>
-                                {pr.output||pr.error}
-                              </pre>
+                            ))}
+                            {ns.output && (
+                              <details style={{marginTop:8}}>
+                                <summary style={{fontSize:10,color:C.muted,cursor:'pointer'}}>Raw nr-cli output</summary>
+                                <pre style={{background:'#0d1117',borderRadius:4,padding:8,fontSize:10,color:C.muted,marginTop:4,overflow:'auto',maxHeight:100}}>{ns.output}</pre>
+                              </details>
+                            )}
+                          </>) : (
+                            <div style={{fontSize:11,color:C.muted,padding:'8px 0'}}>
+                              {ns.error ? `⚠ ${ns.error}` : 'Click ↺ to fetch NAS state from nr-cli'}
                             </div>
                           )}
                         </div>
+                      </div>
+
+                      {/* ── Row 2: PDU Sessions ── */}
+                      <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:5, padding:'12px 14px', marginBottom:14}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',letterSpacing:1}}>
+                            PDU Sessions {pduList.length > 0 && <span style={{color:C.accent,marginLeft:4}}>({pduList.length} active)</span>}
+                          </div>
+                          <div style={{display:'flex',gap:8}}>
+                            <button onClick={()=>loadSessions(ue.imsi)} style={btnTiny('#60a5fa')}>↺ Refresh</button>
+                            {pduList.length > 0 && (
+                              <button onClick={()=>releaseAllSessions(ue.imsi)}
+                                disabled={!!busy[`pdu-rel-all-${ue.imsi}`]}
+                                style={btnTiny('#ef4444', !!busy[`pdu-rel-all-${ue.imsi}`])}>
+                                ✕ Release All
+                              </button>
+                            )}
+                            <button onClick={()=>setShowPduForm(s=>({...s,[ue.imsi]:!s[ue.imsi]}))}
+                              style={btnTiny(C.accent)}>
+                              {showPduForm[ue.imsi] ? '▲ Cancel' : '＋ Establish'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Establish PDU form */}
+                        {showPduForm[ue.imsi] && (
+                          <div style={{background:'#161b22',border:`1px solid ${C.border}`,borderRadius:5,padding:'10px 12px',marginBottom:10}}>
+                            <div style={{fontSize:10,color:C.muted,marginBottom:8,fontWeight:700}}>NEW PDU SESSION</div>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr auto',gap:8,alignItems:'flex-end'}}>
+                              <div>
+                                <div style={{fontSize:10,color:C.muted,marginBottom:3}}>DNN</div>
+                                <input style={inputSt} placeholder="internet"
+                                  value={pduForm[ue.imsi]?.dnn ?? ue.dnn ?? 'internet'}
+                                  onChange={e=>setPduForm(f=>({...f,[ue.imsi]:{...f[ue.imsi]??{},dnn:e.target.value}}))}/>
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:C.muted,marginBottom:3}}>Type</div>
+                                <select style={inputSt}
+                                  value={pduForm[ue.imsi]?.type ?? 'IPv4'}
+                                  onChange={e=>setPduForm(f=>({...f,[ue.imsi]:{...f[ue.imsi]??{},type:e.target.value}}))}>
+                                  <option>IPv4</option>
+                                  <option>IPv6</option>
+                                  <option>IPv4v6</option>
+                                </select>
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:C.muted,marginBottom:3}}>SST</div>
+                                <select style={inputSt}
+                                  value={pduForm[ue.imsi]?.sst ?? ue.sst ?? 1}
+                                  onChange={e=>setPduForm(f=>({...f,[ue.imsi]:{...f[ue.imsi]??{},sst:e.target.value}}))}>
+                                  <option value="1">1 — eMBB</option>
+                                  <option value="2">2 — URLLC</option>
+                                  <option value="3">3 — mMTC</option>
+                                  <option value="4">4 — V2X</option>
+                                </select>
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:C.muted,marginBottom:3}}>SD (hex)</div>
+                                <input style={inputSt} placeholder="000000"
+                                  value={pduForm[ue.imsi]?.sd ?? ue.sd ?? '000000'}
+                                  onChange={e=>setPduForm(f=>({...f,[ue.imsi]:{...f[ue.imsi]??{},sd:e.target.value}}))}/>
+                              </div>
+                              <button onClick={()=>establishSession(ue.imsi)}
+                                disabled={!!busy[`pdu-est-${ue.imsi}`]}
+                                style={{...btnP(!!busy[`pdu-est-${ue.imsi}`]),padding:'7px 14px',height:34,alignSelf:'flex-end'}}>
+                                {busy[`pdu-est-${ue.imsi}`] ? '⏳…' : '▶ Connect'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Sessions table */}
+                        {pduList.length === 0 ? (
+                          <div style={{fontSize:11,color:C.muted,padding:'6px 0'}}>
+                            {ss.output
+                              ? (ss.output.includes('PDU Session') ? null : 'No active PDU sessions — use ＋ Establish to create one')
+                              : 'Click ↺ Refresh to list active PDU sessions'}
+                          </div>
+                        ) : (
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                            <thead>
+                              <tr>{['PSI','State','Type','DNN','IP Address',''].map(h=>(
+                                <th key={h} style={{padding:'5px 10px',textAlign:'left',fontSize:9,fontWeight:700,
+                                  color:C.muted,letterSpacing:1,textTransform:'uppercase',borderBottom:`1px solid ${C.border}`}}>
+                                  {h}
+                                </th>
+                              ))}</tr>
+                            </thead>
+                            <tbody>
+                              {pduList.map(s=>(
+                                <tr key={s.psi} style={{borderBottom:`1px solid ${C.border}22`}}>
+                                  <td style={{padding:'6px 10px',fontFamily:'monospace',color:C.accent,fontWeight:700}}>{s.psi}</td>
+                                  <td style={{padding:'6px 10px'}}>
+                                    <span style={{fontSize:10,background:s.state==='Active'?'#00c89620':'#1c2128',
+                                      color:s.state==='Active'?C.accent:C.muted,
+                                      border:`1px solid ${s.state==='Active'?'#00c89644':C.border}`,
+                                      padding:'2px 7px',borderRadius:3,fontWeight:700}}>{s.state||'—'}</span>
+                                  </td>
+                                  <td style={{padding:'6px 10px',color:C.text,fontSize:11}}>{s.type||'—'}</td>
+                                  <td style={{padding:'6px 10px',color:C.text}}>{s.dnn||'—'}</td>
+                                  <td style={{padding:'6px 10px',fontFamily:'monospace',color:C.accent}}>{s.ip||'—'}</td>
+                                  <td style={{padding:'6px 10px'}}>
+                                    <button onClick={()=>releaseSession(ue.imsi, s.psi)}
+                                      disabled={!!busy[`pdu-rel-${ue.imsi}-${s.psi}`]}
+                                      style={btnTiny('#ef4444', !!busy[`pdu-rel-${ue.imsi}-${s.psi}`])}>
+                                      {busy[`pdu-rel-${ue.imsi}-${s.psi}`] ? '…' : 'Release'}
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+
+                        {/* Raw output (if no parsed sessions but output exists) */}
+                        {ss.output && pduList.length === 0 && (
+                          <pre style={{background:'#0d1117',borderRadius:4,padding:'8px',fontSize:10,
+                            color:C.muted,marginTop:8,overflow:'auto',maxHeight:120}}>{ss.output}</pre>
+                        )}
+                      </div>
+
+                      {/* ── Row 3: Operations ── */}
+                      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12}}>
+
+                        {/* Connectivity ops */}
+                        <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:5, padding:'12px 14px'}}>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>Connectivity</div>
+                          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                            <button onClick={()=>doPing(ue.imsi)} disabled={!st.hasPduSession||!!busy[`ping-${ue.imsi}`]}
+                              style={{...btnP(!st.hasPduSession||!!busy[`ping-${ue.imsi}`]),justifyContent:'center'}}>
+                              {busy[`ping-${ue.imsi}`] ? '⏳ Pinging…' : '🏓 Ping'}
+                            </button>
+                            {!st.hasPduSession && hasCont && st.containerRunning && (
+                              <div style={{fontSize:10,color:'#f59e0b',background:'#1c120744',borderRadius:4,padding:'6px 8px'}}>
+                                ⚠ No active tunnel — establish a PDU session first
+                              </div>
+                            )}
+                            {pr && (
+                              <div>
+                                <div style={{fontSize:9,color:C.muted,marginBottom:4}}>PING → {pr.target} via {pr.tunIp}</div>
+                                <pre style={{background:'#0d1117',borderRadius:4,padding:'8px',fontSize:10,
+                                  color:pr.ok?C.accent:'#ef4444',overflow:'auto',maxHeight:160,margin:0,lineHeight:1.5}}>
+                                  {pr.output||pr.error}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Registration ops */}
+                        <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:5, padding:'12px 14px'}}>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>NAS Registration</div>
+                          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                            <button onClick={()=>register(ue.imsi)} disabled={!!busy[ue.imsi]}
+                              style={{...btnTiny('#00c896',!!busy[ue.imsi]),justifyContent:'center',padding:'7px 0'}}>
+                              {busy[ue.imsi]==='reg' ? '⏳ Registering…' : '↺ Re-Register in Core'}
+                            </button>
+                            <button onClick={()=>deregister(ue.imsi)} disabled={!!busy[ue.imsi]}
+                              style={{...btnTiny('#f59e0b',!!busy[ue.imsi]),justifyContent:'center',padding:'7px 0'}}>
+                              {busy[ue.imsi]==='dereg' ? '⏳…' : '✕ Remove from Core (MongoDB)'}
+                            </button>
+                            <div style={{fontSize:9,color:C.muted,marginBottom:4,marginTop:4}}>NAS DE-REGISTER (over-the-air)</div>
+                            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                              {[['normal','Normal'],['switch-off','Power off'],['disable-5g','Disable 5G']].map(([type,label])=>(
+                                <button key={type}
+                                  onClick={()=>nasDeregister(ue.imsi, type)}
+                                  disabled={!!busy[`nas-dereg-${ue.imsi}`]}
+                                  style={{...btnTiny('#ef4444',!!busy[`nas-dereg-${ue.imsi}`]),fontSize:10}}>
+                                  {busy[`nas-dereg-${ue.imsi}`] ? '⏳' : label}
+                                </button>
+                              ))}
+                            </div>
+                            <div style={{fontSize:10,color:'#555',marginTop:2}}>
+                              NAS de-register sends a Deregistration Request to the AMF over the radio. MongoDB entry is NOT removed.
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Diagnostics */}
+                        <div style={{background:C.bg, border:`1px solid ${C.border}`, borderRadius:5, padding:'12px 14px'}}>
+                          <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:'uppercase',letterSpacing:1,marginBottom:10}}>Diagnostics</div>
+                          <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                            <button onClick={()=>refreshAll(ue.imsi)}
+                              style={{...btnTiny('#60a5fa'),justifyContent:'center',padding:'7px 0'}}>
+                              ↺ Refresh All Status
+                            </button>
+                            <button onClick={()=>loadNasStatus(ue.imsi)}
+                              style={{...btnTiny('#a78bfa'),justifyContent:'center',padding:'7px 0'}}>
+                              📡 Fetch NAS State
+                            </button>
+                            <button onClick={()=>loadSessions(ue.imsi)}
+                              style={{...btnTiny('#60a5fa'),justifyContent:'center',padding:'7px 0'}}>
+                              📋 List PDU Sessions
+                            </button>
+                            {hasCont && (
+                              <div style={{fontSize:10,color:C.muted,background:'#161b22',borderRadius:4,padding:'6px 8px',fontFamily:'monospace',wordBreak:'break-all'}}>
+                                docker logs {st.containerName}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
                       </div>
                     </div>
                   )}
