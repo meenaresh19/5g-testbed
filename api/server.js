@@ -4,12 +4,15 @@
 // Bridges the UI to Docker socket for container status/control
 // Routes: /status, /containers, /nf/:id, /trace/*, /config/:nf
 //         /iperf3/status, /iperf3/run, /iperf3/history
+//         /auth/*, /users/*  (JWT authentication)
 // ============================================================
 const express = require('express');
 const cors    = require('cors');
 const Docker  = require('dockerode');
 const fs      = require('fs');
 const path    = require('path');
+const bcrypt  = require('bcryptjs');
+const jwt     = require('jsonwebtoken');
 
 const app    = express();
 const docker = new Docker({ socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock' });
@@ -17,6 +20,230 @@ const PORT   = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+// ── Auth / User Store ─────────────────────────────────────
+const USER_STORE_PATH = process.env.USER_STORE || '/data/users.json';
+const JWT_SECRET      = process.env.JWT_SECRET  || 'dev-secret-change-in-prod';
+const JWT_EXPIRES     = '24h';
+const ADMIN_PASSWORD  = process.env.ADMIN_PASSWORD || 'admin123';
+
+function loadUserStore() {
+  try {
+    if (fs.existsSync(USER_STORE_PATH)) return JSON.parse(fs.readFileSync(USER_STORE_PATH, 'utf8'));
+  } catch (e) { console.error('[AUTH] user store read error:', e.message); }
+  return [];
+}
+
+function saveUserStore(users) {
+  try {
+    const dir = path.dirname(USER_STORE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(USER_STORE_PATH, JSON.stringify(users, null, 2));
+  } catch (e) { console.error('[AUTH] user store write error:', e.message); }
+}
+
+function findUserByUsername(username) {
+  return loadUserStore().find(u => u.username === username);
+}
+
+function findUserById(id) {
+  return loadUserStore().find(u => u.id === id);
+}
+
+function safeUserId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Sync user to Open5GS WebUI accounts collection (non-fatal)
+async function syncOpen5gsAccount(username, passwordHash, role, action = 'upsert') {
+  try {
+    const container = docker.getContainer('open5gs-mongodb');
+    let script;
+    if (action === 'delete') {
+      script = `db.getSiblingDB('open5gs').accounts.deleteOne({ username: '${username}' })`;
+    } else {
+      const o5gsRole = (role === 'admin') ? 0 : 1;
+      script = `
+        const db2 = db.getSiblingDB('open5gs');
+        const existing = db2.accounts.findOne({ username: '${username}' });
+        if (existing) {
+          db2.accounts.updateOne({ username: '${username}' }, { $set: { password_hash: '${passwordHash}', roles: [${o5gsRole}] } });
+        } else {
+          db2.accounts.insertOne({ username: '${username}', password_hash: '${passwordHash}', roles: [${o5gsRole}], __v: 0 });
+        }
+      `;
+    }
+    await runExec(container, ['mongosh', '--quiet', '--eval', script]);
+    console.log(`[AUTH] Open5GS account sync: ${action} ${username}`);
+  } catch (e) {
+    console.warn('[AUTH] Open5GS sync non-fatal error:', e.message);
+  }
+}
+
+// Seed admin user on first boot
+async function seedAdminUser() {
+  const users = loadUserStore();
+  if (users.length === 0) {
+    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+    const admin = {
+      id:           safeUserId(),
+      username:     'admin',
+      passwordHash: hash,
+      role:         'admin',
+      createdAt:    new Date().toISOString(),
+    };
+    saveUserStore([admin]);
+    console.log('[AUTH] Seeded admin user (username: admin)');
+    await syncOpen5gsAccount('admin', hash, 'admin');
+  }
+}
+
+// ── Auth Middleware ────────────────────────────────────────
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
+// Check UE ownership: admins see all; researchers see their own
+function ownsUe(req, ue) {
+  if (req.user?.role === 'admin') return true;
+  return ue.owner === req.user?.id;
+}
+
+// ── Public Routes (no auth required) ──────────────────────
+
+// POST /auth/login — returns JWT + user info
+app.post('/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+  const user = findUserByUsername(username);
+  if (!user || !bcrypt.compareSync(password, user.passwordHash))
+    return res.status(401).json({ error: 'Invalid credentials' });
+  const token = jwt.sign(
+    { id: user.id, username: user.username, role: user.role },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES }
+  );
+  res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+});
+
+// GET /health — stays public
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// ── Apply auth to all routes below this line ───────────────
+app.use(authenticateToken);
+
+// ── Auth self-service routes ───────────────────────────────
+
+// GET /auth/me — return current user info
+app.get('/auth/me', (req, res) => {
+  const user = findUserById(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({ id: user.id, username: user.username, role: user.role, createdAt: user.createdAt });
+});
+
+// PUT /auth/password — change own password (requires current password)
+app.put('/auth/password', async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword)
+    return res.status(400).json({ error: 'currentPassword and newPassword required' });
+  if (newPassword.length < 8)
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  const users = loadUserStore();
+  const idx = users.findIndex(u => u.id === req.user.id);
+  if (idx === -1) return res.status(404).json({ error: 'User not found' });
+  if (!bcrypt.compareSync(currentPassword, users[idx].passwordHash))
+    return res.status(401).json({ error: 'Current password incorrect' });
+  users[idx].passwordHash = bcrypt.hashSync(newPassword, 10);
+  saveUserStore(users);
+  await syncOpen5gsAccount(users[idx].username, users[idx].passwordHash, users[idx].role);
+  res.json({ ok: true });
+});
+
+// ── User Management (admin only) ──────────────────────────
+
+// GET /users — list all users (admin only)
+app.get('/users', requireAdmin, (req, res) => {
+  const users = loadUserStore().map(u => ({
+    id: u.id, username: u.username, role: u.role, createdAt: u.createdAt,
+  }));
+  res.json(users);
+});
+
+// POST /users — create a new user (admin only)
+app.post('/users', requireAdmin, async (req, res) => {
+  const { username, password, role = 'researcher' } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!['admin', 'researcher'].includes(role)) return res.status(400).json({ error: 'role must be admin or researcher' });
+  if (!/^[a-z0-9_.-]{2,32}$/.test(username))
+    return res.status(400).json({ error: 'username: 2-32 lowercase alphanumeric/_/./- characters' });
+  const users = loadUserStore();
+  if (users.find(u => u.username === username)) return res.status(409).json({ error: 'Username already exists' });
+  const hash = bcrypt.hashSync(password, 10);
+  const user = { id: safeUserId(), username, passwordHash: hash, role, createdAt: new Date().toISOString() };
+  users.push(user);
+  saveUserStore(users);
+  await syncOpen5gsAccount(username, hash, role);
+  res.status(201).json({ id: user.id, username: user.username, role: user.role, createdAt: user.createdAt });
+});
+
+// PUT /users/:id — update role (admin only)
+app.put('/users/:id', requireAdmin, async (req, res) => {
+  const users = loadUserStore();
+  const idx = users.findIndex(u => u.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'User not found' });
+  if (users[idx].username === 'admin' && req.body.role && req.body.role !== 'admin')
+    return res.status(400).json({ error: 'Cannot demote the built-in admin account' });
+  const { role } = req.body;
+  if (role && !['admin', 'researcher'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+  if (role) users[idx].role = role;
+  saveUserStore(users);
+  await syncOpen5gsAccount(users[idx].username, users[idx].passwordHash, users[idx].role);
+  res.json({ id: users[idx].id, username: users[idx].username, role: users[idx].role });
+});
+
+// PUT /users/:id/password — admin resets another user's password
+app.put('/users/:id/password', requireAdmin, async (req, res) => {
+  const { newPassword } = req.body || {};
+  if (!newPassword || newPassword.length < 8)
+    return res.status(400).json({ error: 'newPassword must be at least 8 characters' });
+  const users = loadUserStore();
+  const idx = users.findIndex(u => u.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'User not found' });
+  users[idx].passwordHash = bcrypt.hashSync(newPassword, 10);
+  saveUserStore(users);
+  await syncOpen5gsAccount(users[idx].username, users[idx].passwordHash, users[idx].role);
+  res.json({ ok: true });
+});
+
+// DELETE /users/:id — delete a user (admin only)
+app.delete('/users/:id', requireAdmin, async (req, res) => {
+  const users = loadUserStore();
+  const idx = users.findIndex(u => u.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'User not found' });
+  if (users[idx].username === 'admin') return res.status(400).json({ error: 'Cannot delete the built-in admin account' });
+  if (users[idx].id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own account' });
+  const [removed] = users.splice(idx, 1);
+  saveUserStore(users);
+  await syncOpen5gsAccount(removed.username, '', removed.role, 'delete');
+  res.json({ ok: true });
+});
 
 // ── Maps ──────────────────────────────────────────────────
 const LABEL = 'com.5g-testbed.nf';
@@ -163,11 +390,6 @@ async function getUeTunIp(container) {
   return out.trim();
 }
 
-// ── Health check ──────────────────────────────────────────
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString() });
-});
-
 // ── NF Status ─────────────────────────────────────────────
 app.get('/status', async (req, res) => {
   try {
@@ -273,6 +495,8 @@ app.post('/trace/start', async (req, res) => {
 
   const sessionId = safeId();
   const startTime = new Date().toISOString();
+  const owner     = req.user.id;
+  const ownerName = req.user.username;
 
   // Resolve requested interfaces into unique container+filter targets
   const ifaceList = interfaces === 'all'
@@ -292,7 +516,7 @@ app.post('/trace/start', async (req, res) => {
   const errors   = [];
 
   for (const target of targets) {
-    const filename = `${sessionId}_${target.label}.pcap`;
+    const filename = `${ownerName}_${sessionId}_${target.label}.pcap`;
     const capPath  = `${TRACES_DIR}/${filename}`;
     const bpf      = customFilter || target.filter;
 
@@ -316,7 +540,7 @@ app.post('/trace/start', async (req, res) => {
     }
   }
 
-  const session = { label, startTime, captures, errors, status: captures.length > 0 ? 'running' : 'failed' };
+  const session = { label, startTime, captures, errors, status: captures.length > 0 ? 'running' : 'failed', owner, ownerName };
   activeSessions.set(sessionId, session);
 
   res.json({ sessionId, label, startTime, captures: captures.map(c => ({ filename: c.filename, iface: c.iface, label: c.label })), errors });
@@ -358,20 +582,23 @@ app.post('/trace/stop/:sessionId', async (req, res) => {
   res.json(result);
 });
 
-// GET /trace/sessions — list active sessions
+// GET /trace/sessions — list active sessions (admin sees all; researcher sees own)
 app.get('/trace/sessions', (req, res) => {
   const list = [];
   for (const [id, s] of activeSessions) {
-    list.push({ sessionId: id, label: s.label, startTime: s.startTime, status: s.status,
+    if (req.user.role !== 'admin' && s.owner !== req.user.id) continue;
+    list.push({ sessionId: id, label: s.label, startTime: s.startTime, status: s.status, ownerName: s.ownerName,
                 captures: s.captures.map(c => ({ filename: c.filename, iface: c.iface, label: c.label })) });
   }
   res.json(list);
 });
 
-// GET /trace/download/:filename — serve a PCAP file
+// GET /trace/download/:filename — serve a PCAP file (admin any; researcher own prefix)
 app.get('/trace/download/:filename', (req, res) => {
   const filename = path.basename(req.params.filename);
   if (!/\.pcap$/.test(filename)) return res.status(400).json({ error: 'Only .pcap files allowed' });
+  if (req.user.role !== 'admin' && !filename.startsWith(`${req.user.username}_`))
+    return res.status(403).json({ error: 'Access denied' });
   const filepath = path.join(TRACES_DIR, filename);
   if (!fs.existsSync(filepath)) {
     return res.status(404).json({ error: 'File not found. Capture may still be running — stop it first.' });
@@ -379,12 +606,13 @@ app.get('/trace/download/:filename', (req, res) => {
   res.download(filepath, filename);
 });
 
-// GET /trace/files — list all PCAP files in the traces directory
+// GET /trace/files — list PCAP files (admin sees all; researcher sees own)
 app.get('/trace/files', (req, res) => {
   try {
     if (!fs.existsSync(TRACES_DIR)) return res.json([]);
+    const prefix = `${req.user.username}_`;
     const files = fs.readdirSync(TRACES_DIR)
-      .filter(f => f.endsWith('.pcap'))
+      .filter(f => f.endsWith('.pcap') && (req.user.role === 'admin' || f.startsWith(prefix)))
       .map(f => {
         const stat = fs.statSync(path.join(TRACES_DIR, f));
         return { filename: f, size: stat.size, mtime: stat.mtime };
@@ -396,10 +624,12 @@ app.get('/trace/files', (req, res) => {
   }
 });
 
-// DELETE /trace/files/:filename — delete a PCAP file
+// DELETE /trace/files/:filename — delete a PCAP file (admin any; researcher own prefix)
 app.delete('/trace/files/:filename', (req, res) => {
   const filename = path.basename(req.params.filename);
   if (!/\.pcap$/.test(filename)) return res.status(400).json({ error: 'Only .pcap files allowed' });
+  if (req.user.role !== 'admin' && !filename.startsWith(`${req.user.username}_`))
+    return res.status(403).json({ error: 'Access denied' });
   const filepath = path.join(TRACES_DIR, filename);
   if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'File not found' });
   fs.unlinkSync(filepath);
@@ -1063,10 +1293,13 @@ function buildMongoInsert(ue) {
   `;
 }
 
-// GET /ue — list all configured UEs
-app.get('/ue', (req, res) => res.json(loadUeStore()));
+// GET /ue — list configured UEs (admin sees all; researcher sees own)
+app.get('/ue', (req, res) => {
+  const ues = loadUeStore();
+  res.json(req.user.role === 'admin' ? ues : ues.filter(u => u.owner === req.user.id));
+});
 
-// POST /ue — create UE (IMSI required, rest auto-filled)
+// POST /ue — create UE (IMSI required, rest auto-filled); owner = current user
 app.post('/ue', (req, res) => {
   const ues = loadUeStore();
   const { imsi } = req.body;
@@ -1074,30 +1307,32 @@ app.post('/ue', (req, res) => {
     return res.status(400).json({ error: 'imsi must be exactly 15 digits' });
   if (ues.find(u => u.imsi === imsi))
     return res.status(409).json({ error: 'IMSI already exists' });
-  const ue = { ...ueDefaults(imsi), ...req.body, imsi, registered: false };
+  const ue = { ...ueDefaults(imsi), ...req.body, imsi, registered: false, owner: req.user.id };
   ues.push(ue);
   saveUeStore(ues);
   res.json(ue);
 });
 
-// PUT /ue/:imsi — update editable UE fields
+// PUT /ue/:imsi — update editable UE fields (owner or admin)
 app.put('/ue/:imsi', (req, res) => {
   const ues = loadUeStore();
   const idx = ues.findIndex(u => u.imsi === req.params.imsi);
   if (idx === -1) return res.status(404).json({ error: 'UE not found' });
+  if (!ownsUe(req, ues[idx])) return res.status(403).json({ error: 'Access denied' });
   // Protect identity/lifecycle fields from being overwritten
-  const { imsi: _i, registered: _r, createdAt: _c, ...editable } = req.body;
+  const { imsi: _i, registered: _r, createdAt: _c, owner: _o, ...editable } = req.body;
   ues[idx] = { ...ues[idx], ...editable, updatedAt: new Date().toISOString() };
   saveUeStore(ues);
   res.json(ues[idx]);
 });
 
-// DELETE /ue/:imsi — remove UE from local store
+// DELETE /ue/:imsi — remove UE from local store (owner or admin)
 app.delete('/ue/:imsi', (req, res) => {
   let ues = loadUeStore();
-  const before = ues.length;
+  const ue = ues.find(u => u.imsi === req.params.imsi);
+  if (!ue) return res.status(404).json({ error: 'UE not found' });
+  if (!ownsUe(req, ue)) return res.status(403).json({ error: 'Access denied' });
   ues = ues.filter(u => u.imsi !== req.params.imsi);
-  if (ues.length === before) return res.status(404).json({ error: 'UE not found' });
   saveUeStore(ues);
   res.json({ ok: true });
 });
@@ -1350,8 +1585,11 @@ app.get('/ue/inventory', async (req, res) => {
       if (line) mongoImsis = JSON.parse(line).map(s => s.imsi);
     } catch {}
 
-    // 3. UE store (credentials + labels)
-    const ueStore = loadUeStore();
+    // 3. UE store (credentials + labels), filtered by owner
+    const allUeStore = loadUeStore();
+    const ueStore = req.user.role === 'admin'
+      ? allUeStore
+      : allUeStore.filter(u => u.owner === req.user.id);
 
     // Helper: build result entry from container + optional store entry
     async function makeEntry(imsi, storEntry, containerName) {
@@ -1368,6 +1606,7 @@ app.get('/ue/inventory', async (req, res) => {
         dnn:             storEntry?.dnn  || null,
         sst:             storEntry?.sst  || null,
         sd:              storEntry?.sd   || null,
+        owner:           storEntry?.owner || null,
         containerName:   containerName   || null,
         containerState:  c?.State        || 'none',
         containerRunning: c?.State === 'running',
@@ -1415,6 +1654,7 @@ app.post('/ue/provision', async (req, res) => {
   const ues = loadUeStore();
   const ue  = ues.find(u => u.imsi === imsi);
   if (!ue) return res.status(404).json({ error: 'UE not in store — add it in the Config tab first' });
+  if (!ownsUe(req, ue)) return res.status(403).json({ error: 'Access denied' });
 
   const containers = await docker.listContainers({ all: true });
   const staticCn   = IMSI_STATIC[imsi];
@@ -1510,8 +1750,9 @@ app.delete('/ue/:containerName/deprovision', async (req, res) => {
 // ── 404 ───────────────────────────────────────────────────
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`[5G-API] Testbed API listening on :${PORT}`);
   console.log(`[5G-API] Docker socket : ${process.env.DOCKER_SOCKET || '/var/run/docker.sock'}`);
   console.log(`[5G-API] Traces dir   : ${TRACES_DIR}`);
+  await seedAdminUser();
 });

@@ -132,10 +132,10 @@ select.form-input option{background:var(--bg3)}
 .btn-xs{padding:3px 8px;font-size:9px}
 
 /* Table */
-.data-table{width:100%;border-collapse:collapse}
-.data-table th{text-align:left;font-family:var(--font-head);font-size:9px;letter-spacing:2px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg3)}
-.data-table td{padding:9px 12px;font-family:var(--font-mono);font-size:11px;color:var(--text2);border-bottom:1px solid rgba(26,58,92,.5)}
-.data-table tr:hover td{background:rgba(0,200,255,.04);color:var(--text)}
+.data-table,.table{width:100%;border-collapse:collapse}
+.data-table th,.table th{text-align:left;font-family:var(--font-head);font-size:9px;letter-spacing:2px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.data-table td,.table td{padding:9px 12px;font-family:var(--font-mono);font-size:11px;color:var(--text2);border-bottom:1px solid rgba(26,58,92,.5)}
+.data-table tr:hover td,.table tr:hover td{background:rgba(0,200,255,.04);color:var(--text)}
 .data-table tr:last-child td{border-bottom:none}
 
 /* Badge */
@@ -238,6 +238,33 @@ select.form-input option{background:var(--bg3)}
 .mb-3{margin-bottom:12px}.mb-4{margin-bottom:16px}.w-full{width:100%}
 .text-xs{font-size:11px}.text-muted{color:var(--muted)}.text-accent{color:var(--accent)}.text-success{color:var(--success)}
 .font-mono{font-family:var(--font-mono)}
+
+/* ── Auth / Login ─────────────────────────────────── */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg1)}
+.login-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:40px 36px;width:360px;max-width:90vw}
+.login-logo{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+.login-logo svg{width:36px;height:36px}
+.login-logo-text{font-family:var(--font-head);font-size:18px;letter-spacing:3px;color:var(--accent)}
+.login-title{font-family:var(--font-head);font-size:11px;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:24px}
+.login-error{background:rgba(255,60,60,.12);border:1px solid rgba(255,60,60,.3);color:#ff6b6b;border-radius:4px;padding:8px 12px;font-size:12px;margin-bottom:16px}
+.login-info{background:rgba(80,200,120,.12);border:1px solid rgba(80,200,120,.3);color:var(--success);border-radius:4px;padding:8px 12px;font-size:12px;margin-bottom:16px}
+
+/* ── Profile button ───────────────────────────────── */
+.profile-btn{position:relative;display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 10px;border-radius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:12px;user-select:none}
+.profile-btn:hover{border-color:var(--accent)}
+.profile-avatar{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#000;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;font-family:var(--font-head)}
+.profile-dropdown{position:absolute;top:calc(100% + 6px);right:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;min-width:170px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.profile-dropdown-header{padding:10px 14px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)}
+.profile-dropdown-header strong{display:block;color:var(--text);font-size:13px;margin-bottom:2px}
+.profile-dropdown-item{padding:8px 14px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px}
+.profile-dropdown-item:hover{background:var(--bg3);color:var(--accent)}
+.profile-dropdown-item.danger:hover{color:#ff6b6b}
+
+/* ── Modal overlay ────────────────────────────────── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9000;display:flex;align-items:center;justify-content:center}
+.modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:28px;min-width:340px;max-width:95vw}
+.modal-title{font-family:var(--font-head);font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--accent);margin-bottom:20px}
+.modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
 </style>
 </head>
 <body>
@@ -249,9 +276,18 @@ const { useState, useEffect, useRef } = React;
 // API is proxied by nginx: /api/ → testbed-api:5000/
 const API = '/api';
 
-async function apiFetch(path, opts) {
+async function apiFetch(path, opts = {}) {
   try {
-    const r = await fetch(API + path, opts);
+    const token = localStorage.getItem('token');
+    const headers = { ...(opts.headers || {}) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const r = await fetch(API + path, { ...opts, headers });
+    if (r.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('currentUser');
+      window.dispatchEvent(new Event('auth:expired'));
+      return null;
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return await r.json();
   } catch (e) {
@@ -4028,7 +4064,327 @@ function UEManager() {
 }
 
 // ── Main App ──────────────────────────────────────────────
+// ── Login Page ────────────────────────────────────────────
+function LoginPage({ onLogin, expiredMsg }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError]       = useState('');
+  const [loading, setLoading]   = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const r = await fetch(API + '/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await r.json();
+      if (!r.ok) { setError(data.error || 'Login failed'); setLoading(false); return; }
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('currentUser', JSON.stringify(data.user));
+      onLogin(data.user);
+    } catch {
+      setError('Cannot reach API. Is the testbed running?');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="login-wrap">
+      <div className="login-box">
+        <div className="login-logo">
+          <svg viewBox="0 0 32 32" fill="none">
+            <polygon points="16,2 30,10 30,22 16,30 2,22 2,10" stroke="var(--accent)" strokeWidth="1.5" fill="none"/>
+            <circle cx="16" cy="16" r="4" fill="var(--accent)" opacity=".8"/>
+          </svg>
+          <span className="login-logo-text">5G TESTBED</span>
+        </div>
+        <div className="login-title">Sign in to continue</div>
+        {expiredMsg && <div className="login-info">{expiredMsg}</div>}
+        {error && <div className="login-error">{error}</div>}
+        <form onSubmit={submit}>
+          <div className="form-group">
+            <label className="form-label">Username</label>
+            <input className="form-input" value={username} onChange={e=>setUsername(e.target.value)}
+              autoFocus autoComplete="username" required/>
+          </div>
+          <div className="form-group" style={{marginTop:12}}>
+            <label className="form-label">Password</label>
+            <input className="form-input" type="password" value={password} onChange={e=>setPassword(e.target.value)}
+              autoComplete="current-password" required/>
+          </div>
+          <button className="btn btn-primary w-full" style={{marginTop:20}} disabled={loading}>
+            {loading ? 'Signing in…' : 'Sign In'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Change Password Modal ─────────────────────────────────
+function ChangePasswordModal({ onClose }) {
+  const [form, setForm]   = useState({ currentPassword:'', newPassword:'', confirm:'' });
+  const [error, setError] = useState('');
+  const [ok, setOk]       = useState(false);
+  const [busy, setBusy]   = useState(false);
+
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (form.newPassword !== form.confirm) { setError('New passwords do not match'); return; }
+    if (form.newPassword.length < 8) { setError('Password must be at least 8 characters'); return; }
+    setBusy(true);
+    const r = await apiFetch('/auth/password', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: form.currentPassword, newPassword: form.newPassword }),
+    });
+    setBusy(false);
+    if (!r) { setError('Failed. Check current password and try again.'); return; }
+    setOk(true);
+    setTimeout(onClose, 1500);
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal-box">
+        <div className="modal-title">Change Password</div>
+        {ok && <div className="login-info">Password changed successfully!</div>}
+        {error && <div className="login-error">{error}</div>}
+        {!ok && <form onSubmit={submit}>
+          <div className="form-group">
+            <label className="form-label">Current Password</label>
+            <input className="form-input" type="password" value={form.currentPassword}
+              onChange={e=>set('currentPassword',e.target.value)} required autoFocus/>
+          </div>
+          <div className="form-group" style={{marginTop:12}}>
+            <label className="form-label">New Password</label>
+            <input className="form-input" type="password" value={form.newPassword}
+              onChange={e=>set('newPassword',e.target.value)} required/>
+          </div>
+          <div className="form-group" style={{marginTop:12}}>
+            <label className="form-label">Confirm New Password</label>
+            <input className="form-input" type="password" value={form.confirm}
+              onChange={e=>set('confirm',e.target.value)} required/>
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>
+              {busy ? 'Saving…' : 'Save Password'}
+            </button>
+          </div>
+        </form>}
+      </div>
+    </div>
+  );
+}
+
+// ── Users Page (admin only) ───────────────────────────────
+function UsersPage() {
+  const [users, setUsers]       = useState([]);
+  const [showAdd, setShowAdd]   = useState(false);
+  const [resetTarget, setResetTarget] = useState(null);
+  const [form, setForm]         = useState({ username:'', password:'', role:'researcher' });
+  const [resetPw, setResetPw]   = useState('');
+  const [error, setError]       = useState('');
+  const [msg, setMsg]           = useState('');
+
+  const load = () => apiFetch('/users').then(d => d && setUsers(d));
+  useEffect(()=>{ load(); },[]);
+
+  const setF = (k,v) => setForm(f=>({...f,[k]:v}));
+  const notify = (m) => { setMsg(m); setTimeout(()=>setMsg(''),3000); };
+
+  const addUser = async (e) => {
+    e.preventDefault(); setError('');
+    const r = await apiFetch('/users', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(form),
+    });
+    if (!r) { setError('Failed to create user'); return; }
+    setShowAdd(false); setForm({ username:'', password:'', role:'researcher' });
+    load(); notify(`User "${r.username}" created`);
+  };
+
+  const deleteUser = async (u) => {
+    if (!confirm(`Delete user "${u.username}"?`)) return;
+    const r = await apiFetch(`/users/${u.id}`, { method:'DELETE' });
+    if (r) { load(); notify(`User "${u.username}" deleted`); }
+  };
+
+  const resetPassword = async (e) => {
+    e.preventDefault(); setError('');
+    const r = await apiFetch(`/users/${resetTarget.id}/password`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ newPassword: resetPw }),
+    });
+    if (!r) { setError('Failed to reset password'); return; }
+    setResetTarget(null); setResetPw('');
+    notify(`Password reset for "${resetTarget.username}"`);
+  };
+
+  const toggleRole = async (u) => {
+    const newRole = u.role === 'admin' ? 'researcher' : 'admin';
+    const r = await apiFetch(`/users/${u.id}`, {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ role: newRole }),
+    });
+    if (r) { load(); notify(`Role updated for "${u.username}"`); }
+  };
+
+  return (
+    <div>
+      {msg && <div className="login-info" style={{marginBottom:12}}>{msg}</div>}
+      {error && <div className="login-error" style={{marginBottom:12}}>{error}</div>}
+      <div className="flex justify-between items-center mb-4">
+        <div className="section-title">User Accounts</div>
+        <button className="btn btn-primary" onClick={()=>setShowAdd(!showAdd)}>
+          {showAdd ? 'Cancel' : '+ Add User'}
+        </button>
+      </div>
+
+      {showAdd && (
+        <div className="card mb-4">
+          <div className="card-title">New User</div>
+          <form onSubmit={addUser}>
+            <div className="flex gap-3">
+              <div className="form-group" style={{flex:1}}>
+                <label className="form-label">Username</label>
+                <input className="form-input" value={form.username} onChange={e=>setF('username',e.target.value)}
+                  placeholder="e.g. alice" pattern="[a-z0-9_.\-]{2,32}" required autoFocus/>
+              </div>
+              <div className="form-group" style={{flex:1}}>
+                <label className="form-label">Password (min 8 chars)</label>
+                <input className="form-input" type="password" value={form.password}
+                  onChange={e=>setF('password',e.target.value)} required/>
+              </div>
+              <div className="form-group" style={{flex:'0 0 130px'}}>
+                <label className="form-label">Role</label>
+                <select className="form-input" value={form.role} onChange={e=>setF('role',e.target.value)}>
+                  <option value="researcher">Researcher</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            </div>
+            <div style={{marginTop:10,display:'flex',gap:10}}>
+              <button type="submit" className="btn btn-primary">Create</button>
+              <button type="button" className="btn btn-secondary" onClick={()=>setShowAdd(false)}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {resetTarget && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setResetTarget(null)}>
+          <div className="modal-box">
+            <div className="modal-title">Reset Password — {resetTarget.username}</div>
+            {error && <div className="login-error">{error}</div>}
+            <form onSubmit={resetPassword}>
+              <div className="form-group">
+                <label className="form-label">New Password (min 8 chars)</label>
+                <input className="form-input" type="password" value={resetPw}
+                  onChange={e=>setResetPw(e.target.value)} required autoFocus/>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={()=>setResetTarget(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">Reset</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <table className="table w-full">
+          <thead>
+            <tr>
+              <th>Username</th><th>Role</th><th>Created</th><th style={{textAlign:'right'}}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u=>(
+              <tr key={u.id}>
+                <td><span className="font-mono">{u.username}</span></td>
+                <td>
+                  <span className={`badge ${u.role==='admin'?'badge-running':'badge-stopped'}`}>{u.role}</span>
+                </td>
+                <td className="text-xs text-muted">{new Date(u.createdAt).toLocaleDateString()}</td>
+                <td style={{textAlign:'right'}}>
+                  <div className="flex gap-2" style={{justifyContent:'flex-end'}}>
+                    {u.username !== 'admin' && (
+                      <button className="btn btn-secondary" style={{fontSize:11,padding:'2px 8px'}}
+                        onClick={()=>toggleRole(u)}>
+                        → {u.role==='admin'?'Researcher':'Admin'}
+                      </button>
+                    )}
+                    <button className="btn btn-secondary" style={{fontSize:11,padding:'2px 8px'}}
+                      onClick={()=>{ setResetPw(''); setError(''); setResetTarget(u); }}>
+                      Reset PW
+                    </button>
+                    {u.username !== 'admin' && (
+                      <button className="btn btn-danger" style={{fontSize:11,padding:'2px 8px'}}
+                        onClick={()=>deleteUser(u)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {users.length === 0 && (
+              <tr><td colSpan={4} className="text-muted text-xs" style={{textAlign:'center',padding:20}}>No users</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function App() {
+  // ── Auth state ───────────────────────────────────────────
+  const [currentUser, setCurrentUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('currentUser')); } catch { return null; }
+  });
+  const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [expiredMsg, setExpiredMsg]   = useState('');
+  const [showProfile, setShowProfile] = useState(false);
+  const [showChangePw, setShowChangePw] = useState(false);
+
+  // Listen for 401 / session expiry
+  useEffect(() => {
+    const handler = () => {
+      setToken(null); setCurrentUser(null);
+      setExpiredMsg('Your session has expired. Please sign in again.');
+    };
+    window.addEventListener('auth:expired', handler);
+    return () => window.removeEventListener('auth:expired', handler);
+  }, []);
+
+  const handleLogin = (user) => {
+    setToken(localStorage.getItem('token'));
+    setCurrentUser(user);
+    setExpiredMsg('');
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('currentUser');
+    setToken(null); setCurrentUser(null); setShowProfile(false);
+  };
+
+  // Show login page if not authenticated
+  if (!token || !currentUser) {
+    return <LoginPage onLogin={handleLogin} expiredMsg={expiredMsg}/>;
+  }
+
+  // ── Main app state ───────────────────────────────────────
   const [page, setPage] = useState('dashboard');
   const [nfStatus, setNfStatus] = useState(INIT_STATUS);
   const [apiOk, setApiOk] = useState(false);
@@ -4057,8 +4413,10 @@ function App() {
     return ()=>clearInterval(t);
   },[]);
 
+  const isAdmin = currentUser.role === 'admin';
   const runningCount = Object.values(nfStatus).filter(s=>s==='running').length;
   const totalCount = Object.keys(nfStatus).length;
+  const initials = currentUser.username.slice(0,2).toUpperCase();
 
   const nav = [
     {id:'dashboard', label:'Dashboard',   icon:'dashboard', group:'overview'},
@@ -4075,9 +4433,15 @@ function App() {
     {id:'ids',        label:'IDS Monitor', icon:'shield',    group:'security'},
     {id:'nef',        label:'NEF',         icon:'nef',       group:'security'},
     {id:'camara',     label:'CAMARA APIs', icon:'camara',    group:'security'},
+    ...(isAdmin ? [{id:'users', label:'Users', icon:'shield', group:'admin'}] : []),
   ];
 
-  const groups = {overview:'Overview', network:'Network', data:'Data Plane', ops:'Operations', obs:'Observability', security:'Security'};
+  const groups = {
+    overview:'Overview', network:'Network', data:'Data Plane',
+    ops:'Operations', obs:'Observability', security:'Security',
+    ...(isAdmin ? {admin:'Administration'} : {}),
+  };
+
   const pageInfo = {
     dashboard:  ['DASHBOARD',      'System overview and real-time metrics'],
     core:       ['CORE NETWORK',   'Open5GS NF management and configuration'],
@@ -4093,10 +4457,12 @@ function App() {
     ids:        ['IDS MONITOR',    'Zeek + Scapy intrusion detection — SBI/N2 control plane + N3/N4 data plane'],
     nef:        ['NEF — NETWORK EXPOSURE FUNCTION', 'Free5GC Northbound API — event exposure · PFD management · traffic influence'],
     camara:     ['CAMARA APIs', 'CAMARA-Project standardised APIs — device-status · QoD · location · reachability · edge discovery'],
+    users:      ['USER MANAGEMENT','Manage researcher accounts and permissions'],
   };
 
   return (
     <React.Fragment>
+      {showChangePw && <ChangePasswordModal onClose={()=>setShowChangePw(false)}/>}
       <div className="topbar">
         <div className="logo">
           <div className="logo-icon">
@@ -4117,6 +4483,33 @@ function App() {
           <div className="status-pill"><span className={`status-dot ${nfStatus.gnb==='running'?'':'off'}`}/>gNB {nfStatus.gnb==='running'?'Online':'Offline'}</div>
           <div className="status-pill"><span className={`status-dot ${apiOk?'':'warn'}`}/>{apiOk?'Live':'Simulated'}</div>
           <div className="topbar-time">{time}</div>
+          {/* Profile button */}
+          <div style={{position:'relative'}} onBlur={e=>{ if(!e.currentTarget.contains(e.relatedTarget)) setShowProfile(false); }}>
+            <div className="profile-btn" tabIndex={0} onClick={()=>setShowProfile(v=>!v)}>
+              <div className="profile-avatar">{initials}</div>
+              <span>{currentUser.username}</span>
+              <span style={{opacity:.5,fontSize:10}}>▾</span>
+            </div>
+            {showProfile && (
+              <div className="profile-dropdown">
+                <div className="profile-dropdown-header">
+                  <strong>{currentUser.username}</strong>
+                  {currentUser.role}
+                </div>
+                <div className="profile-dropdown-item" onClick={()=>{ setShowChangePw(true); setShowProfile(false); }}>
+                  🔑 Change Password
+                </div>
+                {isAdmin && (
+                  <div className="profile-dropdown-item" onClick={()=>{ setPage('users'); setShowProfile(false); }}>
+                    👥 Manage Users
+                  </div>
+                )}
+                <div className="profile-dropdown-item danger" onClick={handleLogout}>
+                  ⏻ Sign Out
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="layout">
@@ -4162,6 +4555,7 @@ function App() {
             {page === 'ids'        && <SecurityIDS/>}
             {page === 'nef'        && <NEFPage/>}
             {page === 'camara'     && <CamaraAPIs/>}
+            {page === 'users' && isAdmin && <UsersPage/>}
           </div>
         </div>
       </div>
