@@ -370,6 +370,7 @@ function Icon({ name, size=16 }) {
     camara: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="3"/><path d="M6.3 6.3a8 8 0 0 0 0 11.4"/><path d="M17.7 6.3a8 8 0 0 1 0 11.4"/><path d="M3.5 3.5a13.5 13.5 0 0 0 0 17"/><path d="M20.5 3.5a13.5 13.5 0 0 1 0 17"/></svg>,
     sim:    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M15 2l-6 5h6"/><rect x="8" y="12" width="3" height="3"/><rect x="13" y="12" width="3" height="3"/><rect x="8" y="16" width="3" height="3"/><rect x="13" y="16" width="3" height="3"/></svg>,
     attack: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+    monitor: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg>,
   };
   return icons[name] || null;
 }
@@ -4567,6 +4568,450 @@ function UsersPage() {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MONITORING — Prometheus metrics visualization (Core / RAN / System)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const M_COLORS = ['#00c8ff','#00ffc8','#ffb800','#ff3b5c','#a78bfa','#34d399','#fb923c','#f472b6','#60a5fa','#4ade80'];
+const M_INTERVAL = 15000;
+
+// ─── Prometheus helpers ────────────────────────────────────────────────────────
+async function mPromQuery(expr) {
+  try {
+    const r = await fetch(`/api/metrics/query?query=${encodeURIComponent(expr)}`);
+    const d = await r.json();
+    if (d.status === 'success') return d.data?.result ?? [];
+    return [];
+  } catch { return []; }
+}
+
+async function mPromRange(expr, minutes = 30, step = 30) {
+  try {
+    const r = await fetch(`/api/metrics/query_range?query=${encodeURIComponent(expr)}&minutes=${minutes}&step=${step}`);
+    const d = await r.json();
+    if (d.status === 'success') return d.data?.result ?? [];
+    return [];
+  } catch { return []; }
+}
+
+function mVal(result, idx = 0) {
+  if (!result?.length) return null;
+  const v = parseFloat(result[idx]?.value?.[1]);
+  return isNaN(v) ? null : v;
+}
+
+function mFmt(v, unit = '') {
+  if (v === null || v === undefined) return '—';
+  if (unit === 'bps') {
+    if (v >= 1e9) return `${(v/1e9).toFixed(2)} Gbps`;
+    if (v >= 1e6) return `${(v/1e6).toFixed(2)} Mbps`;
+    if (v >= 1e3) return `${(v/1e3).toFixed(1)} Kbps`;
+    return `${Math.round(v)} bps`;
+  }
+  if (unit === '%') return `${Math.round(v)}%`;
+  if (unit === 'MiB') return `${Math.round(v)} MiB`;
+  return Math.round(v).toString();
+}
+
+// ─── Sparkline SVG chart ──────────────────────────────────────────────────────
+function MSparkline({ series, height = 80, legend = true }) {
+  if (!series?.length || series.every(s => !s.values?.length)) {
+    return (
+      <div style={{height,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--muted)',fontSize:12,fontFamily:'var(--font-mono)'}}>
+        Prometheus unavailable
+      </div>
+    );
+  }
+  const W = 400, H = height;
+  const allVals = series.flatMap(s => s.values.map(v => parseFloat(v[1])||0)).filter(isFinite);
+  const mn = 0, mx = Math.max(...allVals, 0.001);
+  const toX = (i, n) => n <= 1 ? W/2 : (i/(n-1))*W;
+  const toY = v => H - ((parseFloat(v)||0 - mn)/(mx-mn)) * (H*0.85) - 4;
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{display:'block'}}>
+        <defs>
+          {series.map((s,i) => (
+            <linearGradient key={i} id={`mgrad-${i}-${H}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={s.color} stopOpacity="0.4"/>
+              <stop offset="100%" stopColor={s.color} stopOpacity="0.02"/>
+            </linearGradient>
+          ))}
+        </defs>
+        {series.map((s,si) => {
+          if (!s.values?.length) return null;
+          const pts = s.values.map((v,i) => `${toX(i,s.values.length).toFixed(1)},${toY(v[1]).toFixed(1)}`);
+          const last = s.values.length - 1;
+          const areaD = `M${pts.join('L')}L${toX(last,s.values.length).toFixed(1)},${H}L0,${H}Z`;
+          const lineD = `M${pts.join('L')}`;
+          return (
+            <g key={si}>
+              <path d={areaD} fill={`url(#mgrad-${si}-${H})`}/>
+              <path d={lineD} stroke={s.color} strokeWidth="1.8" fill="none" strokeLinejoin="round"/>
+            </g>
+          );
+        })}
+      </svg>
+      {legend && series.length > 1 && (
+        <div style={{display:'flex',flexWrap:'wrap',gap:'8px 16px',marginTop:6}}>
+          {series.map((s,i) => (
+            <div key={i} style={{display:'flex',alignItems:'center',gap:5,fontSize:10,color:'var(--text2)'}}>
+              <span style={{width:14,height:2,background:s.color,borderRadius:1,display:'inline-block'}}/>
+              {s.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Arc Gauge (half-circle) ─────────────────────────────────────────────────
+function MArcGauge({ value, label, color }) {
+  const pct = Math.min(Math.max((value||0)/100, 0), 1);
+  const r = 36, cx = 50, cy = 50;
+  const angle = -Math.PI + pct * Math.PI;
+  const sx = cx + r * Math.cos(-Math.PI), sy = cy + r * Math.sin(-Math.PI);
+  const ex = cx + r * Math.cos(0), ey = cy + r * Math.sin(0);
+  const ax = cx + r * Math.cos(angle), ay = cy + r * Math.sin(angle);
+  const c = color || (value >= 90 ? 'var(--success)' : value >= 70 ? 'var(--warn)' : 'var(--danger)');
+  return (
+    <div style={{textAlign:'center'}}>
+      <svg viewBox="0 0 100 60" width="140" height="84">
+        <path d={`M${sx},${sy} A${r},${r} 0 0,1 ${ex},${ey}`} stroke="var(--border2)" strokeWidth="7" fill="none" strokeLinecap="round"/>
+        {(value||0) > 0 && <path d={`M${sx},${sy} A${r},${r} 0 ${pct>0.5?1:0},1 ${ax},${ay}`} stroke={c} strokeWidth="7" fill="none" strokeLinecap="round"/>}
+        <text x="50" y="48" textAnchor="middle" fill={c} fontSize="16" fontWeight="bold" fontFamily="monospace">{Math.round(value||0)}%</text>
+      </svg>
+      <div style={{fontSize:10,color:'var(--muted)',letterSpacing:1,marginTop:-6}}>{label}</div>
+    </div>
+  );
+}
+
+// ─── Stat Card ────────────────────────────────────────────────────────────────
+function MStatCard({ label, value, sub, color='var(--accent)', wide }) {
+  return (
+    <div style={{
+      background:'var(--panel)',border:'1px solid var(--border)',borderRadius:6,
+      borderLeft:`3px solid ${color}`,padding:'14px 16px',
+      flex:wide?'1 1 180px':'1 1 110px',minWidth:wide?160:100,
+    }}>
+      <div style={{fontSize:10,letterSpacing:1.5,color:'var(--muted)',marginBottom:5,textTransform:'uppercase'}}>{label}</div>
+      <div style={{fontSize:26,fontFamily:'var(--font-mono)',color,fontWeight:700,lineHeight:1.1}}>{value??'—'}</div>
+      {sub && <div style={{fontSize:10,color:'var(--muted)',marginTop:3}}>{sub}</div>}
+    </div>
+  );
+}
+
+// ─── Chart Panel ──────────────────────────────────────────────────────────────
+function MChartPanel({ title, children }) {
+  return (
+    <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:6,padding:'14px 16px'}}>
+      <div style={{fontSize:10,letterSpacing:1.5,color:'var(--text2)',fontWeight:700,marginBottom:10,textTransform:'uppercase'}}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+// ─── Horizontal Bar chart ────────────────────────────────────────────────────
+function MHBar({ items, color='var(--accent)' }) {
+  if (!items?.length) return <div style={{color:'var(--muted)',fontSize:12,padding:'8px 0'}}>No data</div>;
+  const maxVal = Math.max(...items.map(x=>x.value),0.001);
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:7}}>
+      {items.slice(0,10).map((item,i) => (
+        <div key={i} style={{display:'flex',alignItems:'center',gap:8}}>
+          <div style={{width:130,fontSize:11,color:'var(--text2)',textAlign:'right',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flexShrink:0}} title={item.label}>{item.label}</div>
+          <div style={{flex:1,height:12,background:'var(--bg3)',borderRadius:2,overflow:'hidden'}}>
+            <div style={{width:`${Math.min(item.value/maxVal*100,100)}%`,height:'100%',background:color,transition:'width .5s',borderRadius:2}}/>
+          </div>
+          <div style={{width:60,fontSize:11,fontFamily:'var(--font-mono)',color:'var(--text)',textAlign:'right',flexShrink:0}}>{item.display}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── NF Status Table ───────────────────────────────────────────────────────────
+function MNfTable({ data }) {
+  if (!data?.length) return <div style={{color:'var(--muted)',fontSize:12,padding:'12px 0'}}>No NF data — Prometheus may be starting up</div>;
+  return (
+    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+      <thead>
+        <tr>
+          {['NF','Plane','Status','Metrics Endpoint'].map(h=>(
+            <th key={h} style={{textAlign:'left',padding:'6px 10px',color:'var(--muted)',fontWeight:600,fontSize:10,letterSpacing:.5,borderBottom:'1px solid var(--border)'}}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {data.sort((a,b)=>(a.metric.nf||'').localeCompare(b.metric.nf||'')).map((row,i)=>{
+          const nf = row.metric.nf || row.metric.job?.replace('open5gs-','') || '?';
+          const plane = row.metric.plane === 'cp' ? 'Control' : row.metric.plane === 'up' ? 'User' : '—';
+          const up = parseFloat(row.value[1]) === 1;
+          return (
+            <tr key={i} style={{borderBottom:'1px solid rgba(26,58,92,0.3)'}}>
+              <td style={{padding:'6px 10px',fontFamily:'var(--font-mono)',textTransform:'uppercase',color:'var(--text)',fontSize:11}}>{nf}</td>
+              <td style={{padding:'6px 10px',color:'var(--muted)'}}>{plane}</td>
+              <td style={{padding:'6px 10px'}}>
+                <span style={{display:'inline-flex',alignItems:'center',gap:5,padding:'2px 8px',borderRadius:3,fontSize:10,fontWeight:700,
+                  background:up?'rgba(0,230,118,.12)':'rgba(255,59,92,.12)',
+                  color:up?'var(--success)':'var(--danger)'}}>
+                  <span style={{width:5,height:5,borderRadius:'50%',background:'currentColor'}}/>
+                  {up?'UP':'DOWN'}
+                </span>
+              </td>
+              <td style={{padding:'6px 10px',fontFamily:'var(--font-mono)',fontSize:10,color:'var(--muted)'}}>{row.metric.instance || '—'}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+// ─── Core Metrics tab ──────────────────────────────────────────────────────────
+function CoreMetrics() {
+  const [stats, setStats] = React.useState({});
+  const [nfStatus, setNfStatus] = React.useState([]);
+  const [ueSeries, setUeSeries] = React.useState([]);
+  const [tputSeries, setTputSeries] = React.useState([]);
+
+  const refresh = React.useCallback(async () => {
+    const [regUEs, sessions, gnbs, nfsOn, nfsTotal, health] = await Promise.all([
+      mPromQuery('fivegs_amf_registered_ue_nbr or vector(0)'),
+      mPromQuery('fivegs_amf_session_nbr or vector(0)'),
+      mPromQuery('fivegs_amf_gnb_nbr or vector(0)'),
+      mPromQuery('count(up{job=~"open5gs-.*"} == 1) or vector(0)'),
+      mPromQuery('count(up{job=~"open5gs-.*"}) or vector(0)'),
+      mPromQuery('100 * count(up{job=~"open5gs-.*"} == 1) / count(up{job=~"open5gs-.*"}) or vector(0)'),
+    ]);
+    setStats({ regUEs: mVal(regUEs), sessions: mVal(sessions), gnbs: mVal(gnbs), nfsOn: mVal(nfsOn), nfsTotal: mVal(nfsTotal), health: mVal(health) });
+
+    const nfUp = await mPromQuery('up{job=~"open5gs-.*"}');
+    setNfStatus(nfUp);
+
+    const [ueR, sessR, upfDl, upfUl] = await Promise.all([
+      mPromRange('fivegs_amf_registered_ue_nbr or vector(0)', 30, 30),
+      mPromRange('fivegs_amf_session_nbr or vector(0)', 30, 30),
+      mPromRange('rate(container_network_transmit_bytes_total{name="open5gs-upf"}[1m]) * 8', 30, 30),
+      mPromRange('rate(container_network_receive_bytes_total{name="open5gs-upf"}[1m]) * 8', 30, 30),
+    ]);
+    setUeSeries([
+      { label:'Registered UEs', color:M_COLORS[0], values: ueR[0]?.values || [] },
+      { label:'Active Sessions', color:M_COLORS[1], values: sessR[0]?.values || [] },
+    ]);
+    setTputSeries([
+      { label:'UPF DL (Internet→UE)', color:M_COLORS[0], values: upfDl[0]?.values || [] },
+      { label:'UPF UL (UE→Internet)', color:M_COLORS[2], values: upfUl[0]?.values || [] },
+    ]);
+  }, []);
+
+  React.useEffect(() => { refresh(); const id=setInterval(refresh, M_INTERVAL); return ()=>clearInterval(id); }, [refresh]);
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+        <MStatCard label="Registered UEs" value={stats.regUEs??'—'} sub="AMF" color="var(--accent)"/>
+        <MStatCard label="Active Sessions" value={stats.sessions??'—'} sub="AMF" color="var(--accent3)"/>
+        <MStatCard label="Connected gNBs" value={stats.gnbs??'—'} sub="N2" color="var(--warn)"/>
+        <MStatCard label="NFs Online" value={stats.nfsOn!==null?`${stats.nfsOn??'—'}/${stats.nfsTotal??'—'}`:'—'} sub="Open5GS" color="var(--success)"/>
+        <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:6,padding:'10px 16px',display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <MArcGauge value={stats.health??0} label="NF HEALTH"/>
+        </div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <MChartPanel title="UE Registrations & PDU Sessions">
+          <MSparkline series={ueSeries} height={90}/>
+        </MChartPanel>
+        <MChartPanel title="UPF N3 Throughput (bps)">
+          <MSparkline series={tputSeries} height={90}/>
+        </MChartPanel>
+      </div>
+
+      <MChartPanel title="Network Function Status">
+        <MNfTable data={nfStatus}/>
+      </MChartPanel>
+    </div>
+  );
+}
+
+// ─── RAN Metrics tab ───────────────────────────────────────────────────────────
+function RanMetrics() {
+  const [stats, setStats] = React.useState({});
+  const [n3Series, setN3Series] = React.useState([]);
+  const [n2Series, setN2Series] = React.useState([]);
+  const [cpuSeries, setCpuSeries] = React.useState([]);
+
+  const refresh = React.useCallback(async () => {
+    const [gnbState, nrueState, n3dl, n3ul, n2] = await Promise.all([
+      mPromQuery('container_tasks_state{name="oai-gnb",state="running"} or vector(0)'),
+      mPromQuery('container_tasks_state{name="oai-nrue",state="running"} or vector(0)'),
+      mPromQuery('rate(container_network_transmit_bytes_total{name="oai-gnb"}[1m]) * 8'),
+      mPromQuery('rate(container_network_receive_bytes_total{name="oai-gnb"}[1m]) * 8'),
+      mPromQuery('(rate(container_network_receive_bytes_total{name="open5gs-amf"}[1m]) + rate(container_network_transmit_bytes_total{name="open5gs-amf"}[1m])) * 8'),
+    ]);
+    setStats({
+      gnbUp: mVal(gnbState) === 1,
+      nrueUp: mVal(nrueState) === 1,
+      n3dl: mVal(n3dl),
+      n3ul: mVal(n3ul),
+      n2: mVal(n2),
+    });
+
+    const [dlR, ulR, n2R, gnbCpu, gnbMem] = await Promise.all([
+      mPromRange('rate(container_network_transmit_bytes_total{name="oai-gnb"}[1m]) * 8', 30, 30),
+      mPromRange('rate(container_network_receive_bytes_total{name="oai-gnb"}[1m]) * 8', 30, 30),
+      mPromRange('(rate(container_network_receive_bytes_total{name="open5gs-amf"}[1m]) + rate(container_network_transmit_bytes_total{name="open5gs-amf"}[1m])) * 8', 30, 30),
+      mPromRange('rate(container_cpu_usage_seconds_total{name="oai-gnb"}[1m]) * 100', 30, 30),
+      mPromRange('container_memory_working_set_bytes{name="oai-gnb"} / 1048576', 30, 30),
+    ]);
+    setN3Series([
+      { label:'▼ DL (gNB→UE)', color:M_COLORS[0], values: dlR[0]?.values || [] },
+      { label:'▲ UL (UE→gNB)', color:M_COLORS[2], values: ulR[0]?.values || [] },
+    ]);
+    setN2Series([
+      { label:'N2 NGAP (AMF↔gNB)', color:M_COLORS[3], values: n2R[0]?.values || [] },
+    ]);
+    setCpuSeries([
+      { label:'gNB CPU %', color:M_COLORS[4], values: gnbCpu[0]?.values || [] },
+      { label:'gNB Memory MiB', color:M_COLORS[1], values: gnbMem[0]?.values || [] },
+    ]);
+  }, []);
+
+  React.useEffect(() => { refresh(); const id=setInterval(refresh, M_INTERVAL); return ()=>clearInterval(id); }, [refresh]);
+
+  const StatusBadge = ({ up, label }) => (
+    <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:6,borderLeft:`3px solid ${up?'var(--success)':'var(--danger)'}`,padding:'14px 16px',flex:'1 1 120px',minWidth:120}}>
+      <div style={{fontSize:10,letterSpacing:1.5,color:'var(--muted)',marginBottom:5,textTransform:'uppercase'}}>{label}</div>
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <span style={{width:8,height:8,borderRadius:'50%',background:up?'var(--success)':'var(--danger)',boxShadow:up?'0 0 8px var(--success)':'none'}}/>
+        <span style={{fontFamily:'var(--font-mono)',color:up?'var(--success)':'var(--danger)',fontWeight:700,fontSize:14}}>{up?'RUNNING':'STOPPED'}</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+        <StatusBadge up={stats.gnbUp} label="gNB Container"/>
+        <StatusBadge up={stats.nrueUp} label="nrUE Container"/>
+        <MStatCard label="N3 DL Rate" value={mFmt(stats.n3dl,'bps')} sub="gNB→UE" color="var(--accent)"/>
+        <MStatCard label="N3 UL Rate" value={mFmt(stats.n3ul,'bps')} sub="UE→gNB" color="var(--accent3)"/>
+        <MStatCard label="N2 NGAP" value={mFmt(stats.n2,'bps')} sub="AMF↔gNB" color="var(--warn)"/>
+      </div>
+      <MChartPanel title="N3 Interface — GTP-U Throughput">
+        <MSparkline series={n3Series} height={100}/>
+      </MChartPanel>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <MChartPanel title="N2 Control Plane Traffic">
+          <MSparkline series={n2Series} height={80}/>
+        </MChartPanel>
+        <MChartPanel title="RAN Container Resources">
+          <MSparkline series={cpuSeries} height={80}/>
+        </MChartPanel>
+      </div>
+    </div>
+  );
+}
+
+// ─── System Metrics tab ────────────────────────────────────────────────────────
+function SystemMetrics() {
+  const [cpuItems, setCpuItems] = React.useState([]);
+  const [memItems, setMemItems] = React.useState([]);
+  const [netRxSeries, setNetRxSeries] = React.useState([]);
+  const [netTxSeries, setNetTxSeries] = React.useState([]);
+
+  const refresh = React.useCallback(async () => {
+    const [cpuData, memData] = await Promise.all([
+      mPromQuery('rate(container_cpu_usage_seconds_total{name=~"open5gs-.*|oai-.*|5g-.*"}[1m]) * 100'),
+      mPromQuery('container_memory_working_set_bytes{name=~"open5gs-.*|oai-.*|5g-.*"} / 1048576'),
+    ]);
+    setCpuItems(
+      (cpuData||[]).map(r => ({
+        label: r.metric.name || '?',
+        value: parseFloat(r.value[1])||0,
+        display: `${(parseFloat(r.value[1])||0).toFixed(1)}%`,
+      })).sort((a,b) => b.value - a.value)
+    );
+    setMemItems(
+      (memData||[]).map(r => ({
+        label: r.metric.name || '?',
+        value: parseFloat(r.value[1])||0,
+        display: `${Math.round(parseFloat(r.value[1])||0)} MiB`,
+      })).sort((a,b) => b.value - a.value)
+    );
+
+    const [rxData, txData] = await Promise.all([
+      mPromRange('rate(container_network_receive_bytes_total{name=~"open5gs-.*|oai-.*"}[1m]) * 8', 30, 30),
+      mPromRange('rate(container_network_transmit_bytes_total{name=~"open5gs-.*|oai-.*"}[1m]) * 8', 30, 30),
+    ]);
+    setNetRxSeries(rxData.slice(0,5).map((s,i) => ({ label:s.metric.name||'?', color:M_COLORS[i], values:s.values })));
+    setNetTxSeries(txData.slice(0,5).map((s,i) => ({ label:s.metric.name||'?', color:M_COLORS[i], values:s.values })));
+  }, []);
+
+  React.useEffect(() => { refresh(); const id=setInterval(refresh, M_INTERVAL); return ()=>clearInterval(id); }, [refresh]);
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:16}}>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <MChartPanel title="Container CPU Usage">
+          <MHBar items={cpuItems} color="var(--accent)"/>
+        </MChartPanel>
+        <MChartPanel title="Container Memory Usage">
+          <MHBar items={memItems} color="var(--accent3)"/>
+        </MChartPanel>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}>
+        <MChartPanel title="Network RX — Top Containers">
+          <MSparkline series={netRxSeries} height={90}/>
+        </MChartPanel>
+        <MChartPanel title="Network TX — Top Containers">
+          <MSparkline series={netTxSeries} height={90}/>
+        </MChartPanel>
+      </div>
+    </div>
+  );
+}
+
+// ─── Monitoring wrapper ────────────────────────────────────────────────────────
+function Monitoring() {
+  const [tab, setTab] = React.useState('core');
+  const TABS = [
+    { id:'core',   icon:'🔷', label:'Core Network' },
+    { id:'ran',    icon:'📡', label:'RAN' },
+    { id:'system', icon:'⚙️', label:'System' },
+  ];
+
+  return (
+    <div>
+      <div style={{display:'flex',alignItems:'center',gap:2,marginBottom:20,background:'var(--bg2)',borderRadius:6,padding:3,width:'fit-content'}}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{
+              padding:'7px 18px',borderRadius:4,border:'none',cursor:'pointer',
+              background:tab===t.id?'var(--accent2)':'transparent',
+              color:tab===t.id?'#fff':'var(--text2)',
+              fontFamily:'var(--font-main)',fontSize:12,fontWeight:600,
+              transition:'all .15s',
+            }}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+        <a href={`http://${location.hostname}:3001`} target="_blank" rel="noopener"
+           style={{marginLeft:12,padding:'7px 14px',borderRadius:4,border:'1px solid var(--border)',background:'transparent',color:'var(--text2)',fontSize:11,cursor:'pointer',textDecoration:'none',display:'flex',alignItems:'center',gap:5,fontFamily:'var(--font-main)'}}>
+          <Icon name="chart" size={11}/>
+          Grafana
+        </a>
+      </div>
+      {tab === 'core'   && <CoreMetrics/>}
+      {tab === 'ran'    && <RanMetrics/>}
+      {tab === 'system' && <SystemMetrics/>}
+    </div>
+  );
+}
+
 function App() {
   // ── Auth state ───────────────────────────────────────────
   const [currentUser, setCurrentUser] = useState(() => {
@@ -4649,6 +5094,7 @@ function App() {
     {id:'tracing',    label:'Tracing',     icon:'trace',     group:'ops'},
     {id:'throughput', label:'Throughput',  icon:'speed',     group:'ops'},
     {id:'logs',       label:'Logs',        icon:'logs',      group:'ops'},
+    {id:'monitoring', label:'Monitoring',  icon:'monitor',   group:'obs'},
     {id:'grafana',    label:'Dashboards',  icon:'chart',     group:'obs', external: `http://${location.hostname}:3001`},
     {id:'ids',        label:'IDS Monitor', icon:'shield',    group:'security'},
     {id:'ddos',       label:'DDoS Attack', icon:'attack',    group:'security'},
@@ -4674,6 +5120,7 @@ function App() {
     tracing:    ['TRACING',        'Packet capture (PCAP) + log download — start, stop, download'],
     throughput: ['THROUGHPUT TEST','iPerf3 DL / UL / BiDir tests through live PDU session'],
     logs:       ['SYSTEM LOGS',    'Aggregated logs from all NFs'],
+    monitoring: ['MONITORING',     'Real-time Prometheus metrics — Core/RAN/System tabs with throughput, health, and resource usage'],
     grafana:    ['GRAFANA',        'Opens Grafana dashboards in a new tab'],
     ids:        ['IDS MONITOR',    'Zeek intrusion detection — SBI/N2 control-plane anomaly detection'],
     ddos:       ['DDoS ATTACK',    'Scapy-based DDoS simulation — control-plane NGAP flood + data-plane GTP-U flood'],
@@ -4774,6 +5221,7 @@ function App() {
             {page === 'tracing'    && <Tracing/>}
             {page === 'throughput' && <ThroughputTest/>}
             {page === 'logs'       && <LogsPage/>}
+            {page === 'monitoring' && <Monitoring/>}
             {page === 'ids'        && <ZeekIDS/>}
             {page === 'ddos'       && <DDoSAttack/>}
             {page === 'nef'        && <NEFPage/>}

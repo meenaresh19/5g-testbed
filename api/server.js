@@ -1172,6 +1172,40 @@ app.post('/ddos/stop', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════
+// METRICS — Prometheus HTTP API proxy
+// Allows the UI to query Prometheus without CORS issues
+// ═══════════════════════════════════════════════════════════
+const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus:9090';
+
+// GET /metrics/query?query=<promql> — instant query
+app.get('/metrics/query', async (req, res) => {
+  const { query } = req.query;
+  if (!query) return res.status(400).json({ error: 'query param required' });
+  try {
+    const url = `${PROMETHEUS_URL}/api/v1/query?query=${encodeURIComponent(query)}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    res.json(await r.json());
+  } catch (e) {
+    res.status(503).json({ status: 'error', error: `Prometheus unreachable: ${e.message}` });
+  }
+});
+
+// GET /metrics/query_range?query=<promql>&minutes=30&step=30 — range query
+app.get('/metrics/query_range', async (req, res) => {
+  const { query, minutes = 30, step = 30 } = req.query;
+  if (!query) return res.status(400).json({ error: 'query param required' });
+  const end   = Math.floor(Date.now() / 1000);
+  const start = end - Number(minutes) * 60;
+  try {
+    const url = `${PROMETHEUS_URL}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${start}&end=${end}&step=${step}`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    res.json(await r.json());
+  } catch (e) {
+    res.status(503).json({ status: 'error', error: `Prometheus unreachable: ${e.message}` });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
 // NEF — Network Exposure Function (Free5GC) Northbound API
 // ═══════════════════════════════════════════════════════════
 const NEF_BASE = process.env.NEF_URL || 'http://10.45.0.25:8000';
