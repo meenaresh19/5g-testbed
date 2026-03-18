@@ -1,0 +1,115 @@
+---
+# ServiceAccount for testbed-api
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: testbed-api
+  namespace: 5g-testbed
+  labels:
+    app: testbed-api
+
+---
+# ClusterRole for testbed-api (can manage pods, get logs, exec)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: testbed-api
+  labels:
+    app: testbed-api
+rules:
+# Pod operations (get, list, watch, create, delete, restart)
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+- apiGroups: [""]
+  resources: ["pods/restart"]
+  verbs: ["create"]
+
+# Deployment operations (scale, patch, get)
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["deployments/scale"]
+  verbs: ["get", "patch", "update"]
+
+# Services (get, list)
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+
+# ConfigMaps (get, list)
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+
+# Namespace info
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list"]
+
+# Events (for diagnostics)
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+
+# Metrics (if metrics-server installed)
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding (grant ClusterRole to ServiceAccount)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: testbed-api
+  labels:
+    app: testbed-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: testbed-api
+subjects:
+- kind: ServiceAccount
+  name: testbed-api
+  namespace: 5g-testbed
+
+---
+# Role for namespace-scoped operations (optional, for fine-grained control)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: testbed-api-ns
+  namespace: 5g-testbed
+  labels:
+    app: testbed-api
+rules:
+# Pod port-forward (for accessing exposed services)
+- apiGroups: [""]
+  resources: ["pods/portforward"]
+  verbs: ["create"]
+
+---
+# RoleBinding (namespace-scoped)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: testbed-api-ns
+  namespace: 5g-testbed
+  labels:
+    app: testbed-api
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: testbed-api-ns
+subjects:
+- kind: ServiceAccount
+  name: testbed-api
+  namespace: 5g-testbed

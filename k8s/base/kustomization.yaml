@@ -1,0 +1,80 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: 5g-testbed
+
+resources:
+  # Namespace
+  - namespace.yaml
+
+  # MongoDB (data storage)
+  - mongodb/pvc.yaml
+  - mongodb/service.yaml
+  - mongodb/statefulset.yaml
+
+  # Open5GS Core Network Functions
+  - open5gs-core/configmap.yaml
+  - open5gs-core/nrf-deployment.yaml
+  - open5gs-core/scp-deployment.yaml
+  - open5gs-core/amf-deployment.yaml
+  - open5gs-core/smf-deployment.yaml
+  - open5gs-core/upf-deployment.yaml
+  - open5gs-core/other-nfs-deployments.yaml
+  - open5gs-core/service.yaml
+
+  # RAN (UERANSIM)
+  - ran/configmap.yaml
+  - ran/gnb-deployment.yaml
+  - ran/ue-deployment.yaml
+
+  # Management Layer (testbed-api, testbed-ui) - Phase 2
+  - management/rbac.yaml
+  - management/api-configmap.yaml
+  - management/api-deployment.yaml
+  - management/ui-configmap.yaml
+  - management/ui-deployment.yaml
+  - management/nginx-configmap.yaml
+  - management/service.yaml
+
+  # Observability (Prometheus, Grafana, Loki) - Phase 4
+  # - observability/configmap.yaml
+  # - observability/prometheus-deployment.yaml
+  # - observability/grafana-deployment.yaml
+  # - observability/loki-statefulset.yaml
+  # - observability/promtail-daemonset.yaml
+  # - observability/cadvisor-daemonset.yaml
+  # - observability/pvc.yaml
+  # - observability/service.yaml
+
+  # IDS (Zeek, Scapy)
+  # - ids/configmap.yaml
+  # - ids/zeek-deployment.yaml
+  # - ids/scapy-deployment.yaml
+  # - ids/pvc.yaml
+
+  # Auto-scaling
+  # - autoscaling/policies.yaml
+  # - autoscaling/hpa.yaml
+  # - autoscaling/controller-deployment.yaml
+  # - autoscaling/rbac.yaml
+
+commonMetadata:
+  labels:
+    app: 5g-testbed
+    version: "1.0"
+
+images:
+  - name: mongo
+    newTag: "6.0"
+  - name: gradiant/open5gs
+    newTag: "2.7.0"
+  - name: gradiant/open5gs-webui
+    newTag: "2.7.0"
+  - name: busybox
+    newTag: "1.28"
+  - name: node
+    newTag: "18-alpine"
+  - name: nginx
+    newTag: "1.25-alpine"
+  - name: towards5gs/ueransim
+    newTag: "v3.2.6"

@@ -1,0 +1,204 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testbed-api-config
+  namespace: 5g-testbed
+data:
+  # Updated testbed-api.js for K8s (uses @kubernetes/client-node instead of dockerode)
+  api-server.js: |
+    const express = require('express');
+    const cors = require('cors');
+    const k8s = require('@kubernetes/client-node');
+    const { spawn } = require('child_process');
+
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
+
+    // K8s client setup (reads KUBECONFIG or in-cluster config)
+    const kc = new k8s.KubeConfig();
+    kc.loadFromCluster();  // Loads /var/run/secrets/kubernetes.io/serviceaccount/* from pod
+    const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+    const appsApi = kc.makeApiClient(k8s.AppsV1Api);
+    const metricsApi = new k8s.Metrics(kc);
+
+    const NAMESPACE = 'default';  // Override with env var
+    const ns = process.env.K8S_NAMESPACE || '5g-testbed';
+
+    // Helper: Get pod by NF name
+    async function getPodByNf(nfId) {
+      try {
+        const res = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=${nfId}`);
+        if (res.body.items.length === 0) throw new Error(`NF ${nfId} not found`);
+        return res.body.items[0];  // First pod matching app=nfId
+      } catch (e) {
+        throw new Error(`Failed to get pod for ${nfId}: ${e.message}`);
+      }
+    }
+
+    // Helper: Get all NFs (Deployments)
+    async function getAllNfs() {
+      try {
+        const res = await appsApi.listNamespacedDeployment(ns);
+        return res.body.items.map(dep => ({
+          id: dep.metadata.name,
+          replicas: dep.status.replicas || 0,
+          ready: dep.status.readyReplicas || 0,
+          status: dep.status.readyReplicas === dep.spec.replicas ? 'Running' : 'Pending',
+          image: dep.spec.template.spec.containers[0]?.image || 'unknown'
+        }));
+      } catch (e) {
+        throw new Error(`Failed to list deployments: ${e.message}`);
+      }
+    }
+
+    // Helper: Scale deployment
+    async function scaleNf(nfId, replicas) {
+      try {
+        const patch = { spec: { replicas } };
+        await appsApi.patchNamespacedDeployment(nfId, ns, patch, undefined, undefined, undefined, { headers: { 'Content-Type': 'application/merge-patch+json' } });
+        return { success: true, message: `${nfId} scaled to ${replicas} replicas` };
+      } catch (e) {
+        throw new Error(`Failed to scale ${nfId}: ${e.message}`);
+      }
+    }
+
+    // Routes
+
+    // GET /status - List all NFs and their status
+    app.get('/status', async (req, res) => {
+      try {
+        const nfs = await getAllNfs();
+        res.json({
+          status: 'ok',
+          timestamp: new Date().toISOString(),
+          nfs: nfs
+        });
+      } catch (e) {
+        res.status(500).json({ status: 'error', error: e.message });
+      }
+    });
+
+    // POST /nf/:id/start - Scale up NF to 1 replica
+    app.post('/nf/:id/start', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await scaleNf(id, 1);
+        res.json(result);
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /nf/:id/stop - Scale down NF to 0 replicas
+    app.post('/nf/:id/stop', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await scaleNf(id, 0);
+        res.json(result);
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /nf/:id/logs - Get logs from NF pod
+    app.get('/nf/:id/logs', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { lines = 100 } = req.query;
+        const pod = await getPodByNf(id);
+
+        // Use kubectl exec to get logs (k8s client doesn't expose log endpoint easily)
+        const logs = await new Promise((resolve, reject) => {
+          const proc = spawn('kubectl', [
+            'logs',
+            pod.metadata.name,
+            `-n`, ns,
+            `--tail=${lines}`
+          ]);
+          let stdout = '';
+          proc.stdout.on('data', data => stdout += data);
+          proc.on('close', code => {
+            if (code === 0) resolve(stdout);
+            else reject(new Error(`kubectl logs failed with code ${code}`));
+          });
+        });
+
+        res.json({ nf: id, logs: logs });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /nf/:id/config - Get NF config from ConfigMap
+    app.get('/nf/:id/config', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const cm = await k8sApi.readNamespacedConfigMap(`open5gs-config`, ns);
+        const config = cm.body.data[`${id}.yaml`] || 'Not found';
+        res.json({ nf: id, config: config });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Prometheus proxy endpoints (for metrics queries)
+    app.get('/metrics/query', async (req, res) => {
+      try {
+        const { query } = req.query;
+        if (!query) return res.status(400).json({ error: 'query param required' });
+
+        const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus:9090';
+        const url = `${PROMETHEUS_URL}/api/v1/query?query=${encodeURIComponent(query)}`;
+        const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        res.json(await r.json());
+      } catch (e) {
+        res.status(503).json({ status: 'error', error: `Prometheus unreachable: ${e.message}` });
+      }
+    });
+
+    app.get('/metrics/query_range', async (req, res) => {
+      try {
+        const { query, minutes = 30, step = 30 } = req.query;
+        if (!query) return res.status(400).json({ error: 'query param required' });
+
+        const endTime = Math.floor(Date.now() / 1000);
+        const startTime = endTime - (parseInt(minutes) * 60);
+
+        const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus:9090';
+        const url = `${PROMETHEUS_URL}/api/v1/query_range?query=${encodeURIComponent(query)}&start=${startTime}&end=${endTime}&step=${step}s`;
+        const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
+        res.json(await r.json());
+      } catch (e) {
+        res.status(503).json({ status: 'error', error: `Prometheus unreachable: ${e.message}` });
+      }
+    });
+
+    // Health check
+    app.get('/health', (req, res) => {
+      res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    });
+
+    const PORT = process.env.PORT || 5000;
+    app.listen(PORT, () => {
+      console.log(`[testbed-api] Listening on port ${PORT}`);
+      console.log(`[testbed-api] K8s namespace: ${ns}`);
+      console.log(`[testbed-api] Connected to K8s cluster`);
+    });
+
+  # package.json for testbed-api
+  package.json: |
+    {
+      "name": "testbed-api-k8s",
+      "version": "1.0.0",
+      "description": "5G Testbed API for K8s management",
+      "main": "api-server.js",
+      "scripts": {
+        "start": "node api-server.js"
+      },
+      "dependencies": {
+        "express": "^4.18.2",
+        "cors": "^2.8.5",
+        "@kubernetes/client-node": "^0.20.0"
+      }
+    }

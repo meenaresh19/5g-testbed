@@ -1,0 +1,146 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ueransim-ue1
+  namespace: 5g-testbed
+  labels:
+    app: ueransim-ue1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ueransim-ue1
+  template:
+    metadata:
+      labels:
+        app: ueransim-ue1
+    spec:
+      initContainers:
+      - name: wait-gnb
+        image: busybox:1.28
+        command: ['sh', '-c', 'sleep 10']  # Give gNB time to start
+      containers:
+      - name: ue
+        image: towards5gs/ueransim:v3.2.6
+        imagePullPolicy: IfNotPresent
+        command:
+        - nr-ue
+        - -c
+        - /etc/ueransim/ue.yaml
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ueransim/ue.yaml
+          subPath: ue.yaml
+          readOnly: true
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
+        env:
+        - name: GNB_IP
+          value: 192.168.70.20
+        - name: UE_IP
+          value: 192.168.70.30
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+          allowPrivilegeEscalation: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 400m
+            memory: 512Mi
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - pgrep -f 'nr-ue -c'
+          initialDelaySeconds: 40
+          periodSeconds: 10
+          failureThreshold: 3
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: false
+      volumes:
+      - name: config
+        configMap:
+          name: ueransim-config
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun
+---
+# UE2 (Optional - deployed via kustomization patch for multi-ue profile)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ueransim-ue2
+  namespace: 5g-testbed
+  labels:
+    app: ueransim-ue2
+spec:
+  replicas: 0  # Disabled by default, enable in overlays/profiles
+  selector:
+    matchLabels:
+      app: ueransim-ue2
+  template:
+    metadata:
+      labels:
+        app: ueransim-ue2
+    spec:
+      initContainers:
+      - name: wait-gnb
+        image: busybox:1.28
+        command: ['sh', '-c', 'sleep 15']
+      containers:
+      - name: ue
+        image: towards5gs/ueransim:v3.2.6
+        imagePullPolicy: IfNotPresent
+        command:
+        - nr-ue
+        - -c
+        - /etc/ueransim/ue2.yaml
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ueransim/ue2.yaml
+          subPath: ue2.yaml
+          readOnly: true
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
+        env:
+        - name: GNB_IP
+          value: 192.168.70.20
+        - name: UE_IP
+          value: 192.168.70.31
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+          allowPrivilegeEscalation: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 400m
+            memory: 512Mi
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - pgrep -f 'nr-ue -c'
+          initialDelaySeconds: 40
+          periodSeconds: 10
+          failureThreshold: 3
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: false
+      volumes:
+      - name: config
+        configMap:
+          name: ueransim-config
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun

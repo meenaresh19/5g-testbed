@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-nrf
+  namespace: 5g-testbed
+  labels:
+    app: open5gs-nrf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open5gs-nrf
+  template:
+    metadata:
+      labels:
+        app: open5gs-nrf
+    spec:
+      initContainers:
+      - name: wait-mongodb
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z mongodb.5g-testbed.svc.cluster.local 27017; do echo waiting for mongodb; sleep 1; done']
+      containers:
+      - name: nrf
+        image: gradiant/open5gs:2.7.0
+        imagePullPolicy: IfNotPresent
+        command:
+        - /open5gs/install/bin/open5gs-nrfd
+        - -c
+        - /etc/open5gs/nrf.yaml
+        ports:
+        - containerPort: 7777
+          name: sbi
+          protocol: TCP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/open5gs/nrf.yaml
+          subPath: nrf.yaml
+          readOnly: true
+        env:
+        - name: MONGODB_URL
+          value: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /nnrf-nfm/v1/nf-instances
+            port: 7777
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /nnrf-nfm/v1/nf-instances
+            port: 7777
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 2
+      volumes:
+      - name: config
+        configMap:
+          name: open5gs-config

@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-scp
+  namespace: 5g-testbed
+  labels:
+    app: open5gs-scp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open5gs-scp
+  template:
+    metadata:
+      labels:
+        app: open5gs-scp
+    spec:
+      initContainers:
+      - name: wait-nrf
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z open5gs-nrf.5g-testbed.svc.cluster.local 7777; do echo waiting for nrf; sleep 1; done']
+      containers:
+      - name: scp
+        image: gradiant/open5gs:2.7.0
+        imagePullPolicy: IfNotPresent
+        command:
+        - /open5gs/install/bin/open5gs-scpd
+        - -c
+        - /etc/open5gs/scp.yaml
+        ports:
+        - containerPort: 7777
+          name: sbi
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/open5gs/scp.yaml
+          subPath: scp.yaml
+          readOnly: true
+        env:
+        - name: NRF_URI
+          value: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 300m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 7777
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7777
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          failureThreshold: 2
+      volumes:
+      - name: config
+        configMap:
+          name: open5gs-config

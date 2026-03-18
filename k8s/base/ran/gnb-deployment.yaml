@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ueransim-gnb
+  namespace: 5g-testbed
+  labels:
+    app: ueransim-gnb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ueransim-gnb
+  template:
+    metadata:
+      labels:
+        app: ueransim-gnb
+    spec:
+      initContainers:
+      - name: wait-amf
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z open5gs-amf.5g-testbed.svc.cluster.local 38412; do echo waiting for amf; sleep 2; done']
+      containers:
+      - name: gnb
+        image: towards5gs/ueransim:v3.2.6
+        imagePullPolicy: IfNotPresent
+        command:
+        - gnb
+        - -c
+        - /etc/ueransim/gnb.yaml
+        ports:
+        - containerPort: 38412
+          name: ngap
+          protocol: SCTP
+        - containerPort: 2152
+          name: gtpu
+          protocol: UDP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ueransim/gnb.yaml
+          subPath: gnb.yaml
+          readOnly: true
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
+        env:
+        - name: AMF_IP
+          value: open5gs-amf.5g-testbed.svc.cluster.local
+        - name: GNB_IP
+          value: 192.168.70.20
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+          allowPrivilegeEscalation: true
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          exec:
+            command:
+            - bash
+            - -c
+            - pgrep -f 'gnb -c'
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: false
+      volumes:
+      - name: config
+        configMap:
+          name: ueransim-config
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun

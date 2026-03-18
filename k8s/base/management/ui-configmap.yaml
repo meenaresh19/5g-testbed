@@ -1,0 +1,281 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testbed-ui-config
+  namespace: 5g-testbed
+data:
+  # Minimal nginx config for serving React SPA
+  nginx-ui.conf: |
+    server {
+      listen 80;
+      server_name _;
+      root /usr/share/nginx/html;
+
+      # SPA routing: try file first, fallback to index.html
+      location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "public, max-age=3600";
+      }
+
+      # API proxy (in case needed from UI directly)
+      location /api {
+        proxy_pass http://testbed-api.5g-testbed.svc.cluster.local:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
+      # Disable caching for dynamic files
+      location ~* \.(?:manifest|appcache|html?)$ {
+        expires -1;
+      }
+
+      # Cache static assets
+      location ~* \.(?:js|css|png|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1d;
+        add_header Cache-Control "public, immutable";
+      }
+
+      # Deny access to hidden files
+      location ~ /\. {
+        deny all;
+      }
+    }
+
+  # Minimal React SPA index.html
+  # NOTE: This is a placeholder. For the full UI with Monitoring component,
+  # build a Docker image: docker build -f ui/Dockerfile -t testbed-ui:latest .
+  # and update the testbed-ui deployment to use your custom image.
+
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>5G Testbed — Control Plane</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Exo+2:wght@300;400;600;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+      <style>
+        :root {
+          --bg: #040810;
+          --bg2: #070d1a;
+          --bg3: #0a1525;
+          --panel: #0d1b2e;
+          --panel2: #0f2035;
+          --border: #1a3a5c;
+          --border2: #1f4a70;
+          --accent: #00c8ff;
+          --accent2: #0080c8;
+          --accent3: #00ffc8;
+          --warn: #ffb800;
+          --danger: #ff3b5c;
+          --success: #00e676;
+          --muted: #4a7090;
+          --text: #c8e8ff;
+          --text2: #7aaccc;
+          --text3: #3a6080;
+          --glow: 0 0 20px rgba(0,200,255,0.3);
+          --glow2: 0 0 40px rgba(0,200,255,0.15);
+          --font-main: 'Exo 2', sans-serif;
+          --font-mono: 'Share Tech Mono', monospace;
+          --font-head: 'Orbitron', sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-main); }
+        #root { height: 100%; display: flex; flex-direction: column; padding: 24px; }
+
+        .container { max-width: 1200px; margin: 0 auto; width: 100%; }
+        .header { text-align: center; margin-bottom: 32px; }
+        h1 { font-size: 28px; font-family: var(--font-head); color: var(--accent); margin-bottom: 8px; }
+        .tagline { color: var(--text2); font-size: 14px; }
+
+        .status-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+          gap: 16px;
+          margin-bottom: 32px;
+        }
+
+        .card {
+          background: var(--panel);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 16px;
+          transition: all 0.3s ease;
+        }
+
+        .card:hover {
+          border-color: var(--accent);
+          box-shadow: var(--glow);
+        }
+
+        .card-title { font-size: 12px; color: var(--text2); text-transform: uppercase; font-weight: 600; margin-bottom: 8px; }
+        .card-value { font-size: 24px; font-family: var(--font-mono); color: var(--accent); }
+        .card-sub { font-size: 12px; color: var(--text3); margin-top: 4px; }
+
+        .button {
+          background: var(--accent);
+          color: var(--bg);
+          border: none;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: 600;
+          transition: all 0.3s ease;
+        }
+
+        .button:hover { background: var(--accent3); }
+        .button:disabled { background: var(--muted); cursor: not-allowed; }
+
+        .nf-list {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+          gap: 12px;
+        }
+
+        .nf-item {
+          background: var(--panel2);
+          border: 1px solid var(--border);
+          border-radius: 6px;
+          padding: 12px;
+          text-align: center;
+          transition: all 0.3s ease;
+        }
+
+        .nf-item.running { border-color: var(--success); }
+        .nf-item.pending { border-color: var(--warn); }
+        .nf-item.failed { border-color: var(--danger); }
+
+        .nf-name { font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+        .nf-status { font-size: 11px; padding: 4px 8px; border-radius: 3px; display: inline-block; }
+        .nf-status.running { background: rgba(0, 230, 118, 0.1); color: var(--success); }
+        .nf-status.pending { background: rgba(255, 184, 0, 0.1); color: var(--warn); }
+        .nf-status.failed { background: rgba(255, 59, 92, 0.1); color: var(--danger); }
+
+        .info-box {
+          background: rgba(0, 200, 255, 0.05);
+          border: 1px solid var(--accent);
+          border-radius: 6px;
+          padding: 12px;
+          margin-top: 24px;
+          font-size: 12px;
+          color: var(--text2);
+        }
+
+        .loading { color: var(--muted); font-style: italic; }
+      </style>
+    </head>
+    <body>
+      <div id="root"></div>
+      <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+          const [status, setStatus] = useState(null);
+          const [loading, setLoading] = useState(true);
+          const [error, setError] = useState(null);
+
+          useEffect(() => {
+            fetchStatus();
+            const interval = setInterval(fetchStatus, 5000);
+            return () => clearInterval(interval);
+          }, []);
+
+          async function fetchStatus() {
+            try {
+              const res = await fetch('/api/status');
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+              const data = await res.json();
+              setStatus(data);
+              setError(null);
+            } catch (e) {
+              setError(e.message);
+            } finally {
+              setLoading(false);
+            }
+          }
+
+          async function handleNfAction(nfId, action) {
+            try {
+              const res = await fetch(`/api/nf/${nfId}/${action}`, { method: 'POST' });
+              if (!res.ok) throw new Error(`Failed to ${action}`);
+              await fetchStatus();
+            } catch (e) {
+              alert(`Error: ${e.message}`);
+            }
+          }
+
+          return (
+            <div className="container">
+              <div className="header">
+                <h1>5G TESTBED</h1>
+                <p className="tagline">Kubernetes-based Open5GS + UERANSIM Control Plane</p>
+              </div>
+
+              {error && (
+                <div style={{ padding: '12px', background: 'rgba(255,59,92,0.1)', border: '1px solid var(--danger)', borderRadius: '6px', color: 'var(--danger)', marginBottom: '16px' }}>
+                  <strong>Error:</strong> {error}
+                </div>
+              )}
+
+              {loading ? (
+                <div className="loading">Loading NF status...</div>
+              ) : status ? (
+                <>
+                  <div className="status-grid">
+                    <div className="card">
+                      <div className="card-title">Network Functions</div>
+                      <div className="card-value">{status.nfs?.length || 0}</div>
+                      <div className="card-sub">Total deployed</div>
+                    </div>
+                    <div className="card">
+                      <div className="card-title">Running</div>
+                      <div className="card-value" style={{ color: 'var(--success)' }}>
+                        {status.nfs?.filter(n => n.status === 'Running').length || 0}
+                      </div>
+                      <div className="card-sub">Ready replicas</div>
+                    </div>
+                    <div className="card">
+                      <div className="card-title">Last Update</div>
+                      <div className="card-value" style={{ fontSize: '14px' }}>
+                        {new Date(status.timestamp).toLocaleTimeString()}
+                      </div>
+                      <div className="card-sub">Refreshing every 5s</div>
+                    </div>
+                  </div>
+
+                  <h2 style={{ fontSize: '16px', marginBottom: '16px', color: 'var(--accent)' }}>Network Functions</h2>
+                  <div className="nf-list">
+                    {status.nfs?.map(nf => (
+                      <div key={nf.id} className={`nf-item ${nf.status.toLowerCase()}`}>
+                        <div className="nf-name">{nf.id.replace('open5gs-', '').replace('ueransim-', '')}</div>
+                        <div className={`nf-status ${nf.status.toLowerCase()}`}>
+                          {nf.ready}/{nf.replicas}
+                        </div>
+                        <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text2)' }}>
+                          {nf.status}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="info-box">
+                    <strong>Phase 2 Status:</strong> Kubernetes Management Layer active. Click on NFs to manage them (coming soon).
+                    Full Monitoring dashboard with metrics visualization available in Phase 4.
+                  </div>
+                </>
+              ) : null}
+            </div>
+          );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+      </script>
+    </body>
+    </html>

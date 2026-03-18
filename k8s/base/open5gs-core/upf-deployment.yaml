@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open5gs-upf
+  namespace: 5g-testbed
+  labels:
+    app: open5gs-upf
+spec:
+  replicas: 1  # Will be scaled by HPA based on CPU/throughput metrics
+  selector:
+    matchLabels:
+      app: open5gs-upf
+  template:
+    metadata:
+      labels:
+        app: open5gs-upf
+    spec:
+      initContainers:
+      - name: wait-nrf
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z open5gs-nrf.5g-testbed.svc.cluster.local 7777; do echo waiting for nrf; sleep 2; done']
+      containers:
+      - name: upf
+        image: gradiant/open5gs:2.7.0
+        imagePullPolicy: IfNotPresent
+        command:
+        - /open5gs/install/bin/open5gs-upfd
+        - -c
+        - /etc/open5gs/upf.yaml
+        ports:
+        - containerPort: 2152
+          name: gtpu
+          protocol: UDP
+        - containerPort: 8805
+          name: pfcp
+          protocol: UDP
+        - containerPort: 9090
+          name: metrics
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/open5gs/upf.yaml
+          subPath: upf.yaml
+          readOnly: true
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
+        env:
+        - name: NRF_URI
+          value: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+        - name: MONGODB_URL
+          value: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+            - SYS_ADMIN
+        resources:
+          requests:
+            cpu: 400m
+            memory: 512Mi
+          limits:
+            cpu: 1200m
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 9090
+          initialDelaySeconds: 40
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          failureThreshold: 2
+      volumes:
+      - name: config
+        configMap:
+          name: open5gs-config
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun
+      nodeSelector:
+        kubernetes.io/hostname: ""  # Will run on available node

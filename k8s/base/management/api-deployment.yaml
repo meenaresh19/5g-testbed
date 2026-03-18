@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testbed-api
+  namespace: 5g-testbed
+  labels:
+    app: testbed-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testbed-api
+  template:
+    metadata:
+      labels:
+        app: testbed-api
+    spec:
+      serviceAccountName: testbed-api  # Uses RBAC ServiceAccount
+
+      initContainers:
+      - name: wait-nrf
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z open5gs-nrf.5g-testbed.svc.cluster.local 7777; do echo waiting for nrf; sleep 2; done']
+
+      containers:
+      - name: api
+        image: node:18-alpine
+        imagePullPolicy: IfNotPresent
+
+        workingDir: /app
+
+        command:
+        - sh
+        - -c
+        - |
+          npm install && npm start
+
+        ports:
+        - containerPort: 5000
+          name: http
+          protocol: TCP
+
+        volumeMounts:
+        - name: api-config
+          mountPath: /app/api-server.js
+          subPath: api-server.js
+          readOnly: true
+        - name: api-config
+          mountPath: /app/package.json
+          subPath: package.json
+          readOnly: true
+
+        env:
+        - name: K8S_NAMESPACE
+          value: 5g-testbed
+        - name: PORT
+          value: "5000"
+        - name: NODE_ENV
+          value: production
+        - name: PROMETHEUS_URL
+          value: http://prometheus.5g-testbed.svc.cluster.local:9090
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: 5000
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 2
+
+      volumes:
+      - name: api-config
+        configMap:
+          name: testbed-api-config
+          defaultMode: 0755
+
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always

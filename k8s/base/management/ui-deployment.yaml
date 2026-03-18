@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testbed-ui
+  namespace: 5g-testbed
+  labels:
+    app: testbed-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: testbed-ui
+  template:
+    metadata:
+      labels:
+        app: testbed-ui
+    spec:
+      initContainers:
+      - name: wait-api
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z testbed-api.5g-testbed.svc.cluster.local 5000; do echo waiting for testbed-api; sleep 2; done']
+
+      containers:
+      - name: ui
+        image: nginx:1.25-alpine
+        imagePullPolicy: IfNotPresent
+
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+
+        volumeMounts:
+        - name: ui-html
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        - name: nginx-ui-conf
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: nginx-ui.conf
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 300m
+            memory: 256Mi
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          failureThreshold: 2
+
+      volumes:
+      - name: ui-html
+        configMap:
+          name: testbed-ui-config
+          items:
+          - key: index.html
+            path: index.html
+      - name: nginx-ui-conf
+        configMap:
+          name: testbed-ui-config
+          items:
+          - key: nginx-ui.conf
+            path: nginx-ui.conf
+
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always

@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-nrf
+  namespace: 5g-testbed
+  labels:
+    app: open5gs-nrf
+spec:
+  type: ClusterIP
+  selector:
+    app: open5gs-nrf
+  ports:
+  - name: sbi
+    port: 7777
+    targetPort: 7777
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-amf
+  namespace: 5g-testbed
+  labels:
+    app: open5gs-amf
+spec:
+  type: ClusterIP
+  selector:
+    app: open5gs-amf
+  ports:
+  - name: sbi
+    port: 7777
+    targetPort: 7777
+    protocol: TCP
+  - name: ngap
+    port: 38412
+    targetPort: 38412
+    protocol: SCTP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-smf
+  namespace: 5g-testbed
+  labels:
+    app: open5gs-smf
+spec:
+  type: ClusterIP
+  selector:
+    app: open5gs-smf
+  ports:
+  - name: sbi
+    port: 7777
+    targetPort: 7777
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open5gs-upf
+  namespace: 5g-testbed
+  labels:
+    app: open5gs-upf
+spec:
+  type: ClusterIP
+  selector:
+    app: open5gs-upf
+  ports:
+  - name: gtpu
+    port: 2152
+    targetPort: 2152
+    protocol: UDP
+  - name: pfcp
+    port: 8805
+    targetPort: 8805
+    protocol: UDP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP

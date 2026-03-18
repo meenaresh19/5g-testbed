@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: open5gs-config
+  namespace: 5g-testbed
+data:
+  # These are placeholder configs. In production, use gen-configs.sh to generate
+  # and inject K8s DNS service names (e.g., mongodb.5g-testbed.svc.cluster.local)
+
+  nrf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.10
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e87
+
+  scp.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.11
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e88
+
+  amf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.12
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    ngap:
+      addr: 0.0.0.0
+      port: 38412
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e89
+
+  smf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.13
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8a
+
+  upf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    gtpu:
+      addr: 0.0.0.0
+      port: 2152
+    pfcp:
+      addr: 0.0.0.0
+      port: 8805
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8b
+
+  ausf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.15
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8c
+
+  udm.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.16
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8d
+
+  udr.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.17
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8e
+
+  pcf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.18
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8f
+
+  bsf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.19
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e90
+
+  nssf.yaml: |
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+    sbi:
+      scheme: http
+      registerIPv4: 10.45.0.20
+      bindingIPv4: 0.0.0.0
+      port: 7777
+    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e91
