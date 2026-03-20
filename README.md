@@ -3,6 +3,8 @@
 **Full-stack 5G SA testbed with observability, throughput testing, and IDS**
 Ubuntu 22.04 / 24.04 · Docker Compose · Kubernetes (K3s)
 
+> **NEW** — Comprehensive subscriber management built into the dashboard! Add/edit/delete UEs, bulk import/export, search with pagination. **Replaces separate Open5GS WebUI.** See [Subscriber Management Guide](./SUBSCRIBER_MANAGEMENT.md).
+
 ---
 
 ## Architecture
@@ -13,10 +15,11 @@ Ubuntu 22.04 / 24.04 · Docker Compose · Kubernetes (K3s)
 ├───────────────┬──────────────────────────┬───────────────────────────────┤
 │  UERANSIM RAN │    Open5GS 5GC           │   Management & Observability  │
 │  ───────────  │  ──────────────────────  │  ─────────────────────────── │
-│  ueransim-gnb │  NRF  SCP  AMF  SMF      │  Testbed UI     :3000         │
-│  ueransim-ue1 │  UPF  AUSF UDM  UDR      │  Open5GS WebUI  :9999         │
-│  ueransim-ue2 │  PCF  BSF  NSSF          │  API Server     :5000         │
-│               │  NEF (Free5GC) :8000     │  Grafana        :3001         │
+│  ueransim-gnb │  NRF  SCP  AMF  SMF      │  Testbed UI (:3000)           │
+│  ueransim-ue1 │  UPF  AUSF UDM  UDR      │  ├─ Subscriber Mgmt (built-in)│
+│  ueransim-ue2 │  PCF  BSF  NSSF          │  ├─ Core/RAN/Monitoring      │
+│               │  NEF (Free5GC) :8000     │  API Server     :5000         │
+│               │                          │  Grafana        :3001         │
 │  (optional)   │                          │  Prometheus     :9090         │
 │               │  iPerf3 server           │  Loki + Promtail              │
 │  OAI gNB+UE   │  (10.45.0.200)           │  Zeek IDS (ctrl-plane)        │
@@ -37,9 +40,9 @@ cd 5g-testbed
 sudo bash install.sh --docker
 
 # Access UIs
-open http://localhost:3000   # Testbed Management UI
-open http://localhost:9999   # Open5GS WebUI  (admin / 1423)
-open http://localhost:3001   # Grafana dashboards
+open http://localhost:3000   # Testbed Management UI (includes subscriber mgmt)
+open http://localhost:3001   # Grafana dashboards (core/ran/system metrics)
+open http://localhost:9090   # Prometheus metrics database
 ```
 
 ### Kubernetes (K3s)
@@ -66,8 +69,7 @@ make info                           # show all URLs
 | **Dashboard** | Real-time NF status, interface utilization, live event feed |
 | **Core NFs** | Start / stop / configure all Open5GS NFs (AMF, SMF, UPF …) |
 | **RAN** | UERANSIM gNB + UE control; OAI legacy mode |
-| **Network Slices** | Create slices (SST 1/2/3/4), set 5QI, DNN, bandwidth limits |
-| **Subscribers** | Add / edit / delete UE subscriptions (IMSI, K, OPc, S-NSSAI) |
+| **Subscribers** | **NEW** — Full provisioning interface (replaces Open5GS WebUI): Add/edit/delete UEs, bulk import/export, search/filter with pagination. See [Subscriber Management Guide](./SUBSCRIBER_MANAGEMENT.md) |
 | **Topology** | Live architecture diagram with real NF status overlay |
 | **Tracing** | PCAP capture on N2/N3/N4/SBI — start, stop, download |
 | **Throughput** | iPerf3 DL / UL / BiDir tests through live PDU session |
