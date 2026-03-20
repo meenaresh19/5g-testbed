@@ -686,7 +686,7 @@ data:
           const [sessionForm, setSessionForm] = useState({ type: 'IPv4', dnn: 'internet', sst: 1 });
           const [pingForm, setPingForm] = useState({ target: '8.8.8.8', count: 4 });
           const [pingOut, setPingOut] = useState({});
-          const [nasDeregType, setNasDeregType] = useState('normal');
+          const [nasDeregType, setNasDeregType] = useState('switch-off');
           const isAdmin = window.__currentUser?.role === 'admin';
 
           const flash = (text, ok=true) => { setMsg({text,ok}); setTimeout(()=>setMsg({text:'',ok:true}),5000); };
@@ -848,9 +848,8 @@ data:
                 <div style={{fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:6}}>NAS Deregister</div>
                 <div style={{display:'flex',gap:8,alignItems:'center'}}>
                   <select value={nasDeregType} onChange={e=>setNasDeregType(e.target.value)} style={sel()}>
-                    <option value="normal">normal</option>
                     <option value="switch-off">switch-off</option>
-                    <option value="disable-5g">disable-5g</option>
+                    <option value="normal">re-register</option>
                   </select>
                   <button className="button small danger" onClick={()=>handleNasDeregister(imsi)}>Deregister</button>
                 </div>
