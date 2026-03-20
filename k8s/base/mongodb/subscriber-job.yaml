@@ -1,0 +1,101 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: provision-subscribers
+  namespace: 5g-testbed
+  annotations:
+    # Re-run by deleting the job: kubectl -n 5g-testbed delete job provision-subscribers
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-mongodb
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z mongodb.5g-testbed.svc.cluster.local 27017; do echo waiting for mongodb; sleep 2; done']
+      containers:
+      - name: provision
+        image: mongo:6.0
+        command:
+        - mongosh
+        - mongodb://mongodb.5g-testbed.svc.cluster.local/open5gs
+        - --eval
+        - |
+          // Idempotent — skips if subscriber already exists
+          function provisionSubscriber(imsi, k, opc, amf) {
+            if (db.subscribers.findOne({ imsi: imsi })) {
+              print("Subscriber " + imsi + " already exists, skipping.");
+              return;
+            }
+            db.subscribers.insertOne({
+              imsi: imsi,
+              msisdn: [],
+              imeisv: "4370816125816151",
+              mme_host: [],
+              mme_realm: [],
+              purge_flag: [],
+              security: {
+                k: k,
+                op: null,
+                opc: opc,
+                amf: amf,
+                sqn: Long("0")
+              },
+              ambr: {
+                downlink: { value: 1, unit: 3 },
+                uplink:   { value: 1, unit: 3 }
+              },
+              slice: [{
+                sst: 1,
+                default_indicator: true,
+                session: [{
+                  name: "internet",
+                  type: 3,
+                  qos: {
+                    index: 9,
+                    arp: {
+                      priority_level: 8,
+                      pre_emption_capability: 1,
+                      pre_emption_vulnerability: 1
+                    }
+                  },
+                  ambr: {
+                    downlink: { value: 1, unit: 3 },
+                    uplink:   { value: 1, unit: 3 }
+                  }
+                }]
+              }],
+              access_restriction_data: 32,
+              subscriber_status: 0,
+              network_access_mode: 0,
+              subscribed_rau_tau_timer: 12,
+              __v: 0
+            });
+            print("Provisioned subscriber: " + imsi);
+          }
+
+          // UE1 — matches ue.yaml
+          provisionSubscriber(
+            "001010000000001",
+            "fec86ba6eb707ed08ce33ae45b4a0fba",
+            "c42449363464e2e4fa8adca3063168ca",
+            "8000"
+          );
+
+          // UE2 — matches ue2.yaml
+          provisionSubscriber(
+            "001010000000002",
+            "fec86ba6eb707ed08ce33ae45b4a0fba",
+            "c42449363464e2e4fa8adca3063168ca",
+            "8000"
+          );
+
+          print("Done.");
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 300m
+            memory: 512Mi

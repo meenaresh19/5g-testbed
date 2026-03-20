@@ -11,6 +11,7 @@ resources:
   - mongodb/pvc.yaml
   - mongodb/service.yaml
   - mongodb/statefulset.yaml
+  - mongodb/subscriber-job.yaml
 
   # Open5GS Core Network Functions
   - open5gs-core/configmap.yaml
