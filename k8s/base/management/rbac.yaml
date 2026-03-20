@@ -34,10 +34,10 @@ rules:
   resources: ["pods/restart"]
   verbs: ["create"]
 
-# Deployment operations (scale, patch, get)
+# Deployment operations (scale, patch, get, create, delete — for dynamic UE pods)
 - apiGroups: ["apps"]
   resources: ["deployments", "statefulsets"]
-  verbs: ["get", "list", "watch", "patch", "update"]
+  verbs: ["get", "list", "watch", "patch", "update", "create", "delete"]
 - apiGroups: ["apps"]
   resources: ["deployments/scale"]
   verbs: ["get", "patch", "update"]
@@ -47,10 +47,10 @@ rules:
   resources: ["services"]
   verbs: ["get", "list", "watch"]
 
-# ConfigMaps (get, list)
+# ConfigMaps (get, list, create, delete — for dynamic UE configs)
 - apiGroups: [""]
   resources: ["configmaps"]
-  verbs: ["get", "list", "watch"]
+  verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
 
 # Namespace info
 - apiGroups: [""]
