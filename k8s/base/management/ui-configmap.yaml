@@ -997,15 +997,10 @@ data:
 
         // Tracing section - PCAP capture
         function TracingSection() {
-          const [tracingTab, setTracingTab] = useState('pod');  // 'pod' or 'interface'
           const [pods, setPods] = useState([]);
           const [sessions, setSessions] = useState([]);
-          const [selectedPod, setSelectedPod] = useState('');
-          const [selectedContainer, setSelectedContainer] = useState('');
-          const [selectedIface, setSelectedIface] = useState('eth0');
-          const [iface, setIface] = useState('any');
-          const [filter, setFilter] = useState('');
-          const [capturing, setCapturing] = useState(false);
+          const [form, setForm] = useState({ pod: '', container: '', interface: 'any', filter: '', duration: '60', fileSize: '50' });
+          const [starting, setStarting] = useState(false);
           const [loading, setLoading] = useState(false);
 
           const fetchPods = async () => {
@@ -1014,7 +1009,7 @@ data:
               if (!res.ok) throw new Error('Failed to fetch pods');
               const data = await res.json();
               setPods(data);
-              if (data.length > 0 && !selectedPod) setSelectedPod(data[0].name);
+              if (data.length > 0 && !form.pod) setForm(f => ({ ...f, pod: data[0].name }));
             } catch (e) {
               console.error('Error fetching pods:', e);
             }
@@ -1026,7 +1021,6 @@ data:
               if (!res.ok) throw new Error('Failed to fetch sessions');
               const data = await res.json();
               setSessions(data.sessions || []);
-              setCapturing(data.sessions?.some(s => s.status === 'running') || false);
             } catch (e) {
               console.error('Error fetching sessions:', e);
             }
@@ -1035,40 +1029,41 @@ data:
           React.useEffect(() => {
             fetchPods();
             fetchSessions();
-            const interval = setInterval(fetchSessions, 2000);
+            const interval = setInterval(fetchSessions, 5000);
             return () => clearInterval(interval);
           }, []);
 
           const handleStartCapture = async () => {
-            if (!selectedPod) { alert('Select a pod'); return; }
-            setLoading(true);
+            if (!form.pod) { alert('Select a pod'); return; }
+            setStarting(true);
             try {
               const res = await fetch('/api/pcap/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                  pod: selectedPod,
-                  container: selectedContainer || undefined,
-                  interface: iface,
-                  filter
+                  pod: form.pod,
+                  container: form.container || undefined,
+                  interface: form.interface,
+                  filter: form.filter,
+                  duration: Number(form.duration),
+                  fileSize: Number(form.fileSize)
                 })
               });
               if (!res.ok) throw new Error('Failed to start capture');
-              setCapturing(true);
+              setForm(f => ({ ...f, pod: '', container: '', interface: 'any', filter: '', duration: '60', fileSize: '50' }));
               fetchSessions();
             } catch (e) {
               alert('Error: ' + e.message);
             } finally {
-              setLoading(false);
+              setStarting(false);
             }
           };
 
-          const handleStopCapture = async (sessionId) => {
+          const handleStopCapture = async (id) => {
             setLoading(true);
             try {
-              const res = await fetch(`/api/pcap/stop/${sessionId}`, {method: 'POST'});
+              const res = await fetch(`/api/pcap/stop/${id}`, {method: 'POST'});
               if (!res.ok) throw new Error('Failed to stop capture');
-              setCapturing(false);
               fetchSessions();
             } catch (e) {
               alert('Error: ' + e.message);
@@ -1081,27 +1076,35 @@ data:
             window.location.href = `/api/pcap/download/${sessionId}`;
           };
 
-          const handleDeleteSession = async (sessionId) => {
-            if (!confirm('Delete capture session?')) return;
+          const handleDeleteSession = async (id) => {
+            if (!confirm('Delete session?')) return;
             try {
-              const res = await fetch(`/api/pcap/sessions/${sessionId}`, {method: 'DELETE'});
+              const res = await fetch(`/api/pcap/sessions/${id}`, {method: 'DELETE'});
               if (!res.ok) throw new Error('Failed to delete session');
-              fetchSessions();
+              setSessions(s => s.filter(x => x.id !== id));
             } catch (e) {
               alert('Error: ' + e.message);
             }
           };
 
-          const selectedPodData = pods.find(p => p.name === selectedPod);
-          const containers = selectedPodData?.containers || [];
+          const selectedPod = pods.find(p => p.name === form.pod);
+          const containers = selectedPod?.containers || [];
+          const commonFilters = [
+            ['NGAP (N2)', 'sctp port 38412'],
+            ['GTP-U (N3)', 'udp port 2152'],
+            ['PFCP (N4)', 'udp port 8805'],
+            ['SBI (HTTP)', 'tcp port 7777'],
+            ['All SCTP', 'sctp'],
+            ['UE subnet', 'net 10.45.0.0/16']
+          ];
 
           return (
             <div>
               <div className="stat-grid">
                 <div className="stat-card">
                   <div className="stat-label">Active Captures</div>
-                  <div className="stat-value" style={{color: capturing ? 'var(--danger)' : 'var(--text)'}}>{sessions.filter(s => s.status === 'running').length}</div>
-                  <div className="stat-sub">{capturing ? 'Recording...' : 'Stopped'}</div>
+                  <div className="stat-value" style={{color: sessions.filter(s => s.status === 'running').length > 0 ? 'var(--danger)' : 'var(--text)'}}>{sessions.filter(s => s.status === 'running').length}</div>
+                  <div className="stat-sub">{sessions.filter(s => s.status === 'running').length > 0 ? 'Recording...' : 'Idle'}</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">Available Pods</div>
@@ -1119,135 +1122,100 @@ data:
                 <Icon name="network" /> <strong>PCAP Tracing:</strong> Capture network traffic from K8s pods. Download for analysis in Wireshark.
               </div>
 
-              <div style={{marginBottom: 16, display: 'flex', gap: 0, borderBottom: '2px solid var(--border)'}}>
-                <button onClick={() => setTracingTab('pod')} style={{flex: 1, padding: '12px', background: tracingTab === 'pod' ? 'rgba(0,200,255,0.1)' : 'transparent', borderBottom: tracingTab === 'pod' ? '3px solid var(--accent)' : 'none', color: tracingTab === 'pod' ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontWeight: 600, fontSize: 14, border: 'none', marginBottom: '-2px'}}>
-                  Pod Capture
-                </button>
-                <button onClick={() => setTracingTab('interface')} style={{flex: 1, padding: '12px', background: tracingTab === 'interface' ? 'rgba(0,200,255,0.1)' : 'transparent', borderBottom: tracingTab === 'interface' ? '3px solid var(--accent)' : 'none', color: tracingTab === 'interface' ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontWeight: 600, fontSize: 14, border: 'none', marginBottom: '-2px'}}>
-                  Interface Capture
+              <div className="panel">
+                <h3><Icon name="network" /> New Capture</h3>
+
+                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16}}>
+                  <div className="form-group">
+                    <label>Pod</label>
+                    <select value={form.pod} onChange={e => setForm(f => ({...f, pod: e.target.value, container: ''}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                      <option value="">— Select pod —</option>
+                      {pods.map(p => (<option key={p.name} value={p.name}>{p.app?.toUpperCase() || p.name} ({p.name})</option>))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Container</label>
+                    <select value={form.container} onChange={e => setForm(f => ({...f, container: e.target.value}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                      <option value="">Default</option>
+                      {containers.map(c => (<option key={c} value={c}>{c}</option>))}
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Interface</label>
+                    <input type="text" value={form.interface} onChange={e => setForm(f => ({...f, interface: e.target.value}))} placeholder="any, eth0, eth1..." style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Duration (sec)</label>
+                    <input type="number" value={form.duration} onChange={e => setForm(f => ({...f, duration: e.target.value}))} min="1" max="3600" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
+                  </div>
+
+                  <div className="form-group">
+                    <label>File Size (MB)</label>
+                    <input type="number" value={form.fileSize} onChange={e => setForm(f => ({...f, fileSize: e.target.value}))} min="1" max="5000" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>BPF Filter (optional)</label>
+                  <input type="text" value={form.filter} onChange={e => setForm(f => ({...f, filter: e.target.value}))} placeholder="e.g. port 38412, host 10.45.0.1, sctp" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '11px'}} />
+                </div>
+
+                <div style={{marginBottom: 16, padding: 12, background: 'var(--bg3)', borderRadius: 6}}>
+                  <div style={{fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 8}}>Common BPF Filters for 5G</div>
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 6}}>
+                    {commonFilters.map(([label, filter_text]) => (
+                      <button key={label} onClick={() => setForm(f => ({...f, filter: filter_text}))} style={{textAlign: 'left', padding: 8, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text2)', fontSize: 11, transition: 'all 0.2s'}}>
+                        <div style={{fontWeight: 600, color: 'var(--text)', marginBottom: 2}}>{label}</div>
+                        <div style={{fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text3)'}}>{filter_text}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <button className="button" onClick={handleStartCapture} disabled={starting || !form.pod} style={{width: '100%'}}>
+                  <Icon name="play" /> {starting ? 'Starting...' : 'Start Capture'}
                 </button>
               </div>
 
-              <div className="grid-2">
-                {tracingTab === 'pod' && (
-                  <div className="panel">
-                    <h3><Icon name="network" /> Pod Capture</h3>
-
-                    <div className="form-group">
-                      <label>Pod</label>
-                      <select value={selectedPod} onChange={e => { setSelectedPod(e.target.value); setSelectedContainer(''); }} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                        <option value="">-- Select Pod --</option>
-                        {pods.map(p => (<option key={p.name} value={p.name}>{p.name} ({p.app})</option>))}
-                      </select>
-                    </div>
-
-                    {containers.length > 0 && (
-                      <div className="form-group">
-                        <label>Container (optional)</label>
-                        <select value={selectedContainer} onChange={e => setSelectedContainer(e.target.value)} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                          <option value="">-- Any Container --</option>
-                          {containers.map(c => (<option key={c} value={c}>{c}</option>))}
-                        </select>
-                      </div>
-                    )}
-
-                    <div className="form-group">
-                      <label>Interface</label>
-                      <select value={iface} onChange={e => setIface(e.target.value)} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                        <option value="any">Any (all interfaces)</option>
-                        <option value="eth0">eth0</option>
-                        <option value="eth1">eth1</option>
-                        <option value="lo">lo (localhost)</option>
-                      </select>
-                    </div>
-
-                    <div className="form-group">
-                      <label>Filter (tcpdump syntax, optional)</label>
-                      <input type="text" value={filter} onChange={e => setFilter(e.target.value)} placeholder="e.g., 'tcp port 7777' or 'udp port 2152'" disabled={capturing} style={{width: '100%'}} />
-                    </div>
-
-                    <div style={{fontSize: 11, color: 'var(--text3)', marginBottom: 16}}>
-                      Examples: tcp port 7777 | udp | ip.src==10.45.0.10 | port 5000
-                    </div>
-
-                    {!capturing ? (
-                      <button className="button" onClick={handleStartCapture} disabled={!selectedPod || loading} style={{width: '100%'}}>
-                        <Icon name="play" /> {loading ? 'Starting...' : 'Start Capture'}
-                      </button>
-                    ) : (
-                      <button className="button danger" onClick={() => handleStopCapture(sessions[0]?.id)} disabled={loading} style={{width: '100%'}}>
-                        <Icon name="stop" /> {loading ? 'Stopping...' : 'Stop Capture'}
-                      </button>
-                    )}
+              <div className="panel">
+                <h3><Icon name="database" /> Capture Sessions ({sessions.length})</h3>
+                {sessions.length === 0 ? (
+                  <div style={{fontSize: 12, color: 'var(--text2)', padding: '16px', textAlign: 'center'}}>No capture sessions yet</div>
+                ) : (
+                  <div style={{overflowX: 'auto'}}>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Pod</th>
+                          <th>Interface</th>
+                          <th>Filter</th>
+                          <th>Started</th>
+                          <th>Status</th>
+                          <th style={{textAlign: 'right'}}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sessions.map(s => (
+                          <tr key={s.id}>
+                            <td style={{fontFamily: 'var(--font-mono)', fontSize: 11}}>{s.pod}</td>
+                            <td>{s.interface}</td>
+                            <td style={{fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text2)'}}>{s.filter || '—'}</td>
+                            <td style={{fontSize: 11, color: 'var(--text2)'}}>{new Date(s.startTime).toLocaleTimeString()}</td>
+                            <td><span className={`badge ${s.status === 'running' ? 'danger' : 'success'}`}>{s.status}</span></td>
+                            <td style={{textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end'}}>
+                              {s.status === 'running' && <button className="button small danger" onClick={() => handleStopCapture(s.id)} disabled={loading}>Stop</button>}
+                              {s.status === 'stopped' && <button className="button small" onClick={() => handleDownload(s.id)}>Download</button>}
+                              <button className="button small danger" onClick={() => handleDeleteSession(s.id)}>Delete</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
-
-                {tracingTab === 'interface' && (
-                  <div className="panel">
-                    <h3><Icon name="network" /> Interface Capture</h3>
-
-                    <div className="form-group">
-                      <label>Interface</label>
-                      <input type="text" value={selectedIface} onChange={e => setSelectedIface(e.target.value)} placeholder="eth0, eth1, any, lo" disabled={capturing} />
-                    </div>
-
-                    <div className="form-group">
-                      <label>Filter (tcpdump syntax, optional)</label>
-                      <input type="text" value={filter} onChange={e => setFilter(e.target.value)} placeholder="e.g., 'tcp port 7777' or 'udp port 2152'" disabled={capturing} style={{width: '100%'}} />
-                    </div>
-
-                    <div style={{fontSize: 11, color: 'var(--text3)', marginBottom: 16}}>
-                      Common filters:
-                      <div style={{marginTop: 8}}>
-                        tcp port 7777 = SBI traffic
-                        <br/>udp port 2152 = GTP-U traffic
-                        <br/>icmp = Ping traffic
-                        <br/>tcp.port == 5000 = testbed-api
-                      </div>
-                    </div>
-
-                    {!capturing ? (
-                      <button className="button" onClick={() => {
-                        if (!selectedIface) { alert('Enter interface name'); return; }
-                        setIface(selectedIface);
-                        handleStartCapture();
-                      }} disabled={loading} style={{width: '100%'}}>
-                        <Icon name="play" /> {loading ? 'Starting...' : 'Start Capture'}
-                      </button>
-                    ) : (
-                      <button className="button danger" onClick={() => handleStopCapture(sessions[0]?.id)} disabled={loading} style={{width: '100%'}}>
-                        <Icon name="stop" /> {loading ? 'Stopping...' : 'Stop Capture'}
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                <div className="panel">
-                  <h3><Icon name="database" /> Capture Sessions</h3>
-                  {sessions.length === 0 ? (
-                    <div style={{fontSize: 12, color: 'var(--text2)', padding: '16px'}}>No capture sessions. Start one to begin.</div>
-                  ) : (
-                    <div>
-                      {sessions.map(session => (
-                        <div key={session.id} style={{background: 'var(--bg3)', padding: 12, borderRadius: 6, marginBottom: 8, border: `1px solid ${session.status === 'running' ? 'var(--danger)' : 'var(--border)'}`}}>
-                          <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 8}}>
-                            <div>
-                              <div style={{fontWeight: 600, fontSize: 12}}>{session.pod}</div>
-                              <div style={{fontSize: 10, color: 'var(--text3)', marginTop: 4}}>
-                                {session.interface} | {session.filter || 'no filter'} | {new Date(session.startTime).toLocaleTimeString()}
-                              </div>
-                            </div>
-                            <span className={`badge ${session.status === 'running' ? 'danger' : 'success'}`}>{session.status}</span>
-                          </div>
-                          <div style={{display: 'flex', gap: 4}}>
-                            <button className="button small" onClick={() => handleDownload(session.id)} disabled={session.status === 'running'}>Download</button>
-                            <button className="button small danger" onClick={() => handleDeleteSession(session.id)}>Delete</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           );
