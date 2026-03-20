@@ -1227,24 +1227,14 @@ data:
                 <div className="panel">
                   <h3><Icon name="server" /> New Pod Capture</h3>
 
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16}}>
+                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16}}>
                     <div className="form-group">
-                      <label>Pod</label>
-                      <select value={podForm.pod} onChange={e => setPodForm(f => ({...f, pod: e.target.value, container: ''}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                      <label>Target Pod</label>
+                      <select value={podForm.pod} onChange={e => setPodForm(f => ({...f, pod: e.target.value, container: ''}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 12}}>
                         <option value="">— Select pod —</option>
-                        {pods.map(p => (<option key={p.name} value={p.name}>{p.app?.toUpperCase() || p.name} ({p.name})</option>))}
+                        {pods.map(p => (<option key={p.name} value={p.name}>{p.app?.toUpperCase() || p.name} — {p.name} ({p.ip || 'N/A'})</option>))}
                       </select>
                     </div>
-
-                    {containers.length > 0 && (
-                      <div className="form-group">
-                        <label>Container</label>
-                        <select value={podForm.container} onChange={e => setPodForm(f => ({...f, container: e.target.value}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                          <option value="">Default</option>
-                          {containers.map(c => (<option key={c} value={c}>{c}</option>))}
-                        </select>
-                      </div>
-                    )}
 
                     <div className="form-group">
                       <label>Interface</label>
@@ -1255,6 +1245,13 @@ data:
                       <label>Duration (sec)</label>
                       <input type="number" value={podForm.duration} onChange={e => setPodForm(f => ({...f, duration: e.target.value}))} min="1" max="3600" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
                     </div>
+                  </div>
+
+                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16}}>
+                    <div className="form-group">
+                      <label>BPF Filter</label>
+                      <input type="text" value={podForm.filter} onChange={e => setPodForm(f => ({...f, filter: e.target.value}))} placeholder="e.g. sctp port 38412" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '11px'}} />
+                    </div>
 
                     <div className="form-group">
                       <label>Max File Size (MB)</label>
@@ -1262,9 +1259,22 @@ data:
                     </div>
                   </div>
 
-                  <div className="form-group">
-                    <label>BPF Filter (optional)</label>
-                    <input type="text" value={podForm.filter} onChange={e => setPodForm(f => ({...f, filter: e.target.value}))} placeholder="e.g. port 38412, host 10.45.0.1, sctp" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '11px'}} />
+                  <div style={{marginBottom: 16, padding: 12, background: 'var(--bg3)', borderRadius: 6}}>
+                    <div style={{fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 8}}>Quick-pick BPF presets</div>
+                    <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
+                      {[
+                        ['sctp port 38412', 'NGAP'],
+                        ['udp port 2152', 'GTP-U'],
+                        ['udp port 8805', 'PFCP'],
+                        ['tcp port 7777', 'SBI'],
+                        ['net 10.45.0.0/16', 'UE Subnet'],
+                        ['sctp (all)', 'All SCTP']
+                      ].map(([filter_text, label]) => (
+                        <button key={filter_text} onClick={() => setPodForm(f => ({...f, filter: filter_text}))} style={{padding: '6px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text2)', fontSize: 11, fontFamily: 'var(--font-mono)', transition: 'all 0.2s', whiteSpace: 'nowrap'}} onMouseEnter={e => { e.target.style.borderColor = 'var(--accent)'; e.target.style.color = 'var(--accent)'; }} onMouseLeave={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--text2)'; }}>
+                          {filter_text}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <button className="button" onClick={handleStartPodCapture} disabled={starting || !podForm.pod} style={{width: '100%'}}>
