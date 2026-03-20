@@ -661,6 +661,265 @@ data:
           );
         }
 
+        // UE Management section - UERANSIM instances
+        function UEManagementSection() {
+          const [ues, setUes] = useState([]);
+          const [loading, setLoading] = useState(false);
+          const [showAddModal, setShowAddModal] = useState(false);
+          const [selectedUe, setSelectedUe] = useState(null);
+          const [showDetailsModal, setShowDetailsModal] = useState(false);
+          const [formData, setFormData] = useState({ imsi: '', k: '', opc: '' });
+          const [ueDetails, setUeDetails] = useState(null);
+
+          const fetchUEs = async () => {
+            setLoading(true);
+            try {
+              const res = await fetch('/api/ue-management');
+              if (!res.ok) throw new Error('Failed to fetch UEs');
+              const data = await res.json();
+              setUes(data.ues);
+            } catch (e) {
+              alert('Error: ' + e.message);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          React.useEffect(() => {
+            fetchUEs();
+            const interval = setInterval(fetchUEs, 5000);
+            return () => clearInterval(interval);
+          }, []);
+
+          const handleAddUE = async () => {
+            if (!formData.imsi) { alert('IMSI required'); return; }
+            try {
+              const res = await fetch('/api/ue-management', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(formData)
+              });
+              if (!res.ok) throw new Error('Failed to create UE');
+              setShowAddModal(false);
+              setFormData({ imsi: '', k: '', opc: '' });
+              fetchUEs();
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleDeleteUE = async (imsi) => {
+            if (!confirm(`Delete UE ${imsi}?`)) return;
+            try {
+              const res = await fetch(`/api/ue-management/${imsi}`, {method: 'DELETE'});
+              if (!res.ok) throw new Error('Failed to delete UE');
+              fetchUEs();
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleShowDetails = async (imsi) => {
+            try {
+              const [sessionsRes, nasRes] = await Promise.all([
+                fetch(`/api/ue-management/${imsi}/sessions`),
+                fetch(`/api/ue-management/${imsi}/nas-status`)
+              ]);
+              const sessions = await sessionsRes.json();
+              const nas = await nasRes.json();
+              setUeDetails({ imsi, sessions: sessions.sessions || [], nasStatus: nas.nasStatus || 'Unknown' });
+              setShowDetailsModal(true);
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleEstablishSession = async (imsi) => {
+            try {
+              const res = await fetch(`/api/ue-management/${imsi}/sessions`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ dnn: 'internet', sst: 1, sd: '000000' })
+              });
+              if (!res.ok) throw new Error('Failed to establish session');
+              alert('PDU session established');
+              handleShowDetails(imsi);
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleReleaseSession = async (imsi, psi) => {
+            try {
+              const res = await fetch(`/api/ue-management/${imsi}/sessions/${psi}`, {method: 'DELETE'});
+              if (!res.ok) throw new Error('Failed to release session');
+              handleShowDetails(imsi);
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleDeregister = async (imsi) => {
+            try {
+              const res = await fetch(`/api/ue-management/${imsi}/nas-deregister`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ method: 'normal' })
+              });
+              if (!res.ok) throw new Error('Failed to deregister');
+              alert('UE deregistered');
+              fetchUEs();
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          return (
+            <div>
+              <div className="stat-grid">
+                <div className="stat-card">
+                  <div className="stat-label">Active UEs</div>
+                  <div className="stat-value">{ues.length}</div>
+                  <div className="stat-sub">Running pods</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Connected</div>
+                  <div className="stat-value" style={{color: 'var(--success)'}}>{ues.filter(u => u.ready).length}</div>
+                  <div className="stat-sub">Ready status</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Sessions</div>
+                  <div className="stat-value">{ues.reduce((sum, u) => sum + u.sessions, 0)}</div>
+                  <div className="stat-sub">PDU sessions</div>
+                </div>
+              </div>
+
+              <div className="info-box">
+                <Icon name="antenna" /> <strong>UE Management:</strong> Create, manage, and control UERANSIM UE instances. PDU sessions, NAS status, registration procedures.
+              </div>
+
+              <div className="panel">
+                <h3><Icon name="antenna" /> UE Instances</h3>
+                <button className="button" onClick={() => setShowAddModal(true)} style={{marginBottom: 16}}><Icon name="check" /> + Add UE</button>
+
+                {loading ? (
+                  <div className="loading">Loading UEs...</div>
+                ) : ues.length === 0 ? (
+                  <div style={{fontSize: 12, color: 'var(--text2)', padding: '16px', textAlign: 'center'}}>No UEs running. Click "+ Add UE" to create.</div>
+                ) : (
+                  <div style={{overflowX: 'auto'}}>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>IMSI</th>
+                          <th>Pod Name</th>
+                          <th>Status</th>
+                          <th>NAS State</th>
+                          <th>Sessions</th>
+                          <th style={{textAlign: 'right'}}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ues.map(ue => (
+                          <tr key={ue.podName}>
+                            <td><strong>{ue.imsi}</strong></td>
+                            <td style={{fontSize: 11, color: 'var(--text2)'}}>{ue.podName}</td>
+                            <td><span className={`badge ${ue.ready ? 'success' : ue.status === 'Pending' ? 'warn' : 'danger'}`}>{ue.status}</span></td>
+                            <td><span style={{fontSize: 11, color: 'var(--accent)'}}>{ue.nasState}</span></td>
+                            <td>{ue.sessions} active</td>
+                            <td style={{textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end'}}>
+                              <button className="button small" onClick={() => handleShowDetails(ue.imsi)}>Details</button>
+                              <button className="button small" onClick={() => handleEstablishSession(ue.imsi)}>+ Session</button>
+                              <button className="button small danger" onClick={() => handleDeleteUE(ue.imsi)}>Delete</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {showAddModal && (
+                <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}}>
+                  <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 500, width: '90%'}}>
+                    <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>Create New UE</h2>
+                    <div className="form-group">
+                      <label>IMSI</label>
+                      <input type="text" value={formData.imsi} onChange={e => setFormData({...formData, imsi: e.target.value})} placeholder="001010000000099" />
+                    </div>
+                    <div className="form-group">
+                      <label>K (Auth Key)</label>
+                      <input type="text" value={formData.k} onChange={e => setFormData({...formData, k: e.target.value})} placeholder="fec86ba6eb707ed08ce33ae45b4a0fba" />
+                    </div>
+                    <div className="form-group">
+                      <label>OPc (Operator Key)</label>
+                      <input type="text" value={formData.opc} onChange={e => setFormData({...formData, opc: e.target.value})} placeholder="c42449363464e2e4fa8adca3063168ca" />
+                    </div>
+                    <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20}}>
+                      <button className="button" onClick={() => setShowAddModal(false)} style={{background: 'var(--muted)'}}>Cancel</button>
+                      <button className="button" onClick={handleAddUE}><Icon name="check" /> Create</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showDetailsModal && ueDetails && (
+                <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}}>
+                  <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 700, width: '90%', maxHeight: '80vh', overflowY: 'auto'}}>
+                    <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>UE Details: {ueDetails.imsi}</h2>
+
+                    <div style={{background: 'var(--bg3)', padding: 12, borderRadius: 6, marginBottom: 16}}>
+                      <div style={{fontSize: 12, color: 'var(--text2)', marginBottom: 8}}>NAS Status:</div>
+                      <div style={{fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--accent)', whiteSpace: 'pre-wrap', wordBreak: 'break-word'}}>
+                        {ueDetails.nasStatus || 'Fetching...'}
+                      </div>
+                    </div>
+
+                    <div style={{marginBottom: 16}}>
+                      <h3 style={{marginBottom: 8, fontSize: 14}}>PDU Sessions ({ueDetails.sessions.length})</h3>
+                      {ueDetails.sessions.length === 0 ? (
+                        <div style={{fontSize: 12, color: 'var(--text2)', padding: 8}}>No active sessions</div>
+                      ) : (
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>PSI</th>
+                              <th>State</th>
+                              <th>Type</th>
+                              <th>DNN</th>
+                              <th>IP</th>
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ueDetails.sessions.map((s, idx) => (
+                              <tr key={idx}>
+                                <td>{s.psi || idx}</td>
+                                <td><span className="badge success">{s.state}</span></td>
+                                <td>{s.type}</td>
+                                <td>{s.dnn}</td>
+                                <td style={{fontSize: 10, fontFamily: 'var(--font-mono)'}}>{s.ip}</td>
+                                <td><button className="button small danger" onClick={() => handleReleaseSession(ueDetails.imsi, s.psi)}>Release</button></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+
+                    <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end'}}>
+                      <button className="button" onClick={() => handleEstablishSession(ueDetails.imsi)}>+ Establish Session</button>
+                      <button className="button" onClick={() => handleDeregister(ueDetails.imsi)} style={{background: 'var(--warn)'}}>Deregister</button>
+                      <button className="button" onClick={() => setShowDetailsModal(false)} style={{background: 'var(--muted)'}}>Close</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
         // Monitoring section
         function MonitoringSection({ status }) {
           const [metrics, setMetrics] = useState({
@@ -806,6 +1065,9 @@ data:
                     <div className={`tab ${page === 'subscribers' ? 'active' : ''}`} onClick={() => setPage('subscribers')} style={{cursor: 'pointer'}}>
                       <Icon name="database" /> Subscribers
                     </div>
+                    <div className={`tab ${page === 'ue-mgmt' ? 'active' : ''}`} onClick={() => setPage('ue-mgmt')} style={{cursor: 'pointer'}}>
+                      <Icon name="antenna" /> UE Management
+                    </div>
                     <div className={`tab ${page === 'monitoring' ? 'active' : ''}`} onClick={() => setPage('monitoring')} style={{cursor: 'pointer'}}>
                       <Icon name="chart" /> Monitoring
                     </div>
@@ -827,6 +1089,9 @@ data:
                     </div>
                     <div className={`section ${page === 'subscribers' ? 'active' : ''}`}>
                       <SubscriberManagement />
+                    </div>
+                    <div className={`section ${page === 'ue-mgmt' ? 'active' : ''}`}>
+                      <UEManagementSection />
                     </div>
                     <div className={`section ${page === 'monitoring' ? 'active' : ''}`}>
                       <MonitoringSection status={status} />

@@ -461,6 +461,230 @@ data:
       }
     });
 
+    // ============================================
+    // UE MANAGEMENT (UERANSIM Pods)
+    // ============================================
+
+    // Helper: Run command in UE pod via kubectl exec
+    async function execInUePod(podName, cmd) {
+      return new Promise((resolve, reject) => {
+        const proc = spawn('kubectl', [
+          'exec', podName,
+          '-n', ns,
+          '--', 'sh', '-c', cmd
+        ]);
+        let stdout = '', stderr = '';
+        proc.stdout.on('data', data => stdout += data);
+        proc.stderr.on('data', data => stderr += data);
+        proc.on('close', code => {
+          if (code === 0) resolve(stdout.trim());
+          else reject(new Error(`Command failed: ${stderr || stdout}`));
+        });
+      });
+    }
+
+    // GET /ue-management - List all running UE pods
+    app.get('/ue-management', async (req, res) => {
+      try {
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, 'app=ueransim-ue');
+        const ueList = await Promise.all(pods.body.items.map(async (pod) => {
+          const imsi = pod.metadata.labels?.imsi || 'unknown';
+          const podName = pod.metadata.name;
+          let sessions = [], nasStatus = { cm_state: 'unknown', mm_state: 'unknown', rm_state: 'unknown' };
+
+          try {
+            const sessionsOut = await execInUePod(podName, 'nr-cli ps-list 2>/dev/null || echo "[]"');
+            sessions = JSON.parse(sessionsOut.replace(/^.*\[/, '[').replace(/\].*$/, ']') || []);
+          } catch (e) {}
+
+          try {
+            const statusOut = await execInUePod(podName, 'nr-cli status 2>/dev/null || echo ""');
+            const match = statusOut.match(/CM-State\s*:\s*(\w+)/i);
+            if (match) nasStatus.cm_state = match[1];
+          } catch (e) {}
+
+          return {
+            imsi,
+            podName,
+            status: pod.status?.phase || 'Unknown',
+            createdAt: pod.metadata.creationTimestamp,
+            ready: pod.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True',
+            sessions: sessions.length,
+            nasState: nasStatus.cm_state
+          };
+        }));
+
+        res.json({ status: 'ok', ues: ueList });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /ue-management - Create new UE pod
+    app.post('/ue-management', async (req, res) => {
+      try {
+        const { imsi, k, opc } = req.body;
+        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
+
+        // Generate UE YAML config
+        const ueYaml = `
+mcc: '001'
+mnc: '01'
+key: '${k || 'fec86ba6eb707ed08ce33ae45b4a0fba'}'
+op: '${opc || 'c42449363464e2e4fa8adca3063168ca'}'
+amf: 'c3d4'
+imei: '356938035643803'
+imeiSv: '8944'
+supi: 'imsi-${imsi}'
+supiType: 'imsi'
+`
+.trim();
+
+        // Create pod manifest
+        const podName = `ueransim-ue-${imsi.slice(-4)}-${Math.random().toString(36).substr(2, 5)}`;
+        const deployment = {
+          apiVersion: 'apps/v1',
+          kind: 'Deployment',
+          metadata: { name: `ue-${imsi.slice(-4)}`, namespace: ns, labels: { app: 'ueransim-ue', imsi } },
+          spec: {
+            replicas: 1,
+            selector: { matchLabels: { app: 'ueransim-ue', imsi } },
+            template: {
+              metadata: { labels: { app: 'ueransim-ue', imsi }, annotations: { imsi } },
+              spec: {
+                containers: [{
+                  name: 'ue',
+                  image: 'gradiant/ueransim:3.2.6',
+                  command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml'],
+                  securityContext: { capabilities: { add: ['NET_ADMIN'] } },
+                  volumeMounts: [{ name: 'config', mountPath: '/etc/ueransim', readOnly: true }],
+                  resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '200m', memory: '256Mi' } }
+                }],
+                volumes: [{
+                  name: 'config',
+                  configMap: { name: `ue-config-${imsi.slice(-4)}`, items: [{ key: 'ue.yaml', path: 'ue.yaml' }] }
+                }]
+              }
+            }
+          }
+        };
+
+        // Create ConfigMap for UE config
+        const configMap = {
+          apiVersion: 'v1',
+          kind: 'ConfigMap',
+          metadata: { name: `ue-config-${imsi.slice(-4)}`, namespace: ns },
+          data: { 'ue.yaml': ueYaml }
+        };
+
+        // Apply both
+        await k8sApi.createNamespacedConfigMap(ns, configMap);
+        await appsApi.createNamespacedDeployment(ns, deployment);
+
+        res.json({ status: 'ok', message: `UE ${imsi} created`, deployment: deployment.metadata.name });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // DELETE /ue-management/:imsi - Delete UE pod
+    app.delete('/ue-management/:imsi', async (req, res) => {
+      try {
+        const { imsi } = req.params;
+        await appsApi.deleteNamespacedDeployment(`ue-${imsi.slice(-4)}`, ns);
+        await k8sApi.deleteNamespacedConfigMap(`ue-config-${imsi.slice(-4)}`, ns);
+        res.json({ status: 'ok', message: `UE ${imsi} deleted` });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /ue-management/:imsi/sessions - List PDU sessions
+    app.get('/ue-management/:imsi/sessions', async (req, res) => {
+      try {
+        const { imsi } = req.params;
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
+
+        const podName = pods.body.items[0].metadata.name;
+        const output = await execInUePod(podName, 'nr-cli ps-list 2>/dev/null || echo "[]"');
+        const sessions = JSON.parse(output.replace(/^.*\[/, '[').replace(/\].*$/, ']') || []);
+
+        res.json({ status: 'ok', imsi, sessions });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /ue-management/:imsi/sessions - Establish PDU session
+    app.post('/ue-management/:imsi/sessions', async (req, res) => {
+      try {
+        const { imsi } = req.params;
+        const { dnn = 'internet', sst = 1, sd = '000000' } = req.body;
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
+
+        const podName = pods.body.items[0].metadata.name;
+        const cmd = `nr-cli ps-establish --dnn ${dnn} --sst ${sst} --sd ${sd}`;
+        const output = await execInUePod(podName, cmd);
+
+        res.json({ status: 'ok', message: 'PDU session established', output });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // DELETE /ue-management/:imsi/sessions/:psi - Release specific session
+    app.delete('/ue-management/:imsi/sessions/:psi', async (req, res) => {
+      try {
+        const { imsi, psi } = req.params;
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
+
+        const podName = pods.body.items[0].metadata.name;
+        const cmd = `nr-cli ps-release --psi ${psi}`;
+        const output = await execInUePod(podName, cmd);
+
+        res.json({ status: 'ok', message: 'PDU session released', output });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /ue-management/:imsi/nas-status - Check NAS status
+    app.get('/ue-management/:imsi/nas-status', async (req, res) => {
+      try {
+        const { imsi } = req.params;
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
+
+        const podName = pods.body.items[0].metadata.name;
+        const output = await execInUePod(podName, 'nr-cli status 2>/dev/null || echo ""');
+
+        res.json({ status: 'ok', imsi, nasStatus: output });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /ue-management/:imsi/nas-deregister - Deregister UE
+    app.post('/ue-management/:imsi/nas-deregister', async (req, res) => {
+      try {
+        const { imsi } = req.params;
+        const { method = 'normal' } = req.body; // normal, switch-off, disable-5g
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
+
+        const podName = pods.body.items[0].metadata.name;
+        const cmd = `nr-cli --dump /tmp/ue.yaml imsi-deregister --method ${method}`;
+        const output = await execInUePod(podName, cmd);
+
+        res.json({ status: 'ok', message: `UE deregistered (${method})`, output });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // Health check
     app.get('/health', (req, res) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });

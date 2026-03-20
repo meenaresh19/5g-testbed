@@ -10,7 +10,10 @@
       "Bash(wsl --list -v)",
       "Bash(docker --version)",
       "Bash(git push:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(/tmp/verify_open5gs.md:*)",
+      "Read(//tmp/**)",
+      "Bash(/tmp/ue_procedures_needed.md:*)"
     ]
   }
 }
