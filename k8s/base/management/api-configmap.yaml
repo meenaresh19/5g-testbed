@@ -174,45 +174,128 @@ data:
       }
     });
 
-    // UE Management endpoints
-    // Stub implementation - would connect to MongoDB in production
-    const mockUEs = [
-      { imsi: '001010000000001', k: 'fec86ba6eb707ed08ce33ae45b4a0fba', opc: 'c42449363464e2e4fa8adca3063168ca', registered: true }
-    ];
+    // MongoDB client setup (for UE management)
+    const { MongoClient } = require('mongodb');
+    const MONGO_URI = process.env.MONGO_URI || 'mongodb://mongodb.5g-testbed.svc.cluster.local:27017';
+    const MONGO_DB = 'open5gs';
+    let mongoClient = null;
+    let db = null;
 
-    // GET /ue - List all UEs
-    app.get('/ue', (req, res) => {
-      res.json({ status: 'ok', ues: mockUEs, count: mockUEs.length });
-    });
-
-    // POST /ue/add - Add new UE
-    app.post('/ue/add', (req, res) => {
+    // Connect to MongoDB
+    async function connectMongo() {
       try {
-        const { imsi, k, opc } = req.body;
-        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
+        mongoClient = new MongoClient(MONGO_URI);
+        await mongoClient.connect();
+        db = mongoClient.db(MONGO_DB);
+        console.log('[testbed-api] Connected to MongoDB');
+      } catch (e) {
+        console.error('[testbed-api] MongoDB connection failed:', e.message);
+        db = null;
+      }
+    }
 
-        // TODO: Write to MongoDB (open5gs database, subscribers collection)
-        const newUE = { imsi, k: k || 'fec86ba6eb707ed08ce33ae45b4a0fba', opc: opc || 'c42449363464e2e4fa8adca3063168ca', registered: false };
-        mockUEs.push(newUE);
+    connectMongo();
 
-        res.json({ status: 'ok', message: `UE ${imsi} added`, ue: newUE });
+    // GET /ue - List all UEs from MongoDB
+    app.get('/ue', async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
+        const subscribers = db.collection('subscribers');
+        const ues = await subscribers.find({}).toArray();
+
+        res.json({
+          status: 'ok',
+          count: ues.length,
+          ues: ues.map(u => ({
+            imsi: u.imsi,
+            k: u.security?.k || 'N/A',
+            opc: u.security?.opc || 'N/A',
+            registered: !!u.slice,
+            slices: u.slice || []
+          }))
+        });
       } catch (e) {
         res.status(500).json({ error: e.message });
       }
     });
 
-    // DELETE /ue/delete - Delete UE by IMSI
-    app.delete('/ue/delete', (req, res) => {
+    // POST /ue/add - Add new UE to MongoDB
+    app.post('/ue/add', async (req, res) => {
       try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
+        const { imsi, k, opc } = req.body;
+        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
+
+        const subscribers = db.collection('subscribers');
+
+        // Check if IMSI already exists
+        const existing = await subscribers.findOne({ imsi });
+        if (existing) return res.status(409).json({ error: 'IMSI already exists' });
+
+        // Create new subscriber document (Open5GS schema)
+        const newSubscriber = {
+          imsi: imsi,
+          pdn: [
+            {
+              type: 0,
+              apn: 'internet',
+              slice: [{ sst: 1, sd: '000000' }]
+            }
+          ],
+          slice: [
+            { sst: 1, sd: '000000' }
+          ],
+          security: {
+            k: k || 'fec86ba6eb707ed08ce33ae45b4a0fba',
+            opc: opc || 'c42449363464e2e4fa8adca3063168ca',
+            amf: 'c3d4'
+          },
+          ambr: {
+            uplink: 1000000,
+            downlink: 1000000
+          },
+          subscribed_rau_tau_timer: 12
+        };
+
+        const result = await subscribers.insertOne(newSubscriber);
+
+        res.json({
+          status: 'ok',
+          message: `UE ${imsi} added to MongoDB`,
+          ue: {
+            imsi: newSubscriber.imsi,
+            k: newSubscriber.security.k,
+            opc: newSubscriber.security.opc,
+            registered: true
+          }
+        });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // DELETE /ue/delete - Delete UE from MongoDB
+    app.delete('/ue/delete', async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
         const { imsi } = req.query;
         if (!imsi) return res.status(400).json({ error: 'IMSI required' });
 
-        // TODO: Delete from MongoDB (open5gs database, subscribers collection)
-        const idx = mockUEs.findIndex(u => u.imsi === imsi);
-        if (idx === -1) return res.status(404).json({ error: 'UE not found' });
+        const subscribers = db.collection('subscribers');
+        const result = await subscribers.deleteOne({ imsi });
 
-        const deleted = mockUEs.splice(idx, 1);
-        res.json({ status: 'ok', message: `UE ${imsi} deleted`, ue: deleted[0] });
+        if (result.deletedCount === 0) {
+          return res.status(404).json({ error: 'UE not found' });
+        }
+
+        res.json({
+          status: 'ok',
+          message: `UE ${imsi} deleted from MongoDB`,
+          deleted: 1
+        });
       } catch (e) {
         res.status(500).json({ error: e.message });
       }
@@ -244,6 +327,7 @@ data:
       "dependencies": {
         "express": "^4.18.2",
         "cors": "^2.8.5",
-        "@kubernetes/client-node": "^0.20.0"
+        "@kubernetes/client-node": "^0.20.0",
+        "mongodb": "^5.9.0"
       }
     }

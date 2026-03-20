@@ -36,15 +36,16 @@ resources:
   - management/nginx-configmap.yaml
   - management/service.yaml
 
-  # Observability (Prometheus, Grafana, Loki) - Phase 4
-  # - observability/configmap.yaml
-  # - observability/prometheus-deployment.yaml
-  # - observability/grafana-deployment.yaml
-  # - observability/loki-statefulset.yaml
-  # - observability/promtail-daemonset.yaml
-  # - observability/cadvisor-daemonset.yaml
-  # - observability/pvc.yaml
-  # - observability/service.yaml
+  # Observability (Prometheus, Grafana) - Phase 4 ✅ ENABLED
+  - observability/prometheus-configmap.yaml
+  - observability/prometheus-rbac.yaml
+  - observability/prometheus-pvc.yaml
+  - observability/prometheus-deployment.yaml
+  - observability/prometheus-service.yaml
+  - observability/grafana-configmap.yaml
+  - observability/grafana-pvc.yaml
+  - observability/grafana-deployment.yaml
+  - observability/grafana-service.yaml
 
   # IDS (Zeek, Scapy)
   # - ids/configmap.yaml
@@ -74,3 +75,7 @@ images:
   - name: towards5gs/ueransim
     newName: gradiant/ueransim
     newTag: "3.2.6"
+  - name: prom/prometheus
+    newTag: "latest"
+  - name: grafana/grafana
+    newTag: "latest"

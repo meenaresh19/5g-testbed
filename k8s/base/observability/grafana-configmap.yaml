@@ -1,0 +1,166 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: 5g-testbed
+data:
+  # Grafana datasource provisioning
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus.5g-testbed.svc.cluster.local:9090
+      isDefault: true
+      editable: true
+
+  # Core Network Metrics Dashboard
+  core-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "5G Core Network Metrics",
+        "tags": ["5g", "core", "nfs"],
+        "timezone": "utc",
+        "panels": [
+          {
+            "title": "Registered UEs",
+            "targets": [
+              {"expr": "fivegs_amf_registered_ue_nbr"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Active Sessions",
+            "targets": [
+              {"expr": "fivegs_smf_session_nbr"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "AMF CPU",
+            "targets": [
+              {"expr": "container_cpu_usage_seconds_total{pod=~'open5gs-amf.*'}"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "SMF CPU",
+            "targets": [
+              {"expr": "container_cpu_usage_seconds_total{pod=~'open5gs-smf.*'}"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "UPF DL Throughput",
+            "targets": [
+              {"expr": "rate(fivegs_upf_dl_bytes_total[1m])"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "UPF UL Throughput",
+            "targets": [
+              {"expr": "rate(fivegs_upf_ul_bytes_total[1m])"}
+            ],
+            "type": "graph"
+          }
+        ]
+      }
+    }
+
+  # RAN Metrics Dashboard
+  ran-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "5G RAN Metrics",
+        "tags": ["5g", "ran", "ueransim"],
+        "timezone": "utc",
+        "panels": [
+          {
+            "title": "gNB Status",
+            "targets": [
+              {"expr": "up{job='ueransim-gnb'}"}
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "UE1 Status",
+            "targets": [
+              {"expr": "up{pod=~'ueransim-ue1.*'}"}
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "N2 NGAP Connections",
+            "targets": [
+              {"expr": "increase(fivegs_amf_ngap_connections_total[5m])"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "gNB Memory",
+            "targets": [
+              {"expr": "container_memory_usage_bytes{pod=~'ueransim-gnb.*'}"}
+            ],
+            "type": "graph"
+          }
+        ]
+      }
+    }
+
+  # System Metrics Dashboard
+  system-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "5G System Metrics",
+        "tags": ["5g", "system", "kubernetes"],
+        "timezone": "utc",
+        "panels": [
+          {
+            "title": "Node CPU Usage",
+            "targets": [
+              {"expr": "100 - (avg(rate(node_cpu_seconds_total{mode='idle'}[5m])) * 100)"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Node Memory Usage",
+            "targets": [
+              {"expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))"}
+            ],
+            "type": "graph"
+          },
+          {
+            "title": "Pod Count",
+            "targets": [
+              {"expr": "count(kube_pod_info{namespace='5g-testbed'})"}
+            ],
+            "type": "stat"
+          },
+          {
+            "title": "Container Restarts",
+            "targets": [
+              {"expr": "increase(kube_pod_container_status_restarts_total{namespace='5g-testbed'}[1h])"}
+            ],
+            "type": "table"
+          }
+        ]
+      }
+    }
+
+  # Grafana configuration
+  grafana.ini: |
+    [server]
+    http_port = 3000
+    domain = localhost
+    root_url = %(protocol)s://%(domain)s:%(http_port)s/
+    [security]
+    admin_user = admin
+    admin_password = admin123
+    [users]
+    allow_sign_up = false
+    [auth.basic]
+    enabled = true
+    [auth.anonymous]
+    enabled = false
