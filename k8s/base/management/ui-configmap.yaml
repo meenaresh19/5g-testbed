@@ -626,8 +626,24 @@ data:
                               </select>
                             </div>
                           </div>
-                          <div style={{fontSize: 9, color: 'var(--text3)', padding: 6, background: 'rgba(0,200,255,0.05)', borderRadius: 3}}>
-                            Slices: {pdn.slice?.map(s => `SST=${s.sst}`).join(', ') || 'SST=1'}
+                          <div style={{marginTop: 8}}>
+                            <label style={{fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 4, fontWeight: 600}}>Slices (S-NSSAI)</label>
+                            {(pdn.slice || []).map((slice, sidx) => (
+                              <div key={sidx} style={{display: 'grid', gridTemplateColumns: '100px 100px 50px', gap: 6, marginBottom: 6}}>
+                                <div>
+                                  <label style={{fontSize: 9, color: 'var(--text3)', display: 'block', marginBottom: 2}}>SST</label>
+                                  <input type="number" value={slice.sst || 1} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx].slice[sidx] = {...slice, sst: parseInt(e.target.value)}; setFormData({...formData, pdn: newPdn}); }} min="0" max="255" style={{width: '100%', fontSize: 10}} />
+                                </div>
+                                <div>
+                                  <label style={{fontSize: 9, color: 'var(--text3)', display: 'block', marginBottom: 2}}>SD (hex)</label>
+                                  <input type="text" value={slice.sd || '000000'} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx].slice[sidx] = {...slice, sd: e.target.value}; setFormData({...formData, pdn: newPdn}); }} placeholder="000000" style={{width: '100%', fontSize: 10}} />
+                                </div>
+                                <div style={{display: 'flex', alignItems: 'flex-end'}}>
+                                  <button className="button small danger" onClick={() => { const newPdn = [...formData.pdn]; newPdn[idx].slice = pdn.slice.filter((_, s) => s !== sidx); setFormData({...formData, pdn: newPdn}); }} style={{width: '100%', fontSize: 9, padding: '2px'}}>×</button>
+                                </div>
+                              </div>
+                            ))}
+                            <button className="button small" onClick={() => { const newPdn = [...formData.pdn]; if (!newPdn[idx].slice) newPdn[idx].slice = []; newPdn[idx].slice.push({sst: 1, sd: '000000'}); setFormData({...formData, pdn: newPdn}); }} style={{width: '100%', fontSize: 9, marginTop: 4}}>+ Add Slice</button>
                           </div>
                         </div>
                       ))}
