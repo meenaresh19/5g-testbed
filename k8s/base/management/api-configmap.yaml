@@ -527,18 +527,17 @@ data:
         if (!imsi) return res.status(400).json({ error: 'IMSI required' });
 
         // Generate UE YAML config
-        const ueYaml = `
-mcc: '001'
-mnc: '01'
-key: '${k || 'fec86ba6eb707ed08ce33ae45b4a0fba'}'
-op: '${opc || 'c42449363464e2e4fa8adca3063168ca'}'
-amf: 'c3d4'
-imei: '356938035643803'
-imeiSv: '8944'
-supi: 'imsi-${imsi}'
-supiType: 'imsi'
-`
-.trim();
+        const ueYaml = [
+          "mcc: '001'",
+          "mnc: '01'",
+          `key: '${k || 'fec86ba6eb707ed08ce33ae45b4a0fba'}'`,
+          `op: '${opc || 'c42449363464e2e4fa8adca3063168ca'}'`,
+          "amf: 'c3d4'",
+          "imei: '356938035643803'",
+          "imeiSv: '8944'",
+          `supi: 'imsi-${imsi}'`,
+          "supiType: 'imsi'",
+        ].join('\n');
 
         // Create pod manifest
         const podName = `ueransim-ue-${imsi.slice(-4)}-${Math.random().toString(36).substr(2, 5)}`;
