@@ -10,6 +10,8 @@ data:
     const cors = require('cors');
     const k8s = require('@kubernetes/client-node');
     const { spawn } = require('child_process');
+    const bcrypt = require('bcryptjs');
+    const jwt    = require('jsonwebtoken');
 
     const app = express();
     app.use(cors());
@@ -25,6 +27,8 @@ data:
 
     const NAMESPACE = 'default';  // Override with env var
     const ns = process.env.K8S_NAMESPACE || '5g-testbed';
+    const JWT_SECRET      = process.env.JWT_SECRET      || 'testbed-dev-secret-change-in-prod';
+    const ADMIN_PASSWORD  = process.env.ADMIN_PASSWORD  || 'admin123';
 
     // Helper: Get pod by NF name
     async function getPodByNf(nfId) {
@@ -66,7 +70,7 @@ data:
 
     // Routes
 
-    // GET /status - List all NFs and their status
+    // GET /status - List all NFs and their status (no auth — used by K8s readiness probe)
     app.get('/status', async (req, res) => {
       try {
         const nfs = await getAllNfs();
@@ -81,7 +85,7 @@ data:
     });
 
     // POST /nf/:id/start - Scale up NF to 1 replica
-    app.post('/nf/:id/start', async (req, res) => {
+    app.post('/nf/:id/start', authenticateToken, requireAdmin, async (req, res) => {
       try {
         const { id } = req.params;
         const result = await scaleNf(id, 1);
@@ -92,7 +96,7 @@ data:
     });
 
     // POST /nf/:id/stop - Scale down NF to 0 replicas
-    app.post('/nf/:id/stop', async (req, res) => {
+    app.post('/nf/:id/stop', authenticateToken, requireAdmin, async (req, res) => {
       try {
         const { id } = req.params;
         const result = await scaleNf(id, 0);
@@ -103,7 +107,7 @@ data:
     });
 
     // GET /nf/:id/logs - Get logs from NF pod
-    app.get('/nf/:id/logs', async (req, res) => {
+    app.get('/nf/:id/logs', authenticateToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { lines = 100 } = req.query;
@@ -144,7 +148,7 @@ data:
     });
 
     // Prometheus proxy endpoints (for metrics queries)
-    app.get('/metrics/query', async (req, res) => {
+    app.get('/metrics/query', authenticateToken, async (req, res) => {
       try {
         const { query } = req.query;
         if (!query) return res.status(400).json({ error: 'query param required' });
@@ -158,7 +162,7 @@ data:
       }
     });
 
-    app.get('/metrics/query_range', async (req, res) => {
+    app.get('/metrics/query_range', authenticateToken, async (req, res) => {
       try {
         const { query, minutes = 30, step = 30 } = req.query;
         if (!query) return res.status(400).json({ error: 'query param required' });
@@ -197,8 +201,133 @@ data:
 
     connectMongo();
 
+    async function seedAdminUser() {
+      try {
+        if (!db) return;
+        const users = db.collection('testbed_users');
+        const existing = await users.findOne({ username: 'admin' });
+        if (!existing) {
+          const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+          await users.insertOne({
+            username: 'admin',
+            passwordHash: hash,
+            role: 'admin',
+            createdAt: new Date().toISOString()
+          });
+          console.log('[AUTH] Admin user seeded (username: admin)');
+        }
+      } catch (e) {
+        console.error('[AUTH] Seed error:', e.message);
+      }
+    }
+    setTimeout(seedAdminUser, 3000); // wait for mongo connection
+
+    // JWT auth middleware
+    function authenticateToken(req, res, next) {
+      const token = (req.headers['authorization'] || '').split(' ')[1];
+      if (!token) return res.status(401).json({ error: 'Authentication required' });
+      try {
+        req.user = jwt.verify(token, JWT_SECRET);
+        next();
+      } catch (e) {
+        res.status(401).json({ error: 'Invalid or expired token' });
+      }
+    }
+
+    function requireAdmin(req, res, next) {
+      if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+      next();
+    }
+
+    // ── Auth & User Management ─────────────────────────────────
+
+    // POST /auth/login
+    app.post('/auth/login', async (req, res) => {
+      try {
+        const { username, password } = req.body || {};
+        if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+        if (!db) return res.status(503).json({ error: 'Database not ready' });
+        const users = db.collection('testbed_users');
+        const user = await users.findOne({ username });
+        if (!user || !bcrypt.compareSync(password, user.passwordHash))
+          return res.status(401).json({ error: 'Invalid credentials' });
+        const token = jwt.sign(
+          { id: user._id.toString(), username: user.username, role: user.role },
+          JWT_SECRET,
+          { expiresIn: '24h' }
+        );
+        res.json({ token, user: { id: user._id.toString(), username: user.username, role: user.role } });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /auth/me
+    app.get('/auth/me', authenticateToken, (req, res) => {
+      res.json({ user: req.user });
+    });
+
+    // GET /users (admin only)
+    app.get('/users', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const users = db.collection('testbed_users');
+        const list = await users.find({}).toArray();
+        res.json(list.map(u => ({ id: u._id.toString(), username: u.username, role: u.role, createdAt: u.createdAt })));
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /users (admin only)
+    app.post('/users', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { username, password, role = 'researcher' } = req.body || {};
+        if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+        const users = db.collection('testbed_users');
+        if (await users.findOne({ username })) return res.status(409).json({ error: 'Username already exists' });
+        const hash = bcrypt.hashSync(password, 10);
+        const result = await users.insertOne({ username, passwordHash: hash, role, createdAt: new Date().toISOString() });
+        res.json({ id: result.insertedId.toString(), username, role });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // DELETE /users/:id (admin only, cannot delete self)
+    app.delete('/users/:id', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { ObjectId } = require('mongodb');
+        if (req.params.id === req.user.id) return res.status(400).json({ error: 'Cannot delete your own account' });
+        const users = db.collection('testbed_users');
+        const user = await users.findOne({ _id: new ObjectId(req.params.id) });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        if (user.username === 'admin') return res.status(400).json({ error: 'Cannot delete the admin account' });
+        await users.deleteOne({ _id: new ObjectId(req.params.id) });
+        res.json({ success: true });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // PUT /auth/password (self-service password change)
+    app.put('/auth/password', authenticateToken, async (req, res) => {
+      try {
+        const { currentPassword, newPassword } = req.body || {};
+        if (!currentPassword || !newPassword) return res.status(400).json({ error: 'currentPassword and newPassword required' });
+        const { ObjectId } = require('mongodb');
+        const users = db.collection('testbed_users');
+        const user = await users.findOne({ _id: new ObjectId(req.user.id) });
+        if (!user || !bcrypt.compareSync(currentPassword, user.passwordHash))
+          return res.status(401).json({ error: 'Current password incorrect' });
+        await users.updateOne({ _id: new ObjectId(req.user.id) }, { $set: { passwordHash: bcrypt.hashSync(newPassword, 10) } });
+        res.json({ success: true });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // GET /ue - List all UEs from MongoDB
-    app.get('/ue', async (req, res) => {
+    app.get('/ue', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
 
@@ -222,7 +351,7 @@ data:
     });
 
     // POST /ue/add - Add new UE to MongoDB
-    app.post('/ue/add', async (req, res) => {
+    app.post('/ue/add', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
 
@@ -278,7 +407,7 @@ data:
     });
 
     // DELETE /ue/delete - Delete UE from MongoDB
-    app.delete('/ue/delete', async (req, res) => {
+    app.delete('/ue/delete', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
 
@@ -349,7 +478,7 @@ data:
     });
 
     // GET /subscribers - List all subscribers with pagination/search
-    app.get('/subscribers', async (req, res) => {
+    app.get('/subscribers', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
 
@@ -391,7 +520,7 @@ data:
     });
 
     // POST /subscribers/export - Export subscribers as JSON
-    app.get('/subscribers/export', async (req, res) => {
+    app.get('/subscribers/export', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
 
@@ -407,7 +536,7 @@ data:
     });
 
     // POST /subscribers/import - Bulk import subscribers
-    app.post('/subscribers/import', async (req, res) => {
+    app.post('/subscribers/import', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
 
@@ -486,7 +615,7 @@ data:
     }
 
     // GET /ue-management - List all running UE pods
-    app.get('/ue-management', async (req, res) => {
+    app.get('/ue-management', authenticateToken, async (req, res) => {
       try {
         const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, 'app=ueransim-ue');
         const ueList = await Promise.all(pods.body.items.map(async (pod) => {
@@ -523,7 +652,7 @@ data:
     });
 
     // POST /ue-management - Create new UE pod
-    app.post('/ue-management', async (req, res) => {
+    app.post('/ue-management', authenticateToken, async (req, res) => {
       try {
         const { imsi, k, opc } = req.body;
         if (!imsi) return res.status(400).json({ error: 'IMSI required' });
@@ -626,7 +755,7 @@ data:
     });
 
     // DELETE /ue-management/:imsi - Delete UE pod
-    app.delete('/ue-management/:imsi', async (req, res) => {
+    app.delete('/ue-management/:imsi', authenticateToken, async (req, res) => {
       try {
         const { imsi } = req.params;
         await appsApi.deleteNamespacedDeployment(`ue-${imsi.slice(-4)}`, ns);
@@ -786,7 +915,7 @@ data:
     }
 
     // GET /pcap/pods - List pods available for capture
-    app.get('/pcap/pods', async (req, res) => {
+    app.get('/pcap/pods', authenticateToken, async (req, res) => {
       try {
         const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined);
         const result = pods.body.items
@@ -805,14 +934,14 @@ data:
     });
 
     // GET /pcap/sessions - List sessions (filter by ?type=interface|pod)
-    app.get('/pcap/sessions', (req, res) => {
+    app.get('/pcap/sessions', authenticateToken, (req, res) => {
       const { type } = req.query;
       const result = type ? captureSessions.filter(s => s.type === type) : captureSessions;
       res.json({ sessions: result.map(({ ws, timeout, ...safe }) => safe) });
     });
 
     // POST /pcap/start - Start capture (single interface session or multiple pod sessions)
-    app.post('/pcap/start', async (req, res) => {
+    app.post('/pcap/start', authenticateToken, async (req, res) => {
       try {
         let { type = 'pod', pod, container, pods: podsList,
               interface: iface = 'any', filter = '', duration = 60 } = req.body;
@@ -845,7 +974,7 @@ data:
     });
 
     // POST /pcap/stop/:id - Stop a capture session
-    app.post('/pcap/stop/:id', (req, res) => {
+    app.post('/pcap/stop/:id', authenticateToken, (req, res) => {
       const session = captureSessions.find(s => s.id === req.params.id);
       if (!session) return res.status(404).json({ error: 'Session not found' });
       try {
@@ -861,7 +990,7 @@ data:
     });
 
     // GET /pcap/download/:id - Download PCAP file
-    app.get('/pcap/download/:id', (req, res) => {
+    app.get('/pcap/download/:id', authenticateToken, (req, res) => {
       const session = captureSessions.find(s => s.id === req.params.id);
       if (!session) return res.status(404).json({ error: 'Session not found' });
       if (!existsSync(session.filePath)) return res.status(404).json({ error: 'PCAP file not found' });
@@ -869,7 +998,7 @@ data:
     });
 
     // DELETE /pcap/sessions/:id - Delete a session
-    app.delete('/pcap/sessions/:id', (req, res) => {
+    app.delete('/pcap/sessions/:id', authenticateToken, (req, res) => {
       const session = captureSessions.find(s => s.id === req.params.id);
       if (!session) return res.status(404).json({ error: 'Session not found' });
       try {
@@ -910,6 +1039,8 @@ data:
         "express": "^4.18.2",
         "cors": "^2.8.5",
         "@kubernetes/client-node": "^0.20.0",
-        "mongodb": "^5.9.0"
+        "mongodb": "^5.9.0",
+        "bcryptjs": "^2.4.3",
+        "jsonwebtoken": "^9.0.2"
       }
     }

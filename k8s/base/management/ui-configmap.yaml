@@ -187,6 +187,16 @@ data:
       <script type="text/babel">
         const { useState, useEffect } = React;
 
+        function apiFetch(url, opts = {}) {
+          const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+          const t = window.__authToken;
+          if (t) headers['Authorization'] = `Bearer ${t}`;
+          return fetch(url, { ...opts, headers }).then(r => {
+            if (r.status === 401 && window.__handleLogout) window.__handleLogout();
+            return r;
+          });
+        }
+
         // Icon component
         const Icon = ({ name }) => {
           const icons = {
@@ -331,7 +341,7 @@ data:
             setLoading(true);
             try {
               const query = new URLSearchParams({ search: searchTerm, page: pageNum, limit: 25 });
-              const res = await fetch(`/api/subscribers?${query}`);
+              const res = await apiFetch(`/api/subscribers?${query}`);
               if (!res.ok) throw new Error('Failed to fetch');
               const data = await res.json();
               setSubscribers(data.data);
@@ -380,7 +390,7 @@ data:
 
           const handleEdit = async (imsi) => {
             try {
-              const res = await fetch(`/api/subscriber/${imsi}`);
+              const res = await apiFetch(`/api/subscriber/${imsi}`);
               if (!res.ok) throw new Error('Failed to fetch');
               const data = await res.json();
               setEditingSubscriber(imsi);
@@ -396,7 +406,7 @@ data:
             try {
               const method = editingSubscriber ? 'PUT' : 'POST';
               const url = editingSubscriber ? `/api/subscriber/${editingSubscriber}` : '/api/ue/add';
-              const res = await fetch(url, {
+              const res = await apiFetch(url, {
                 method,
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(formData)
@@ -412,7 +422,7 @@ data:
           const handleDelete = async (imsi) => {
             if (!confirm(`Delete ${imsi}?`)) return;
             try {
-              const res = await fetch(`/api/ue/delete?imsi=${imsi}`, {method: 'DELETE'});
+              const res = await apiFetch(`/api/ue/delete?imsi=${imsi}`, {method: 'DELETE'});
               if (!res.ok) throw new Error('Failed to delete');
               fetchSubscribers(search, page);
             } catch (e) {
@@ -422,7 +432,7 @@ data:
 
           const handleExport = async () => {
             try {
-              const res = await fetch('/api/subscribers/export');
+              const res = await apiFetch('/api/subscribers/export');
               if (!res.ok) throw new Error('Failed to export');
               const blob = await res.blob();
               const url = window.URL.createObjectURL(blob);
@@ -439,7 +449,7 @@ data:
             if (!importJson.trim()) { alert('JSON required'); return; }
             try {
               const subscribers = JSON.parse(importJson);
-              const res = await fetch('/api/subscribers/import', {
+              const res = await apiFetch('/api/subscribers/import', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ subscribers: Array.isArray(subscribers) ? subscribers : [subscribers] })
@@ -674,7 +684,7 @@ data:
           const fetchUEs = async () => {
             setLoading(true);
             try {
-              const res = await fetch('/api/ue-management');
+              const res = await apiFetch('/api/ue-management');
               if (!res.ok) throw new Error('Failed to fetch UEs');
               const data = await res.json();
               setUes(data.ues);
@@ -697,7 +707,7 @@ data:
               return;
             }
             try {
-              const res = await fetch('/api/ue-management', {
+              const res = await apiFetch('/api/ue-management', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -731,7 +741,7 @@ data:
           const handleDeleteUE = async (imsi) => {
             if (!confirm(`Delete UE ${imsi}?`)) return;
             try {
-              const res = await fetch(`/api/ue-management/${imsi}`, {method: 'DELETE'});
+              const res = await apiFetch(`/api/ue-management/${imsi}`, {method: 'DELETE'});
               if (!res.ok) throw new Error('Failed to delete UE');
               fetchUEs();
             } catch (e) {
@@ -742,8 +752,8 @@ data:
           const handleShowDetails = async (imsi) => {
             try {
               const [sessionsRes, nasRes] = await Promise.all([
-                fetch(`/api/ue-management/${imsi}/sessions`),
-                fetch(`/api/ue-management/${imsi}/nas-status`)
+                apiFetch(`/api/ue-management/${imsi}/sessions`),
+                apiFetch(`/api/ue-management/${imsi}/nas-status`)
               ]);
               const sessions = await sessionsRes.json();
               const nas = await nasRes.json();
@@ -761,7 +771,7 @@ data:
 
           const handleEstablishSession = async (imsi) => {
             try {
-              const res = await fetch(`/api/ue-management/${imsi}/sessions`, {
+              const res = await apiFetch(`/api/ue-management/${imsi}/sessions`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ dnn: 'internet', sst: 1, sd: '000000' })
@@ -776,7 +786,7 @@ data:
 
           const handleReleaseSession = async (imsi, psi) => {
             try {
-              const res = await fetch(`/api/ue-management/${imsi}/sessions/${psi}`, {method: 'DELETE'});
+              const res = await apiFetch(`/api/ue-management/${imsi}/sessions/${psi}`, {method: 'DELETE'});
               if (!res.ok) throw new Error('Failed to release session');
               handleShowDetails(imsi);
             } catch (e) {
@@ -786,7 +796,7 @@ data:
 
           const handleDeregister = async (imsi) => {
             try {
-              const res = await fetch(`/api/ue-management/${imsi}/nas-deregister`, {
+              const res = await apiFetch(`/api/ue-management/${imsi}/nas-deregister`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ method: 'normal' })
@@ -1030,7 +1040,7 @@ data:
 
           const fetchPods = async () => {
             try {
-              const res = await fetch('/api/pcap/pods');
+              const res = await apiFetch('/api/pcap/pods');
               if (!res.ok) throw new Error('Failed to fetch pods');
               const data = await res.json();
               setPods(data);
@@ -1041,7 +1051,7 @@ data:
 
           const fetchSessions = async () => {
             try {
-              const res = await fetch('/api/pcap/sessions');  // fetches all types
+              const res = await apiFetch('/api/pcap/sessions');  // fetches all types
               if (!res.ok) throw new Error('Failed to fetch sessions');
               const data = await res.json();
               setSessions(data.sessions || []);
@@ -1064,7 +1074,7 @@ data:
             if (hasRunning) { alert('A capture is already in progress. Stop it before starting a new one.'); return; }
             setStarting(true);
             try {
-              const res = await fetch('/api/pcap/start', {
+              const res = await apiFetch('/api/pcap/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -1106,7 +1116,7 @@ data:
                 const p = pods.find(p => p.name === name);
                 return { pod: name, container: p?.containers?.[0] || '' };
               });
-              const res = await fetch('/api/pcap/start', {
+              const res = await apiFetch('/api/pcap/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
@@ -1130,7 +1140,7 @@ data:
           const handleStopCapture = async (id) => {
             setLoading(true);
             try {
-              const res = await fetch(`/api/pcap/stop/${id}`, {method: 'POST'});
+              const res = await apiFetch(`/api/pcap/stop/${id}`, {method: 'POST'});
               if (!res.ok) throw new Error('Failed to stop capture');
               fetchSessions();
             } catch (e) {
@@ -1147,7 +1157,7 @@ data:
           const handleDeleteSession = async (id) => {
             if (!confirm('Delete session?')) return;
             try {
-              const res = await fetch(`/api/pcap/sessions/${id}`, {method: 'DELETE'});
+              const res = await apiFetch(`/api/pcap/sessions/${id}`, {method: 'DELETE'});
               if (!res.ok) throw new Error('Failed to delete session');
               setSessions(s => s.filter(x => x.id !== id));
             } catch (e) {
@@ -1373,7 +1383,7 @@ data:
           useEffect(() => {
             const fetchMetrics = async () => {
               try {
-                const res = await fetch('/api/metrics/query?query=up');
+                const res = await apiFetch('/api/metrics/query?query=up');
                 if (res.ok) {
                   const data = await res.json();
                   setMetrics(prev => ({...prev, data}));
@@ -1460,6 +1470,30 @@ data:
         // Main App
         function App() {
           const [page, setPage] = useState('core');
+          const [token, setToken] = useState(() => localStorage.getItem('token'));
+          const [currentUser, setCurrentUser] = useState(() => { try { return JSON.parse(localStorage.getItem('currentUser')); } catch { return null; } });
+          const [showProfileMenu, setShowProfileMenu] = useState(false);
+          const [showChangePw, setShowChangePw] = useState(false);
+          const isAdmin = currentUser?.role === 'admin';
+
+          const handleLogin = (data) => {
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('currentUser', JSON.stringify(data.user));
+            setToken(data.token);
+            setCurrentUser(data.user);
+          };
+
+          const handleLogout = () => {
+            localStorage.removeItem('token');
+            localStorage.removeItem('currentUser');
+            setToken(null);
+            setCurrentUser(null);
+          };
+
+          // Make token available globally for child components
+          window.__authToken = token;
+          window.__handleLogout = handleLogout;
+
           const [status, setStatus] = useState(null);
           const [loading, setLoading] = useState(true);
           const [error, setError] = useState(null);
@@ -1472,7 +1506,7 @@ data:
 
           async function fetchStatus() {
             try {
-              const res = await fetch('/api/status');
+              const res = await apiFetch('/api/status');
               if (!res.ok) throw new Error(`HTTP ${res.status}`);
               const data = await res.json();
               setStatus(data);
@@ -1484,11 +1518,32 @@ data:
             }
           }
 
+          if (!token) return <LoginPage onLogin={handleLogin} />;
+
           return (
             <div className="app-container">
-              <div className="header">
-                <h1><Icon name="network" /> 5G TESTBED DASHBOARD</h1>
-                <div className="tagline">Kubernetes-based Open5GS + UERANSIM Management & Observability</div>
+              <div className="header" style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <div>
+                  <h1><Icon name="network" /> 5G TESTBED DASHBOARD</h1>
+                  <div className="tagline">Kubernetes-based Open5GS + UERANSIM Management & Observability</div>
+                </div>
+                <div style={{flex:1}}/>
+                <div style={{position:'relative'}}>
+                  <button onClick={() => setShowProfileMenu(p=>!p)} style={{padding:'6px 14px', background:'rgba(255,255,255,0.05)', border:'1px solid var(--border)', borderRadius:20, color:'var(--text)', cursor:'pointer', fontSize:12, display:'flex', alignItems:'center', gap:6}}>
+                    <span style={{width:22,height:22,borderRadius:'50%',background:'var(--accent)',display:'inline-flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#000'}}>{currentUser?.username?.[0]?.toUpperCase()}</span>
+                    {currentUser?.username} <span style={{fontSize:10,color:'var(--text3)'}}>▾</span>
+                  </button>
+                  {showProfileMenu && (
+                    <div style={{position:'absolute',right:0,top:'110%',background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:8,padding:8,minWidth:160,zIndex:100,boxShadow:'0 4px 20px rgba(0,0,0,0.4)'}}>
+                      <div style={{padding:'6px 10px',fontSize:11,color:'var(--text3)',borderBottom:'1px solid var(--border)',marginBottom:4}}>{currentUser?.role?.toUpperCase()}</div>
+                      {isAdmin && <button onClick={()=>{setPage('users');setShowProfileMenu(false);}} style={{display:'block',width:'100%',padding:'7px 10px',background:'transparent',border:'none',color:'var(--text)',cursor:'pointer',textAlign:'left',fontSize:12,borderRadius:4}}>👥 Manage Users</button>}
+                      <button onClick={()=>{setShowProfileMenu(false);setShowChangePw(true);}} style={{display:'block',width:'100%',padding:'7px 10px',background:'transparent',border:'none',color:'var(--text)',cursor:'pointer',textAlign:'left',fontSize:12,borderRadius:4}}>🔑 Change Password</button>
+                      <div style={{borderTop:'1px solid var(--border)',marginTop:4,paddingTop:4}}>
+                        <button onClick={handleLogout} style={{display:'block',width:'100%',padding:'7px 10px',background:'transparent',border:'none',color:'var(--danger)',cursor:'pointer',textAlign:'left',fontSize:12,borderRadius:4}}>⏻ Sign Out</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="tabs-wrapper">
@@ -1512,6 +1567,9 @@ data:
                     <div className={`tab ${page === 'monitoring' ? 'active' : ''}`} onClick={() => setPage('monitoring')} style={{cursor: 'pointer'}}>
                       <Icon name="chart" /> Monitoring
                     </div>
+                    {isAdmin && <div className={`tab ${page === 'users' ? 'active' : ''}`} onClick={() => setPage('users')} style={{cursor: 'pointer'}}>
+                      <Icon name="users" /> Users
+                    </div>}
                   </div>
                 </div>
               </div>
@@ -1540,8 +1598,196 @@ data:
                     <div className={`section ${page === 'monitoring' ? 'active' : ''}`}>
                       <MonitoringSection status={status} />
                     </div>
+                    {page === 'users' && isAdmin && <UsersPage />}
                   </>
                 ) : null}
+              </div>
+              {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
+            </div>
+          );
+        }
+
+        function LoginPage({ onLogin }) {
+          const [username, setUsername] = React.useState('');
+          const [password, setPassword] = React.useState('');
+          const [error, setError] = React.useState('');
+          const [loading, setLoading] = React.useState(false);
+
+          const handleSubmit = async (e) => {
+            e.preventDefault();
+            setError(''); setLoading(true);
+            try {
+              const res = await apiFetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+              });
+              const data = await res.json();
+              if (!res.ok) { setError(data.error || 'Login failed'); return; }
+              onLogin(data);
+            } catch (e) {
+              setError('Connection error');
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          return (
+            <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--bg)'}}>
+              <div style={{width:360,padding:40,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:12,boxShadow:'0 8px 40px rgba(0,0,0,0.4)'}}>
+                <div style={{textAlign:'center',marginBottom:32}}>
+                  <div style={{fontSize:32,marginBottom:8}}>📡</div>
+                  <h2 style={{margin:0,fontSize:22,color:'var(--accent)'}}>5G Testbed</h2>
+                  <div style={{fontSize:12,color:'var(--text3)',marginTop:4}}>Sign in to continue</div>
+                </div>
+                <form onSubmit={handleSubmit}>
+                  <div className="form-group" style={{marginBottom:16}}>
+                    <label style={{fontSize:12}}>Username</label>
+                    <input autoFocus value={username} onChange={e=>setUsername(e.target.value)} style={{width:'100%',padding:'10px 12px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)',fontSize:14,boxSizing:'border-box'}} placeholder="admin" />
+                  </div>
+                  <div className="form-group" style={{marginBottom:24}}>
+                    <label style={{fontSize:12}}>Password</label>
+                    <input type="password" value={password} onChange={e=>setPassword(e.target.value)} style={{width:'100%',padding:'10px 12px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)',fontSize:14,boxSizing:'border-box'}} placeholder="••••••••" />
+                  </div>
+                  {error && <div style={{padding:'8px 12px',background:'rgba(255,80,80,0.1)',border:'1px solid rgba(255,80,80,0.3)',borderRadius:6,color:'var(--danger)',fontSize:12,marginBottom:16}}>{error}</div>}
+                  <button type="submit" className="button" style={{width:'100%',padding:'11px',fontSize:14}} disabled={loading}>
+                    {loading ? 'Signing in...' : 'Sign In'}
+                  </button>
+                </form>
+              </div>
+            </div>
+          );
+        }
+
+        function ChangePasswordModal({ onClose }) {
+          const [form, setForm] = React.useState({ current: '', next: '', confirm: '' });
+          const [error, setError] = React.useState('');
+          const [success, setSuccess] = React.useState(false);
+
+          const handleSubmit = async (e) => {
+            e.preventDefault();
+            setError('');
+            if (form.next !== form.confirm) { setError('Passwords do not match'); return; }
+            if (form.next.length < 6) { setError('Password must be at least 6 characters'); return; }
+            const res = await apiFetch('/api/auth/password', {
+              method: 'PUT',
+              body: JSON.stringify({ currentPassword: form.current, newPassword: form.next })
+            });
+            const data = await res.json();
+            if (!res.ok) { setError(data.error); return; }
+            setSuccess(true);
+            setTimeout(onClose, 1500);
+          };
+
+          return (
+            <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
+              <div style={{width:380,padding:32,background:'var(--bg2)',border:'1px solid var(--border)',borderRadius:12}}>
+                <h3 style={{marginTop:0}}>Change Password</h3>
+                {success ? <div style={{color:'var(--success)',padding:16,textAlign:'center'}}>✓ Password changed</div> : (
+                  <form onSubmit={handleSubmit}>
+                    {['current','next','confirm'].map(f => (
+                      <div key={f} className="form-group" style={{marginBottom:14}}>
+                        <label style={{fontSize:12}}>{f === 'current' ? 'Current Password' : f === 'next' ? 'New Password' : 'Confirm New Password'}</label>
+                        <input type="password" value={form[f]} onChange={e=>setForm(p=>({...p,[f]:e.target.value}))} style={{width:'100%',padding:'9px 12px',borderRadius:6,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)',boxSizing:'border-box'}} />
+                      </div>
+                    ))}
+                    {error && <div style={{color:'var(--danger)',fontSize:12,marginBottom:12}}>{error}</div>}
+                    <div style={{display:'flex',gap:8,marginTop:8}}>
+                      <button type="submit" className="button" style={{flex:1}}>Update Password</button>
+                      <button type="button" className="button" style={{flex:1,background:'transparent'}} onClick={onClose}>Cancel</button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        function UsersPage() {
+          const [users, setUsers] = React.useState([]);
+          const [loading, setLoading] = React.useState(true);
+          const [showAdd, setShowAdd] = React.useState(false);
+          const [form, setForm] = React.useState({ username: '', password: '', role: 'researcher' });
+          const [error, setError] = React.useState('');
+
+          const fetchUsers = async () => {
+            setLoading(true);
+            try {
+              const res = await apiFetch('/api/users');
+              if (res.ok) setUsers(await res.json());
+            } finally { setLoading(false); }
+          };
+
+          React.useEffect(() => { fetchUsers(); }, []);
+
+          const handleAdd = async (e) => {
+            e.preventDefault(); setError('');
+            const res = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(form) });
+            const data = await res.json();
+            if (!res.ok) { setError(data.error); return; }
+            setForm({ username: '', password: '', role: 'researcher' });
+            setShowAdd(false);
+            fetchUsers();
+          };
+
+          const handleDelete = async (id) => {
+            if (!confirm('Delete this user?')) return;
+            await apiFetch(`/api/users/${id}`, { method: 'DELETE' });
+            fetchUsers();
+          };
+
+          return (
+            <div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+                <h2 style={{margin:0}}>User Management</h2>
+                <button className="button" onClick={()=>setShowAdd(s=>!s)}>+ Add User</button>
+              </div>
+
+              {showAdd && (
+                <div className="panel" style={{marginBottom:20}}>
+                  <h3 style={{marginTop:0}}>New User</h3>
+                  <form onSubmit={handleAdd}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 140px auto',gap:12,alignItems:'flex-end'}}>
+                      <div className="form-group">
+                        <label style={{fontSize:11}}>Username</label>
+                        <input value={form.username} onChange={e=>setForm(p=>({...p,username:e.target.value}))} style={{width:'100%',padding:'8px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)'}} placeholder="username" required />
+                      </div>
+                      <div className="form-group">
+                        <label style={{fontSize:11}}>Password</label>
+                        <input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={{width:'100%',padding:'8px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)'}} placeholder="password" required minLength={6} />
+                      </div>
+                      <div className="form-group">
+                        <label style={{fontSize:11}}>Role</label>
+                        <select value={form.role} onChange={e=>setForm(p=>({...p,role:e.target.value}))} style={{width:'100%',padding:'8px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)'}}>
+                          <option value="researcher">Researcher</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+                      <button type="submit" className="button">Create</button>
+                    </div>
+                    {error && <div style={{color:'var(--danger)',fontSize:12,marginTop:8}}>{error}</div>}
+                  </form>
+                </div>
+              )}
+
+              <div className="panel">
+                {loading ? <div style={{padding:20,textAlign:'center',color:'var(--text2)'}}>Loading...</div> : (
+                  <table className="table">
+                    <thead><tr><th>Username</th><th>Role</th><th>Created</th><th style={{textAlign:'right'}}>Actions</th></tr></thead>
+                    <tbody>
+                      {users.map(u => (
+                        <tr key={u.id}>
+                          <td style={{fontWeight:600}}>{u.username}</td>
+                          <td><span style={{fontSize:11,padding:'2px 8px',borderRadius:12,background: u.role==='admin'?'rgba(255,150,0,0.2)':'rgba(0,200,255,0.2)',color:u.role==='admin'?'#ff9600':'var(--accent)',fontWeight:600}}>{u.role}</span></td>
+                          <td style={{fontSize:11,color:'var(--text3)'}}>{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '—'}</td>
+                          <td style={{textAlign:'right'}}>
+                            {u.username !== 'admin' && <button className="button small danger" onClick={()=>handleDelete(u.id)}>Delete</button>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           );
