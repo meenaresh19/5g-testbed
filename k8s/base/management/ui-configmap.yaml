@@ -1111,6 +1111,185 @@ data:
           );
         }
 
+        // Network Topology
+        function NetworkTopology() {
+          const [nfs, setNfs] = useState({});
+          const [loading, setLoading] = useState(true);
+
+          const fetchStatus = async () => {
+            try {
+              const r = await apiFetch('/api/status');
+              if (r.ok) {
+                const d = await r.json();
+                const map = {};
+                (d.nfs || []).forEach(n => { map[n.id] = n; });
+                setNfs(map);
+              }
+            } catch {}
+            setLoading(false);
+          };
+
+          React.useEffect(() => {
+            fetchStatus();
+            const t = setInterval(fetchStatus, 10000);
+            return () => clearInterval(t);
+          }, []);
+
+          const nfSt = (id) => {
+            const n = nfs[id];
+            if (!n) return 'unknown';
+            return n.status === 'Running' ? 'up' : 'down';
+          };
+
+          const cols = {
+            up:      { stroke: '#00c896', fill: 'rgba(0,200,150,0.13)', text: '#00e676' },
+            down:    { stroke: '#ff3b5c', fill: 'rgba(255,59,92,0.13)',  text: '#ff5577' },
+            unknown: { stroke: '#2a4060', fill: 'rgba(15,25,45,0.8)',    text: '#3a6080' },
+            ran:     { stroke: '#00c8ff', fill: 'rgba(0,200,255,0.10)',  text: '#00c8ff' },
+            ext:     { stroke: '#00e676', fill: 'rgba(0,230,118,0.08)',  text: '#00e676' },
+            db:      { stroke: '#ffb800', fill: 'rgba(255,184,0,0.10)',  text: '#ffb800' },
+          };
+
+          const c = (id) => cols[nfSt(id)] || cols.unknown;
+
+          // local render helpers (not React components — plain functions returning JSX)
+          const renderNode = (x, y, label, id, w, h, colorKey) => {
+            w = w || 90; h = h || 44;
+            const col = colorKey ? cols[colorKey] : c(id);
+            const st = id && nfs[id] ? nfs[id].status : null;
+            return (
+              <g key={label}>
+                <rect x={x-w/2} y={y-h/2} width={w} height={h} rx={7}
+                  fill={col.fill} stroke={col.stroke} strokeWidth={1.5} />
+                <text x={x} y={y-(st?5:2)} textAnchor="middle"
+                  fill={col.stroke} fontSize={12} fontWeight={700} fontFamily="'Share Tech Mono',monospace">
+                  {label}
+                </text>
+                {st && (
+                  <text x={x} y={y+11} textAnchor="middle"
+                    fill={col.text} fontSize={9} fontFamily="'Share Tech Mono',monospace">
+                    {st}
+                  </text>
+                )}
+              </g>
+            );
+          };
+
+          const renderChip = (x, busY, label, id) => {
+            const col = c(id);
+            const gap = 8, cw = 52, ch = 26;
+            return (
+              <g key={label}>
+                <line x1={x} y1={busY+11} x2={x} y2={busY+11+gap} stroke={col.stroke} strokeWidth={1} opacity={0.5} />
+                <rect x={x-cw/2} y={busY+11+gap} width={cw} height={ch} rx={5}
+                  fill={col.fill} stroke={col.stroke} strokeWidth={1} />
+                <text x={x} y={busY+11+gap+17} textAnchor="middle"
+                  fill={col.stroke} fontSize={10} fontWeight={700} fontFamily="'Share Tech Mono',monospace">
+                  {label}
+                </text>
+              </g>
+            );
+          };
+
+          const renderLine = (x1, y1, x2, y2, label, color, dashed) => {
+            const mx = (x1+x2)/2, my = (y1+y2)/2;
+            color = color || '#2a4a6a';
+            return (
+              <g key={label}>
+                <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={1.5}
+                  strokeDasharray={dashed ? '5,3' : undefined} opacity={0.75} />
+                <rect x={mx-15} y={my-8} width={30} height={16} rx={3} fill="#060d18" />
+                <text x={mx} y={my+5} textAnchor="middle"
+                  fill={color} fontSize={9} fontWeight={600} fontFamily="'Share Tech Mono',monospace">
+                  {label}
+                </text>
+              </g>
+            );
+          };
+
+          // Layout constants
+          const BUS_Y = 95;
+          const BUS_X1 = 120, BUS_X2 = 905;
+          const BUS_NFS = [
+            { label:'NRF',  id:'open5gs-nrf',  x:158 },
+            { label:'SCP',  id:'open5gs-scp',  x:260 },
+            { label:'AUSF', id:'open5gs-ausf', x:362 },
+            { label:'UDM',  id:'open5gs-udm',  x:464 },
+            { label:'UDR',  id:'open5gs-udr',  x:566 },
+            { label:'PCF',  id:'open5gs-pcf',  x:668 },
+            { label:'BSF',  id:'open5gs-bsf',  x:770 },
+            { label:'NSSF', id:'open5gs-nssf', x:872 },
+          ];
+
+          const AMF   = { x:260, y:300 };
+          const SMF   = { x:566, y:300 };
+          const UPF   = { x:700, y:415 };
+          const GNB   = { x:72,  y:385 };
+          const MONGO = { x:860, y:300 };
+          const INET  = { x:860, y:415 };
+
+          return (
+            <div>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+                <div style={{display:'flex',gap:16,alignItems:'center',fontSize:12,color:'var(--text2)'}}>
+                  <span><span style={{color:'#00c896',fontSize:14}}>●</span> Running</span>
+                  <span><span style={{color:'#ff3b5c',fontSize:14}}>●</span> Down</span>
+                  <span><span style={{color:'#2a4060',fontSize:14}}>●</span> Unknown</span>
+                </div>
+                <button className="button small" onClick={fetchStatus}>↺ Refresh</button>
+              </div>
+              {loading
+                ? <div className="loading">Loading topology…</div>
+                : (
+                <svg viewBox="0 0 960 500" style={{width:'100%',background:'#040810',borderRadius:8,display:'block'}}>
+
+                  {/* SBA Bus bar */}
+                  <rect x={BUS_X1} y={BUS_Y-11} width={BUS_X2-BUS_X1} height={22} rx={5}
+                    fill="rgba(0,120,180,0.07)" stroke="rgba(0,150,200,0.22)" strokeWidth={1} />
+                  <text x={(BUS_X1+BUS_X2)/2} y={BUS_Y+5} textAnchor="middle"
+                    fill="rgba(0,180,255,0.3)" fontSize={9} fontFamily="'Share Tech Mono',monospace" letterSpacing={3}>
+                    SERVICE BASED INTERFACE (SBI)
+                  </text>
+
+                  {/* Bus NF chips */}
+                  {BUS_NFS.map(n => renderChip(n.x, BUS_Y, n.label, n.id))}
+
+                  {/* AMF SBI vertical (aligns with SCP at x=260) */}
+                  <line x1={AMF.x} y1={BUS_Y+45} x2={AMF.x} y2={AMF.y-22}
+                    stroke={c('open5gs-amf').stroke} strokeWidth={1} strokeDasharray="4,3" opacity={0.35} />
+
+                  {/* SMF SBI vertical (aligns with UDR at x=566) */}
+                  <line x1={SMF.x} y1={BUS_Y+45} x2={SMF.x} y2={SMF.y-22}
+                    stroke={c('open5gs-smf').stroke} strokeWidth={1} strokeDasharray="4,3" opacity={0.35} />
+
+                  {/* Interface lines */}
+                  {renderLine(GNB.x+36,  GNB.y-10, AMF.x-45,  AMF.y+10,  'N2',  '#00c8ff')}
+                  {renderLine(GNB.x+36,  GNB.y+10, UPF.x-45,  UPF.y+10,  'N3',  '#00c8ff', true)}
+                  {renderLine(AMF.x+45,  AMF.y,    SMF.x-45,  SMF.y,     'N11', '#8888cc')}
+                  {renderLine(SMF.x+18,  SMF.y+22, UPF.x-22,  UPF.y-22,  'N4',  '#8888cc')}
+                  {renderLine(UPF.x+45,  UPF.y,    INET.x-45, INET.y,    'N6',  '#00e676')}
+                  {renderLine(BUS_NFS[4].x, BUS_Y+45, MONGO.x-45, MONGO.y-4, 'DB', '#ffb800', true)}
+
+                  {/* Main NF nodes */}
+                  {renderNode(AMF.x,   AMF.y,   'AMF',      'open5gs-amf', 90, 44)}
+                  {renderNode(SMF.x,   SMF.y,   'SMF',      'open5gs-smf', 90, 44)}
+                  {renderNode(UPF.x,   UPF.y,   'UPF',      'open5gs-upf', 90, 44)}
+                  {renderNode(GNB.x,   GNB.y,   '📡 gNB',   'ueransim-gnb', 82, 44)}
+                  {renderNode(MONGO.x, MONGO.y, 'MongoDB',  null, 88, 38, 'db')}
+                  {renderNode(INET.x,  INET.y,  '🌍 DN',    null, 82, 38, 'ext')}
+
+                  {/* Interface legend box */}
+                  <rect x={10} y={445} width={200} height={48} rx={5}
+                    fill="rgba(10,20,35,0.7)" stroke="#1a3a5c" strokeWidth={1} />
+                  <text x={20} y={462} fill="#3a6080" fontSize={9} fontFamily="'Share Tech Mono',monospace">N2  gNB ↔ AMF (NGAP/SCTP)</text>
+                  <text x={20} y={476} fill="#3a6080" fontSize={9} fontFamily="'Share Tech Mono',monospace">N3  gNB ↔ UPF (GTP-U)</text>
+                  <text x={20} y={490} fill="#3a6080" fontSize={9} fontFamily="'Share Tech Mono',monospace">N4  SMF ↔ UPF (PFCP)   N6 UPF→DN</text>
+                </svg>
+              )}
+            </div>
+          );
+        }
+
         // Tracing section - PCAP capture
         function TracingSection() {
           const [tab, setTab] = useState('interface');
@@ -1659,6 +1838,9 @@ data:
                     <div className={`tab ${page === 'core' ? 'active' : ''}`} onClick={() => setPage('core')} style={{cursor: 'pointer'}}>
                       <Icon name="server" /> Core Network
                     </div>
+                    <div className={`tab ${page === 'topology' ? 'active' : ''}`} onClick={() => setPage('topology')} style={{cursor: 'pointer'}}>
+                      <Icon name="network" /> Topology
+                    </div>
                     <div className={`tab ${page === 'ran' ? 'active' : ''}`} onClick={() => setPage('ran')} style={{cursor: 'pointer'}}>
                       <Icon name="antenna" /> RAN
                     </div>
@@ -1689,6 +1871,9 @@ data:
                   <>
                     <div className={`section ${page === 'core' ? 'active' : ''}`}>
                       <CoreSection status={status} />
+                    </div>
+                    <div className={`section ${page === 'topology' ? 'active' : ''}`}>
+                      <NetworkTopology />
                     </div>
                     <div className={`section ${page === 'ran' ? 'active' : ''}`}>
                       <RanSection status={status} />
