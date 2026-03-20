@@ -688,7 +688,8 @@ data:
           const [pingForm, setPingForm] = useState({ target: '8.8.8.8', count: 4 });
           const [pingOut, setPingOut] = useState({});
           const [nasDeregType, setNasDeregType] = useState('switch-off');
-          const [socksState, setSocksState] = useState({}); // {imsi: {running, podName, port, portForwardCmd}}
+          const [socksState, setSocksState] = useState({}); // {imsi: {running, podName, port, ...}}
+          const [adminCfg, setAdminCfg] = useState(null); // {hostNetwork, imsiBase, ...}
           const isAdmin = window.__currentUser?.role === 'admin';
 
           const flash = (text, ok=true) => { setMsg({text,ok}); setTimeout(()=>setMsg({text:'',ok:true}),5000); };
@@ -702,7 +703,10 @@ data:
             } finally { setLoading(false); }
           };
 
-          React.useEffect(() => { fetchBlock(); }, []);
+          React.useEffect(() => {
+            fetchBlock();
+            if (isAdmin) apiFetch('/api/admin/config').then(r => r.ok && r.json().then(setAdminCfg));
+          }, []);
 
           const doRegister = async (username, isReg) => {
             setBusyK(`reg-${username}`, true);
@@ -796,7 +800,8 @@ data:
             const r = await apiFetch(`/api/ue/${imsi}/socks/start`, { method: 'POST', body: JSON.stringify({ port }) });
             const d = await r.json();
             if (d.ok) {
-              setSocksState(s => ({ ...s, [imsi]: { running: true, busy: false, podName: d.podName, port: d.port, portForwardCmd: d.portForwardCmd, proxyConfig: d.proxyConfig, tun: d.tun } }));
+              setSocksState(s => ({ ...s, [imsi]: { running: true, busy: false, podName: d.podName, port: d.port,
+                portForwardCmd: d.portForwardCmd, hostCmd: d.hostCmd, hostNetwork: d.hostNetwork, tun: d.tun, tunIp: d.tunIp } }));
               flash(`SOCKS proxy started on ${d.tun} port ${d.port}`, true);
             } else {
               setSocksState(s => ({ ...s, [imsi]: { ...s[imsi], busy: false } }));
@@ -964,25 +969,40 @@ data:
                       </button>
                   }
                 </div>
-                {socksState[imsi]?.running && (
-                  <div style={{fontSize:10,color:'var(--text2)',lineHeight:1.7}}>
-                    <div style={{marginBottom:4}}>
-                      <span style={{color:'var(--text3)'}}>1. Port-forward (run on your machine):</span>
-                      <pre style={{margin:'2px 0',padding:'4px 8px',background:'var(--bg3)',borderRadius:4,
+                {socksState[imsi]?.running && (() => {
+                  const ss = socksState[imsi];
+                  return ss.hostNetwork ? (
+                    <div style={{fontSize:10,color:'var(--text2)',lineHeight:1.8,marginTop:6}}>
+                      <div style={{color:'var(--text3)',marginBottom:2}}>
+                        hostNetwork mode — run directly on the node:
+                      </div>
+                      <pre style={{margin:'2px 0 8px',padding:'4px 8px',background:'var(--bg3)',borderRadius:4,
                         fontFamily:'var(--font-mono)',fontSize:10,color:'var(--accent)',userSelect:'all',cursor:'text',
                         overflowX:'auto',whiteSpace:'nowrap'}}>
-                        {socksState[imsi].portForwardCmd}
+                        {'nr-binder ' + ss.tunIp + ' <your-app>'}
                       </pre>
-                    </div>
-                    <div>
-                      <span style={{color:'var(--text3)'}}>2. Firefox: Settings → Network → Manual proxy → SOCKS5</span>
+                      <div style={{color:'var(--text3)',marginBottom:2}}>Firefox: Settings → Network → Manual proxy → SOCKS5</div>
                       <pre style={{margin:'2px 0',padding:'4px 8px',background:'var(--bg3)',borderRadius:4,
                         fontFamily:'var(--font-mono)',fontSize:10,color:'var(--accent)',userSelect:'all',cursor:'text'}}>
-                        Host: localhost   Port: {socksState[imsi].port}
+                        {'Host: ' + ss.tunIp + '   Port: ' + ss.port}
                       </pre>
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div style={{fontSize:10,color:'var(--text2)',lineHeight:1.8,marginTop:6}}>
+                      <div style={{color:'var(--text3)',marginBottom:2}}>1. Port-forward (run on your machine):</div>
+                      <pre style={{margin:'2px 0 8px',padding:'4px 8px',background:'var(--bg3)',borderRadius:4,
+                        fontFamily:'var(--font-mono)',fontSize:10,color:'var(--accent)',userSelect:'all',cursor:'text',
+                        overflowX:'auto',whiteSpace:'nowrap'}}>
+                        {ss.portForwardCmd}
+                      </pre>
+                      <div style={{color:'var(--text3)',marginBottom:2}}>2. Firefox: Settings → Network → Manual proxy → SOCKS5</div>
+                      <pre style={{margin:'2px 0',padding:'4px 8px',background:'var(--bg3)',borderRadius:4,
+                        fontFamily:'var(--font-mono)',fontSize:10,color:'var(--accent)',userSelect:'all',cursor:'text'}}>
+                        {'Host: localhost   Port: ' + ss.port}
+                      </pre>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );
@@ -1010,6 +1030,33 @@ data:
               {msg.text && (
                 <div style={{background:msg.ok?'rgba(0,200,100,0.1)':'rgba(255,80,80,0.1)',border:`1px solid ${msg.ok?'var(--success)':'var(--danger)'}`,borderRadius:6,padding:'8px 14px',color:msg.ok?'var(--success)':'var(--danger)',fontSize:12,marginBottom:12}}>
                   {msg.text}
+                </div>
+              )}
+
+              {/* Admin: hostNetwork toggle */}
+              {isAdmin && adminCfg && (
+                <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 16px',marginBottom:12,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+                  <span style={{fontSize:12,fontWeight:600,color:'var(--text2)',flex:1}}>UE Pod Network Mode</span>
+                  <div style={{display:'flex',gap:6}}>
+                    {[{val:true,label:'hostNetwork',desc:'TUN interfaces on host — run nr-binder directly'},
+                      {val:false,label:'Pod network',desc:'SOCKS port-forward required'}].map(opt => (
+                      <button key={String(opt.val)} title={opt.desc}
+                        onClick={async () => {
+                          const r = await apiFetch('/api/admin/config', { method: 'PUT', body: JSON.stringify({ hostNetwork: opt.val }) });
+                          if (r.ok) setAdminCfg(await r.json());
+                        }}
+                        style={{padding:'4px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',
+                          border:'1px solid ' + (adminCfg.hostNetwork===opt.val ? 'var(--accent)' : 'var(--border)'),
+                          background:adminCfg.hostNetwork===opt.val ? 'rgba(0,200,150,0.15)' : 'transparent',
+                          color:adminCfg.hostNetwork===opt.val ? 'var(--accent)' : 'var(--text2)'}}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span style={{fontSize:10,color:'var(--text3)'}}>
+                    {adminCfg.hostNetwork ? 'uesimtunX visible on node — nr-binder works from host' : 'SOCKS: kubectl port-forward required'}
+                  </span>
+                  <span style={{fontSize:10,color:'var(--warn)'}}>Re-provision pods to apply</span>
                 </div>
               )}
 

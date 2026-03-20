@@ -339,7 +339,7 @@ data:
     // ═══════════════════════════════════════════════════════════
 
     async function getImsiConfig() {
-      const defaults = { imsiBase: '00101', rangeStart: 1, defaultImsiCount: 5 };
+      const defaults = { imsiBase: '00101', rangeStart: 1, defaultImsiCount: 5, hostNetwork: true };
       try {
         const doc = await db.collection('testbed_config').findOne({ key: 'imsi' });
         return doc ? { ...defaults, ...doc } : defaults;
@@ -351,7 +351,7 @@ data:
       try {
         const col = db.collection('testbed_config');
         if (!await col.findOne({ key: 'imsi' }))
-          await col.insertOne({ key: 'imsi', imsiBase: '00101', rangeStart: 1, defaultImsiCount: 5 });
+          await col.insertOne({ key: 'imsi', imsiBase: '00101', rangeStart: 1, defaultImsiCount: 5, hostNetwork: true });
       } catch (e) { console.error('[CONFIG] Seed error:', e.message); }
     }
     setTimeout(seedImsiConfig, 4000);
@@ -365,11 +365,12 @@ data:
     // PUT /admin/config
     app.put('/admin/config', authenticateToken, requireAdmin, async (req, res) => {
       try {
-        const { imsiBase, rangeStart, defaultImsiCount } = req.body || {};
+        const { imsiBase, rangeStart, defaultImsiCount, hostNetwork } = req.body || {};
         const update = {};
         if (imsiBase) update.imsiBase = imsiBase;
         if (rangeStart !== undefined) update.rangeStart = parseInt(rangeStart);
         if (defaultImsiCount !== undefined) update.defaultImsiCount = parseInt(defaultImsiCount);
+        if (hostNetwork !== undefined) update.hostNetwork = Boolean(hostNetwork);
         await db.collection('testbed_config').updateOne({ key: 'imsi' }, { $set: update }, { upsert: true });
         res.json(await getImsiConfig());
       } catch (e) { res.status(500).json({ error: e.message }); }
@@ -611,6 +612,7 @@ data:
         const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
         const user = await db.collection('testbed_users').findOne({ username });
         if (!user || !user.imsiStart) return res.status(400).json({ error: 'No IMSI block assigned' });
+        const cfg = await getImsiConfig();
         const depName = `ue-${username}`, cmName = `ue-config-${username}`;
         const baseUe = { imsi: user.imsiStart, k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
           opc: 'c42449363464e2e4fa8adca3063168ca', amf: '8000', dnn: 'internet', sst: 1 };
@@ -628,6 +630,8 @@ data:
             template: {
               metadata: { labels: { app: 'ueransim-ue', username } },
               spec: {
+                hostNetwork: cfg.hostNetwork === true,
+                dnsPolicy: cfg.hostNetwork === true ? 'ClusterFirstWithHostNet' : 'ClusterFirst',
                 containers: [{
                   name: 'ue', image: 'gradiant/ueransim:3.2.6',
                   command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml', '-n', String(user.imsiCount || 1)],
@@ -766,28 +770,33 @@ data:
         const tun = await getTunIface(req.params.imsi);
         // Install microsocks if missing, get TUN IP, start via bash nr-binder (no exec bit)
         // Use setsid + nohup to survive exec session close; join with \n to avoid & && syntax error
+        // Start command: shell must exit immediately after forking — no sleep!
+        // Keeping exec session alive with sleep causes SIGTERM on close
+        // Kill existing microsocks in separate exec (avoids SIGTERM on pkill exit code)
+        await execPodCmd(podName, container, 'pkill -f microsocks 2>/dev/null; true');
+        await new Promise(r => setTimeout(r, 300));
         const cmd = [
           'which microsocks >/dev/null 2>&1 || apt-get install -y -qq microsocks',
-          'pkill -f microsocks 2>/dev/null || true',
           'TUN_IP=$(ip addr show ' + tun + ' 2>/dev/null | grep "inet " | awk \'{print $2}\' | cut -d/ -f1)',
-          '[ -z "$TUN_IP" ] && echo "no-tun" && exit 1',
+          '[ -z "$TUN_IP" ] && exit 1',
           'cd /usr/local/bin',
-          'setsid nohup bash nr-binder "$TUN_IP" microsocks -p ' + p + ' > /tmp/socks-' + p + '.log 2>&1 < /dev/null &',
-          'sleep 0.8',
-          'pgrep -a microsocks >/dev/null 2>&1 && echo "started:$TUN_IP" || cat /tmp/socks-' + p + '.log',
+          'bash nr-binder "$TUN_IP" microsocks -p ' + p + ' > /tmp/socks-' + p + '.log 2>&1 &',
         ].join('\n');
         await execPodCmd(podName, container, cmd);
-        // Verify via separate check (output capture can be empty for background cmds)
+        // Wait in API then verify via port listen check (not pgrep — zombies confuse it)
+        await new Promise(r => setTimeout(r, 1200));
         const checkOut = await execPodCmd(podName, container,
-          'pgrep -a microsocks 2>/dev/null || echo "not running"');
-        const running = checkOut.includes('microsocks') && !checkOut.includes('not running');
+          'ss -tlnp 2>/dev/null | grep -q ":' + p + ' " && echo "listening" || echo "not-listening"');
+        const running = checkOut.includes('listening');
         // Get tun IP separately if needed
         const tunIpOut = await execPodCmd(podName, container,
           'ip addr show ' + tun + ' 2>/dev/null | grep "inet " | awk \'{print $2}\' | cut -d/ -f1');
         const tunIp = tunIpOut.trim() || null;
+        const cfg2 = await getImsiConfig();
         res.json({ ok: running, podName, tun, tunIp, port: p,
+          hostNetwork: cfg2.hostNetwork === true,
           portForwardCmd: `kubectl port-forward -n 5g-testbed pod/${podName} ${p}:${p}`,
-          proxyConfig: `SOCKS5  localhost  ${p}` });
+          hostCmd: `nr-binder ${tunIp} curl -s ifconfig.me  # replace curl with your app` });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
@@ -798,8 +807,8 @@ data:
         const p = parseInt(port) || 1080;
         const pod = await getUePod(req.params.imsi);
         const out = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
-          `pgrep -a microsocks 2>/dev/null || echo "not running"`);
-        const running = out.includes('microsocks') && !out.includes('not running');
+          'ss -tlnp 2>/dev/null | grep -q ":' + p + ' " && echo "listening" || echo "not-listening"');
+        const running = out.includes('listening');
         const tun = await getTunIface(req.params.imsi);
         res.json({ ok: true, running, output: out.trim(), tun, port: p,
           podName: pod.metadata.name });
