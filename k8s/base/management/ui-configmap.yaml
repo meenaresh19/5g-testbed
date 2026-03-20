@@ -675,14 +675,15 @@ data:
         const C = { bg:'#0d1117', card:'#161b22', border:'#30363d', text:'#e6edf3', muted:'#8b949e', accent:'#00c896' };
 
         function UEManager() {
-          const [tab, setTab] = useState('overview');
           // block data: null (loading), object (single user), array (admin all users)
           const [block, setBlock] = useState(null);
           const [loading, setLoading] = useState(false);
           const [busy, setBusy] = useState({});
           const [msg, setMsg] = useState({ text: '', ok: true });
-          const [expandedImsi, setExpandedImsi] = useState(null);
+          const [activeImsi, setActiveImsi] = useState(null);
+          const [activePanel, setActivePanel] = useState(null); // 'view' | 'ops'
           const [detailData, setDetailData] = useState({});
+          const [nasStates, setNasStates] = useState({}); // {imsi: rmState string}
           const [sessionForm, setSessionForm] = useState({ type: 'IPv4', dnn: 'internet', sst: 1 });
           const [pingForm, setPingForm] = useState({ target: '8.8.8.8', count: 4 });
           const [pingOut, setPingOut] = useState({});
@@ -701,21 +702,13 @@ data:
           };
 
           React.useEffect(() => { fetchBlock(); }, []);
-          React.useEffect(() => {
-            if (tab === 'ops') {
-              fetchBlock();
-              const t = setInterval(fetchBlock, 8000);
-              return () => clearInterval(t);
-            }
-          }, [tab]);
 
           const doRegister = async (username, isReg) => {
             setBusyK(`reg-${username}`, true);
-            const url = isReg ? '/api/ue/register' : '/api/ue/register';
             const method = isReg ? 'DELETE' : 'POST';
             const qs = (isReg && isAdmin) ? `?username=${username}` : '';
             const body = (!isReg && isAdmin) ? JSON.stringify({ username }) : undefined;
-            const r = await apiFetch(url + qs, { method, body });
+            const r = await apiFetch('/api/ue/register' + qs, { method, body });
             const d = await r.json();
             r.ok ? flash(`${username}: ${d.message || (isReg ? 'Deregistered' : 'Registered')}`) : flash(d.error || 'Failed', false);
             fetchBlock();
@@ -735,9 +728,7 @@ data:
             setBusyK(`prov-${username}`, false);
           };
 
-          const loadDetail = async (imsi) => {
-            if (expandedImsi === imsi) { setExpandedImsi(null); return; }
-            setExpandedImsi(imsi);
+          const fetchDetail = async (imsi) => {
             try {
               const [nasR, sessR] = await Promise.all([
                 apiFetch(`/api/ue/${imsi}/nas-status`),
@@ -746,36 +737,47 @@ data:
               const nas = nasR.ok ? await nasR.json() : {};
               const sess = sessR.ok ? await sessR.json() : {};
               setDetailData(d => ({ ...d, [imsi]: { nas, sessions: sess.sessions || [] } }));
+              if (nas?.parsed?.rmState) setNasStates(s => ({ ...s, [imsi]: nas.parsed.rmState }));
             } catch {}
+          };
+
+          const openPanel = async (imsi, panel) => {
+            if (activeImsi === imsi && activePanel === panel) { setActiveImsi(null); setActivePanel(null); return; }
+            setActiveImsi(imsi); setActivePanel(panel);
+            fetchDetail(imsi);
           };
 
           const handleEstablish = async (imsi) => {
             const r = await apiFetch(`/api/ue/${imsi}/sessions`, { method: 'POST', body: JSON.stringify(sessionForm) });
             const d = await r.json();
             flash(d.ok ? `Session established for ${imsi}` : (d.error || 'Failed'), d.ok);
-            loadDetail(imsi);
+            fetchDetail(imsi);
           };
 
           const handleReleaseAll = async (imsi) => {
             const r = await apiFetch(`/api/ue/${imsi}/sessions`, { method: 'DELETE' });
             const d = await r.json(); flash(d.ok ? 'Sessions released' : (d.error||'Failed'), d.ok);
-            loadDetail(imsi);
+            fetchDetail(imsi);
           };
 
           const handleReleasePsi = async (imsi, psi) => {
             const r = await apiFetch(`/api/ue/${imsi}/sessions/${psi}`, { method: 'DELETE' });
             const d = await r.json(); flash(d.ok ? `PSI ${psi} released` : (d.error||'Failed'), d.ok);
-            loadDetail(imsi);
+            fetchDetail(imsi);
           };
 
           const handleNasDeregister = async (imsi) => {
             const r = await apiFetch(`/api/ue/${imsi}/nas-deregister`, { method: 'POST', body: JSON.stringify({ type: nasDeregType }) });
-            const d = await r.json(); flash(d.ok ? `Deregistered ${imsi}` : (d.error||'Failed'), d.ok);
+            const d = await r.json();
+            flash(d.ok ? `Deregistered ${imsi} (${nasDeregType})` : (d.error||'Failed'), d.ok);
+            if (d.ok && nasDeregType === 'switch-off') setNasStates(s => ({ ...s, [imsi]: 'RM-DEREGISTERED' }));
+            setTimeout(() => fetchDetail(imsi), 1200);
           };
 
           const handlePing = async (imsi) => {
             const r = await apiFetch(`/api/ue/${imsi}/ping`, { method: 'POST', body: JSON.stringify(pingForm) });
             const d = await r.json();
+            flash(d.ok ? `Ping to ${pingForm.target} done` : (d.error || 'Failed'), d.ok);
             setPingOut(o => ({ ...o, [imsi]: d.output || d.error || '' }));
           };
 
@@ -787,65 +789,129 @@ data:
 
           const sel = (css) => ({ padding:'4px 8px', background:'var(--bg)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:3, fontSize:11, ...css });
 
-          const ImsiOpsPanel = ({ imsi }) => (
-            <div style={{borderTop:'1px solid var(--border)',padding:16}}>
-              <div style={{marginBottom:12}}>
-                <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:6}}>NAS Status</div>
-                {detailData[imsi]?.nas?.parsed ? (
-                  <div style={{display:'flex',gap:16,fontSize:11,fontFamily:'var(--font-mono)'}}>
-                    <span>CM: {detailData[imsi].nas.parsed.cmState||'—'}</span>
-                    <span>MM: {detailData[imsi].nas.parsed.mmState||'—'}</span>
-                    <span>RM: {detailData[imsi].nas.parsed.rmState||'—'}</span>
-                  </div>
-                ) : <div style={{fontSize:11,color:'var(--text3)'}}>Loading…</div>}
+          // Per-IMSI card: 5 per row grid, color-coded by NAS state > mongo state
+          const ImsiCard = ({ imsi, inMongo, provisioned }) => {
+            const rmState = nasStates[imsi];
+            const isNasReg = rmState && rmState.includes('REGISTERED') && !rmState.includes('DEREGISTERED');
+            const isNasDereg = rmState && rmState.includes('DEREGISTERED');
+            let bg, border, labelColor, stateLabel;
+            if (isNasReg)        { bg='rgba(0,200,100,0.13)';  border='rgba(0,200,100,0.5)';  labelColor='var(--success)'; stateLabel='NAS: REG'; }
+            else if (isNasDereg) { bg='rgba(255,80,80,0.10)';  border='rgba(255,80,80,0.45)'; labelColor='var(--danger)';  stateLabel='NAS: DEREG'; }
+            else if (inMongo)    { bg='rgba(0,200,100,0.08)';  border='rgba(0,200,100,0.25)'; labelColor='var(--success)'; stateLabel='in-db'; }
+            else                 { bg='rgba(100,100,100,0.06)';border='var(--border)';         labelColor='var(--text3)';   stateLabel='not registered'; }
+            const isActive = activeImsi === imsi;
+            return (
+              <div style={{background:bg,border:`1px solid ${border}`,borderRadius:8,padding:'10px 10px 8px',
+                boxShadow:isActive?`0 0 0 2px ${border}`:'none',transition:'box-shadow 0.15s'}}>
+                <div style={{fontFamily:'var(--font-mono)',fontSize:13,fontWeight:600,color:labelColor,
+                  letterSpacing:'0.02em',marginBottom:5,wordBreak:'break-all'}}>{imsi}</div>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <span style={{fontSize:10,color:labelColor}}>{stateLabel}</span>
+                  {provisioned && (
+                    <div style={{display:'flex',gap:3}}>
+                      <button title="View status" onClick={()=>openPanel(imsi,'view')}
+                        style={{background:activeImsi===imsi&&activePanel==='view'?'var(--accent)':'transparent',
+                          border:'1px solid var(--border)',borderRadius:4,padding:'2px 5px',cursor:'pointer',
+                          color:activeImsi===imsi&&activePanel==='view'?'#000':'var(--text2)',fontSize:13,lineHeight:1}}>
+                        &#128065;
+                      </button>
+                      <button title="Operate" onClick={()=>openPanel(imsi,'ops')}
+                        style={{background:activeImsi===imsi&&activePanel==='ops'?'var(--accent)':'transparent',
+                          border:'1px solid var(--border)',borderRadius:4,padding:'2px 5px',cursor:'pointer',
+                          color:activeImsi===imsi&&activePanel==='ops'?'#000':'var(--text2)',fontSize:13,lineHeight:1}}>
+                        &#9881;
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div style={{marginBottom:12}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                  <span style={{fontSize:12,fontWeight:600,color:'var(--accent)'}}>PDU Sessions ({(detailData[imsi]?.sessions||[]).length})</span>
+            );
+          };
+
+          // View panel — read-only NAS status + sessions
+          const ViewPanel = ({ imsi }) => (
+            <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,padding:14,marginTop:10}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <span style={{fontFamily:'var(--font-mono)',fontSize:12,fontWeight:600,color:'var(--accent)'}}>{imsi}</span>
+                <button className="button small" onClick={()=>fetchDetail(imsi)}>↻ Refresh</button>
+              </div>
+              <div style={{marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--text2)',marginBottom:6}}>NAS Status</div>
+                {detailData[imsi]?.nas?.parsed ? (
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6}}>
+                    {[['CM State',detailData[imsi].nas.parsed.cmState],['MM State',detailData[imsi].nas.parsed.mmState],['RM State',detailData[imsi].nas.parsed.rmState]].map(([k,v])=>(
+                      <div key={k} style={{background:'var(--bg)',borderRadius:6,padding:'6px 8px'}}>
+                        <div style={{fontSize:9,color:'var(--text3)',marginBottom:2}}>{k}</div>
+                        <div style={{fontSize:11,fontFamily:'var(--font-mono)',color:'var(--text)',fontWeight:600}}>{v||'—'}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : <div style={{fontSize:11,color:'var(--text3)'}}>No data — click Refresh</div>}
+              </div>
+              <div>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--text2)',marginBottom:6}}>
+                  PDU Sessions ({(detailData[imsi]?.sessions||[]).length})
+                </div>
+                {(detailData[imsi]?.sessions||[]).length === 0
+                  ? <div style={{fontSize:11,color:'var(--text3)'}}>No active sessions</div>
+                  : <table className="table" style={{fontSize:11}}>
+                      <thead><tr><th>PSI</th><th>State</th><th>Type</th><th>DNN</th><th>IP</th></tr></thead>
+                      <tbody>{(detailData[imsi]?.sessions||[]).map((s,idx)=>(
+                        <tr key={idx}><td>{s.psi}</td><td><span className="badge success">{s.state}</span></td>
+                          <td>{s.type}</td><td>{s.dnn}</td>
+                          <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{s.ip}</td></tr>
+                      ))}</tbody>
+                    </table>}
+              </div>
+            </div>
+          );
+
+          // Ops panel — PDU/ping/deregister controls
+          const OpsPanel = ({ imsi }) => (
+            <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,padding:14,marginTop:10}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <span style={{fontFamily:'var(--font-mono)',fontSize:12,fontWeight:600,color:'var(--accent)'}}>{imsi}</span>
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  <span style={{fontSize:11,color:'var(--text2)'}}>Sessions ({(detailData[imsi]?.sessions||[]).length})</span>
                   <button className="button small danger" onClick={()=>handleReleaseAll(imsi)}>Release All</button>
                 </div>
-                {(detailData[imsi]?.sessions||[]).length === 0 ? (
-                  <div style={{fontSize:11,color:'var(--text3)'}}>No active sessions</div>
-                ) : (
-                  <table className="table" style={{fontSize:11}}>
-                    <thead><tr><th>PSI</th><th>State</th><th>Type</th><th>DNN</th><th>IP</th><th></th></tr></thead>
-                    <tbody>
-                      {(detailData[imsi]?.sessions||[]).map((s,i) => (
-                        <tr key={i}>
-                          <td>{s.psi}</td><td><span className="badge success">{s.state}</span></td>
-                          <td>{s.type}</td><td>{s.dnn}</td>
-                          <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{s.ip}</td>
-                          <td><button className="button small danger" onClick={()=>handleReleasePsi(imsi,s.psi)}>Release</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
               </div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                <div style={{background:'var(--bg3)',padding:10,borderRadius:6}}>
-                  <div style={{fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Establish Session</div>
-                  <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-end'}}>
+              {(detailData[imsi]?.sessions||[]).length > 0 && (
+                <table className="table" style={{fontSize:11,marginBottom:10}}>
+                  <thead><tr><th>PSI</th><th>State</th><th>Type</th><th>DNN</th><th>IP</th><th></th></tr></thead>
+                  <tbody>{(detailData[imsi]?.sessions||[]).map((s,idx)=>(
+                    <tr key={idx}><td>{s.psi}</td><td><span className="badge success">{s.state}</span></td>
+                      <td>{s.type}</td><td>{s.dnn}</td>
+                      <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{s.ip}</td>
+                      <td><button className="button small danger" onClick={()=>handleReleasePsi(imsi,s.psi)}>Release</button></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              )}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                <div style={{background:'var(--bg)',borderRadius:6,padding:10}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text2)',marginBottom:6}}>Establish Session</div>
+                  <div style={{display:'flex',gap:4,flexWrap:'wrap',alignItems:'flex-end'}}>
                     <select value={sessionForm.type} onChange={e=>setSessionForm(f=>({...f,type:e.target.value}))} style={sel()}>
                       <option>IPv4</option><option>IPv6</option><option>IPv4v6</option>
                     </select>
-                    <input placeholder="DNN" value={sessionForm.dnn} onChange={e=>setSessionForm(f=>({...f,dnn:e.target.value}))} style={sel({width:80})} />
-                    <input type="number" placeholder="SST" value={sessionForm.sst} onChange={e=>setSessionForm(f=>({...f,sst:parseInt(e.target.value)||1}))} min="1" max="4" style={sel({width:48})} />
+                    <input placeholder="DNN" value={sessionForm.dnn} onChange={e=>setSessionForm(f=>({...f,dnn:e.target.value}))} style={sel({width:70})} />
+                    <input type="number" placeholder="SST" value={sessionForm.sst} onChange={e=>setSessionForm(f=>({...f,sst:parseInt(e.target.value)||1}))} min="1" max="4" style={sel({width:44})} />
                     <button className="button small" onClick={()=>handleEstablish(imsi)}>Establish</button>
                   </div>
                 </div>
-                <div style={{background:'var(--bg3)',padding:10,borderRadius:6}}>
-                  <div style={{fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Ping</div>
-                  <div style={{display:'flex',gap:6,alignItems:'flex-end',flexWrap:'wrap'}}>
-                    <input placeholder="8.8.8.8" value={pingForm.target} onChange={e=>setPingForm(f=>({...f,target:e.target.value}))} style={sel({width:110})} />
-                    <input type="number" value={pingForm.count} onChange={e=>setPingForm(f=>({...f,count:parseInt(e.target.value)||4}))} min="1" max="10" style={sel({width:48})} />
+                <div style={{background:'var(--bg)',borderRadius:6,padding:10}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--text2)',marginBottom:6}}>Ping</div>
+                  <div style={{display:'flex',gap:4,alignItems:'flex-end',flexWrap:'wrap'}}>
+                    <input placeholder="8.8.8.8" value={pingForm.target} onChange={e=>setPingForm(f=>({...f,target:e.target.value}))} style={sel({width:100})} />
+                    <input type="number" value={pingForm.count} onChange={e=>setPingForm(f=>({...f,count:parseInt(e.target.value)||4}))} min="1" max="10" style={sel({width:44})} />
                     <button className="button small" onClick={()=>handlePing(imsi)}>Ping</button>
                   </div>
-                  {pingOut[imsi] && <pre style={{marginTop:6,fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)',background:'var(--bg)',padding:6,borderRadius:4,maxHeight:80,overflowY:'auto'}}>{pingOut[imsi]}</pre>}
+                  {pingOut[imsi] && <pre style={{marginTop:5,fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)',background:'var(--bg3)',padding:5,borderRadius:4,maxHeight:72,overflowY:'auto'}}>{pingOut[imsi]}</pre>}
                 </div>
               </div>
-              <div style={{marginTop:12,background:'var(--bg3)',padding:10,borderRadius:6}}>
-                <div style={{fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:6}}>NAS Deregister</div>
+              <div style={{background:'var(--bg)',borderRadius:6,padding:10}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--text2)',marginBottom:6}}>NAS Deregister</div>
                 <div style={{display:'flex',gap:8,alignItems:'center'}}>
                   <select value={nasDeregType} onChange={e=>setNasDeregType(e.target.value)} style={sel()}>
                     <option value="switch-off">switch-off</option>
@@ -883,116 +949,67 @@ data:
                 </div>
               )}
 
-              <div style={{display:'flex',gap:0,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-                {['overview','ops'].map(t => (
-                  <div key={t} onClick={()=>setTab(t)} style={{padding:'10px 22px',cursor:'pointer',fontWeight:600,fontSize:13,color:tab===t?'var(--accent)':'var(--text2)',borderBottom:tab===t?'2px solid var(--accent)':'2px solid transparent',marginBottom:-2,userSelect:'none'}}>
-                    {t === 'overview' ? 'Overview' : 'Operations'}
-                  </div>
-                ))}
-              </div>
-
               {loading && <div className="loading">Loading…</div>}
 
-              {!loading && tab === 'overview' && (
-                <div>
-                  {blocks.length === 0 ? (
-                    <div style={{fontSize:12,color:'var(--text2)',padding:24,textAlign:'center',background:'var(--panel)',borderRadius:8}}>
-                      {isAdmin ? 'No IMSI blocks allocated. Go to User Management to allocate blocks when creating users.' : 'No IMSI block assigned to your account. Contact an admin.'}
-                    </div>
-                  ) : blocks.map(b => (
-                    <div key={b.username} style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,marginBottom:16,overflow:'hidden'}}>
-                      <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-                        <div style={{flex:1}}>
-                          <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>
-                            {isAdmin && <span style={{color:'var(--text2)',fontWeight:400,fontSize:12,marginRight:8}}>user:</span>}
-                            {b.username}
-                            <span style={{marginLeft:10,fontSize:11,padding:'2px 8px',borderRadius:12,background:'rgba(0,200,255,0.15)',color:'var(--accent)',fontWeight:600}}>
-                              {b.imsiCount} UEs · pod: ue-{b.username}
-                            </span>
-                          </div>
-                          <div style={{fontSize:12,color:'var(--text2)',marginTop:4,fontFamily:'var(--font-mono)'}}>
-                            {b.imsiStart} → {b.imsiStart ? String(parseInt(b.imsiStart)+b.imsiCount-1).padStart(15,'0') : '—'}
-                          </div>
-                        </div>
-                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                          <div style={{textAlign:'center',padding:'6px 12px',background:'rgba(0,200,100,0.1)',borderRadius:6}}>
-                            <div style={{fontSize:10,color:'var(--text2)'}}>Registered</div>
-                            <div style={{fontSize:16,fontWeight:700,color:b.ueRegistered?'var(--success)':'var(--text3)'}}>{b.registeredCount}/{b.imsiCount}</div>
-                          </div>
-                          <div style={{textAlign:'center',padding:'6px 12px',background:'rgba(0,150,255,0.1)',borderRadius:6}}>
-                            <div style={{fontSize:10,color:'var(--text2)'}}>Pod</div>
-                            <div style={{fontSize:13,fontWeight:700,color:b.podRunning?'var(--accent)':'var(--text3)'}}>{b.podPhase||'none'}</div>
-                          </div>
-                        </div>
-                        <div style={{display:'flex',gap:6}}>
-                          <button className="button small" disabled={busy[`reg-${b.username}`]}
-                            style={{background:b.ueRegistered?'rgba(255,150,0,0.8)':'var(--success)'}}
-                            onClick={()=>doRegister(b.username, b.ueRegistered)}>
-                            {busy[`reg-${b.username}`] ? '…' : b.ueRegistered ? 'Deregister All' : 'Register All'}
-                          </button>
-                          <button className="button small" disabled={busy[`prov-${b.username}`]}
-                            style={{background:b.ueProvisioned?'var(--warn)':'var(--accent)'}}
-                            onClick={()=>doProvision(b.username, b.ueProvisioned)}>
-                            {busy[`prov-${b.username}`] ? '…' : b.ueProvisioned ? 'Deprovision' : 'Provision Pod'}
-                          </button>
-                        </div>
-                      </div>
-                      {/* IMSI list */}
-                      <div style={{padding:'8px 18px 14px',display:'flex',gap:6,flexWrap:'wrap'}}>
-                        {(b.imsis||[]).map(i => (
-                          <span key={i.imsi} style={{fontSize:10,padding:'3px 8px',borderRadius:12,fontFamily:'var(--font-mono)',
-                            background:i.inMongo?'rgba(0,200,100,0.15)':'rgba(100,100,100,0.12)',
-                            color:i.inMongo?'var(--success)':'var(--text3)',
-                            border:`1px solid ${i.inMongo?'rgba(0,200,100,0.3)':'var(--border)'}`}}>
-                            {i.imsi.slice(-6)}
-                          </span>
-                        ))}
-                        {b.tunIp && <span style={{fontSize:10,padding:'3px 8px',borderRadius:12,background:'rgba(0,100,255,0.15)',color:'var(--accent)',border:'1px solid rgba(0,150,255,0.3)'}}>tun: {b.tunIp}</span>}
-                      </div>
-                    </div>
-                  ))}
+              {!loading && blocks.length === 0 && (
+                <div style={{fontSize:12,color:'var(--text2)',padding:24,textAlign:'center',background:'var(--panel)',borderRadius:8}}>
+                  {isAdmin ? 'No IMSI blocks allocated. Go to User Management to allocate blocks when creating users.' : 'No IMSI block assigned to your account. Contact an admin.'}
                 </div>
               )}
 
-              {!loading && tab === 'ops' && (
-                <div>
-                  {blocks.filter(b => b.ueProvisioned && b.imsis?.length > 0).length === 0 ? (
-                    <div style={{fontSize:12,color:'var(--text2)',padding:24,textAlign:'center',background:'var(--panel)',borderRadius:8}}>
-                      No provisioned pods. Go to Overview → Provision Pod first.
-                    </div>
-                  ) : blocks.filter(b => b.ueProvisioned).map(b => (
-                    <div key={b.username} style={{marginBottom:16}}>
-                      <div style={{fontSize:13,fontWeight:600,color:'var(--text2)',marginBottom:8}}>
-                        ue-{b.username} · {b.imsiCount} UEs
-                        <span style={{marginLeft:10,fontSize:11,padding:'2px 8px',borderRadius:12,
-                          background:b.podRunning?'rgba(0,200,100,0.15)':'rgba(255,150,0,0.15)',
-                          color:b.podRunning?'var(--success)':'var(--warn)'}}>
-                          {b.podPhase}
+              {!loading && blocks.map(b => (
+                <div key={b.username} style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,marginBottom:16,overflow:'hidden'}}>
+                  {/* Block header */}
+                  <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>
+                        {isAdmin && <span style={{color:'var(--text2)',fontWeight:400,fontSize:12,marginRight:6}}>user:</span>}
+                        {b.username}
+                        <span style={{marginLeft:8,fontSize:11,padding:'2px 7px',borderRadius:12,background:'rgba(0,200,255,0.15)',color:'var(--accent)',fontWeight:600}}>
+                          {b.imsiCount} UEs · ue-{b.username}
                         </span>
                       </div>
+                      <div style={{fontSize:11,color:'var(--text2)',marginTop:2,fontFamily:'var(--font-mono)'}}>
+                        {b.imsiStart} → {b.imsiStart ? String(parseInt(b.imsiStart)+b.imsiCount-1).padStart(15,'0') : '—'}
+                      </div>
+                    </div>
+                    <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                      <div style={{textAlign:'center',padding:'4px 10px',background:'rgba(0,200,100,0.1)',borderRadius:6}}>
+                        <div style={{fontSize:9,color:'var(--text2)'}}>Reg</div>
+                        <div style={{fontSize:15,fontWeight:700,color:b.ueRegistered?'var(--success)':'var(--text3)'}}>{b.registeredCount}/{b.imsiCount}</div>
+                      </div>
+                      <div style={{textAlign:'center',padding:'4px 10px',background:'rgba(0,150,255,0.1)',borderRadius:6}}>
+                        <div style={{fontSize:9,color:'var(--text2)'}}>Pod</div>
+                        <div style={{fontSize:12,fontWeight:700,color:b.podRunning?'var(--accent)':'var(--text3)'}}>{b.podPhase||'none'}</div>
+                      </div>
+                    </div>
+                    <div style={{display:'flex',gap:5}}>
+                      <button className="button small" disabled={busy[`reg-${b.username}`]}
+                        style={{background:b.ueRegistered?'rgba(255,150,0,0.8)':'var(--success)'}}
+                        onClick={()=>doRegister(b.username, b.ueRegistered)}>
+                        {busy[`reg-${b.username}`] ? '…' : b.ueRegistered ? 'Deregister All' : 'Register All'}
+                      </button>
+                      <button className="button small" disabled={busy[`prov-${b.username}`]}
+                        style={{background:b.ueProvisioned?'var(--warn)':'var(--accent)'}}
+                        onClick={()=>doProvision(b.username, b.ueProvisioned)}>
+                        {busy[`prov-${b.username}`] ? '…' : b.ueProvisioned ? 'Deprovision' : 'Provision Pod'}
+                      </button>
+                    </div>
+                  </div>
+                  {/* IMSI grid: 5 per row */}
+                  <div style={{padding:'12px 16px'}}>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8}}>
                       {(b.imsis||[]).map(i => (
-                        <div key={i.imsi} style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:6,marginBottom:8,overflow:'hidden'}}>
-                          <div style={{display:'flex',alignItems:'center',padding:'10px 16px',gap:10}}>
-                            <div style={{flex:1}}>
-                              <strong style={{fontFamily:'var(--font-mono)',fontSize:12}}>{i.imsi}</strong>
-                              <span style={{marginLeft:8,fontSize:10,padding:'1px 6px',borderRadius:10,
-                                background:i.inMongo?'rgba(0,200,100,0.15)':'rgba(100,100,100,0.15)',
-                                color:i.inMongo?'var(--success)':'var(--text3)'}}>
-                                {i.inMongo ? 'registered' : 'not registered'}
-                              </span>
-                            </div>
-                            <button className="button small" onClick={()=>loadDetail(i.imsi)}
-                              style={{background:'var(--accent2)',fontSize:11}}>
-                              {expandedImsi===i.imsi ? 'Collapse' : 'Operate'}
-                            </button>
-                          </div>
-                          {expandedImsi === i.imsi && <ImsiOpsPanel imsi={i.imsi} />}
-                        </div>
+                        <ImsiCard key={i.imsi} imsi={i.imsi} inMongo={i.inMongo} provisioned={b.ueProvisioned} />
                       ))}
                     </div>
-                  ))}
+                    {/* Panel below grid — only for IMSIs in this block */}
+                    {activeImsi && (b.imsis||[]).some(i => i.imsi === activeImsi) && (
+                      activePanel === 'view' ? <ViewPanel imsi={activeImsi} /> : <OpsPanel imsi={activeImsi} />
+                    )}
+                  </div>
                 </div>
-              )}
+              ))}
             </div>
           );
         }
