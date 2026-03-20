@@ -589,22 +589,49 @@ data:
                     </div>
 
                     <div style={{marginTop: 12}}>
-                      <label style={{display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 8, fontWeight: 600}}>PDN/APNs</label>
+                      <label style={{display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 8, fontWeight: 600}}>PDN/APNs Configuration</label>
                       {(formData.pdn || []).map((pdn, idx) => (
                         <div key={idx} style={{background: 'var(--bg3)', padding: 12, borderRadius: 4, marginBottom: 8, border: '1px solid var(--border)'}}>
-                          <div style={{display: 'grid', gridTemplateColumns: '1fr 50px', gap: 8, marginBottom: 8}}>
+                          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 50px', gap: 8, marginBottom: 8}}>
                             <div>
-                              <label style={{fontSize: 11, color: 'var(--text2)', display: 'block', marginBottom: 4}}>APN Name</label>
-                              <input type="text" value={pdn.apn || ''} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx] = {...pdn, apn: e.target.value}; setFormData({...formData, pdn: newPdn}); }} placeholder="internet" style={{width: '100%'}} />
+                              <label style={{fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 3}}>APN Name</label>
+                              <input type="text" value={pdn.apn || ''} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx] = {...pdn, apn: e.target.value}; setFormData({...formData, pdn: newPdn}); }} placeholder="internet" style={{width: '100%', fontSize: 11}} />
+                            </div>
+                            <div>
+                              <label style={{fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 3}}>Type</label>
+                              <select value={pdn.type || 0} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx] = {...pdn, type: parseInt(e.target.value)}; setFormData({...formData, pdn: newPdn}); }} style={{width: '100%', fontSize: 11, padding: '4px'}}>
+                                <option value="0">IPv4</option>
+                                <option value="1">IPv6</option>
+                                <option value="2">IPv4v6</option>
+                              </select>
                             </div>
                             <div style={{display: 'flex', alignItems: 'flex-end'}}>
-                              <button className="button small danger" onClick={() => { const newPdn = formData.pdn.filter((_, i) => i !== idx); setFormData({...formData, pdn: newPdn}); }} style={{width: '100%'}}>Remove</button>
+                              <button className="button small danger" onClick={() => { const newPdn = formData.pdn.filter((_, i) => i !== idx); setFormData({...formData, pdn: newPdn}); }} style={{width: '100%'}}>×</button>
                             </div>
                           </div>
-                          <div style={{fontSize: 10, color: 'var(--text3)'}}>Type: {pdn.type || 0} (0=IPv4, 1=IPv6, 2=IPv4v6)</div>
+                          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8}}>
+                            <div>
+                              <label style={{fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 3}}>5QI</label>
+                              <input type="number" value={pdn.qos?.['5qi'] || 9} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx] = {...pdn, qos: {...pdn.qos, '5qi': parseInt(e.target.value)}}; setFormData({...formData, pdn: newPdn}); }} min="1" max="254" style={{width: '100%', fontSize: 11}} />
+                            </div>
+                            <div>
+                              <label style={{fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 3}}>Priority</label>
+                              <input type="number" value={pdn.qos?.arp?.priority_level || 8} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx] = {...pdn, qos: {...pdn.qos, arp: {...pdn.qos?.arp, priority_level: parseInt(e.target.value)}}}; setFormData({...formData, pdn: newPdn}); }} min="1" max="15" style={{width: '100%', fontSize: 11}} />
+                            </div>
+                            <div>
+                              <label style={{fontSize: 10, color: 'var(--text2)', display: 'block', marginBottom: 3}}>Preemption Cap</label>
+                              <select value={pdn.qos?.arp?.preemption_cap || 'not-preempt'} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx] = {...pdn, qos: {...pdn.qos, arp: {...pdn.qos?.arp, preemption_cap: e.target.value}}}; setFormData({...formData, pdn: newPdn}); }} style={{width: '100%', fontSize: 11, padding: '4px'}}>
+                                <option value="preempt">Preempt</option>
+                                <option value="not-preempt">Not Preempt</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div style={{fontSize: 9, color: 'var(--text3)', padding: 6, background: 'rgba(0,200,255,0.05)', borderRadius: 3}}>
+                            Slices: {pdn.slice?.map(s => `SST=${s.sst}`).join(', ') || 'SST=1'}
+                          </div>
                         </div>
                       ))}
-                      <button className="button small" onClick={() => { const newPdn = [...(formData.pdn || []), { type: 0, apn: 'internet', slice: [{ sst: 1, sd: '000000' }] }]; setFormData({...formData, pdn: newPdn}); }} style={{width: '100%', marginTop: 8}}>+ Add APN</button>
+                      <button className="button small" onClick={() => { const newPdn = [...(formData.pdn || []), { type: 0, apn: '', slice: [{ sst: 1, sd: '000000' }], qos: { '5qi': 9, arp: { priority_level: 8, preemption_cap: 'not-preempt' } } }]; setFormData({...formData, pdn: newPdn}); }} style={{width: '100%', marginTop: 8}}>+ Add APN</button>
                     </div>
 
                     <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20}}>
