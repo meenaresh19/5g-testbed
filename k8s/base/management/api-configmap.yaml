@@ -685,6 +685,159 @@ supiType: 'imsi'
       }
     });
 
+    // ============================================
+    // PCAP TRACING (Traffic Capture)
+    // ============================================
+
+    const PCAP_DIR = '/tmp/pcaps';
+    let captureSession = null;  // Simple single session for now
+
+    // Ensure PCAP directory exists
+    const { execSync } = require('child_process');
+    try { execSync(`mkdir -p ${PCAP_DIR}`); } catch (e) {}
+
+    // GET /pcap/pods - List pods available for capture
+    app.get('/pcap/pods', async (req, res) => {
+      try {
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined);
+        const result = pods.body.items
+          .filter(p => p.status?.phase === 'Running')
+          .map(p => ({
+            name: p.metadata?.name,
+            app: p.metadata?.labels?.app,
+            namespace: p.metadata?.namespace,
+            podIP: p.status?.podIP,
+            containers: p.spec?.containers?.map(c => c.name) || []
+          }));
+        res.json(result);
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /pcap/sessions - List active capture sessions
+    app.get('/pcap/sessions', (req, res) => {
+      if (!captureSession) return res.json({ sessions: [] });
+      res.json({ sessions: [captureSession] });
+    });
+
+    // POST /pcap/start - Start packet capture
+    app.post('/pcap/start', async (req, res) => {
+      try {
+        const { pod, container, interface: iface = 'any', filter = '' } = req.body;
+        if (!pod) return res.status(400).json({ error: 'pod required' });
+
+        if (captureSession && captureSession.status === 'running') {
+          return res.status(400).json({ error: 'Capture already running' });
+        }
+
+        const sessionId = Math.random().toString(36).substr(2, 9);
+        const filePath = `${PCAP_DIR}/${sessionId}.pcap`;
+
+        captureSession = {
+          id: sessionId,
+          pod,
+          container: container || pod,
+          interface: iface,
+          filter,
+          startTime: new Date().toISOString(),
+          status: 'running',
+          filePath,
+          packets: 0
+        };
+
+        // Start tcpdump in background (simplified - writes to file)
+        const cmd = `kubectl exec ${pod} -n ${ns} -c ${container || pod} -- tcpdump -i ${iface} -w /tmp/capture.pcap ${filter} &`;
+
+        // Actually capture using kubectl exec and stream to file
+        const { spawn } = require('child_process');
+        const proc = spawn('kubectl', [
+          'exec', pod,
+          '-n', ns,
+          '-c', container || pod,
+          '--',
+          'tcpdump', '-i', iface,
+          '-w', '/tmp/capture.pcap',
+          ...(filter ? [filter] : [])
+        ]);
+
+        // Copy file every 2 seconds
+        const copyInterval = setInterval(() => {
+          try {
+            execSync(`kubectl cp ${ns}/${pod}:/tmp/capture.pcap ${filePath} -c ${container || pod} 2>/dev/null`);
+          } catch (e) {}
+        }, 2000);
+
+        captureSession.copyInterval = copyInterval;
+        captureSession.proc = proc;
+
+        res.json({
+          id: sessionId,
+          status: 'started',
+          message: `Capture started on pod ${pod}`
+        });
+      } catch (e) {
+        if (captureSession) captureSession.status = 'error';
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /pcap/stop/:id - Stop packet capture
+    app.post('/pcap/stop/:id', (req, res) => {
+      if (!captureSession || captureSession.id !== req.params.id) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      try {
+        if (captureSession.proc) captureSession.proc.kill();
+        if (captureSession.copyInterval) clearInterval(captureSession.copyInterval);
+
+        // Final copy
+        try {
+          execSync(`kubectl cp ${captureSession.pod}:/tmp/capture.pcap ${captureSession.filePath} 2>/dev/null`);
+        } catch (e) {}
+
+        captureSession.status = 'stopped';
+        captureSession.stopTime = new Date().toISOString();
+
+        res.json({ success: true, session: captureSession });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /pcap/download/:id - Download PCAP file
+    app.get('/pcap/download/:id', (req, res) => {
+      if (!captureSession || captureSession.id !== req.params.id) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      const { existsSync } = require('fs');
+      if (!existsSync(captureSession.filePath)) {
+        return res.status(404).json({ error: 'PCAP file not found' });
+      }
+
+      res.download(captureSession.filePath, `capture-${captureSession.id}.pcap`);
+    });
+
+    // DELETE /pcap/sessions/:id - Delete capture session
+    app.delete('/pcap/sessions/:id', (req, res) => {
+      if (!captureSession || captureSession.id !== req.params.id) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      try {
+        const { unlinkSync } = require('fs');
+        if (require('fs').existsSync(captureSession.filePath)) {
+          unlinkSync(captureSession.filePath);
+        }
+        captureSession = null;
+        res.json({ success: true });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // Health check
     app.get('/health', (req, res) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
