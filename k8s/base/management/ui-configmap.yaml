@@ -324,6 +324,7 @@ data:
           const [editingSubscriber, setEditingSubscriber] = useState(null);
           const [formData, setFormData] = useState({});
           const [importJson, setImportJson] = useState('');
+          const importSectionRef = React.useRef(null);
 
           // Fetch subscribers list
           const fetchSubscribers = async (searchTerm = search, pageNum = 1) => {
@@ -364,6 +365,17 @@ data:
               plmn: { mcc: '001', mnc: '01' }
             });
             setShowModal(true);
+          };
+
+          const handleAddBulk = () => {
+            setImportJson('');
+            if (importSectionRef.current) {
+              importSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              setTimeout(() => {
+                const textarea = importSectionRef.current.querySelector('textarea');
+                if (textarea) textarea.focus();
+              }, 300);
+            }
           };
 
           const handleEdit = async (imsi) => {
@@ -477,6 +489,7 @@ data:
                     style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-main)'}}
                   />
                   <button className="button" onClick={handleAdd}><Icon name="check" /> Add Subscriber</button>
+                  <button className="button" onClick={handleAddBulk} style={{background: 'var(--accent2)'}}>+ Add Bulk</button>
                   <button className="button" onClick={handleExport} style={{background: 'var(--accent2)'}}>Export</button>
                 </div>
 
@@ -523,7 +536,7 @@ data:
                   </>
                 )}
 
-                <div style={{marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)'}}>
+                <div ref={importSectionRef} style={{marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)'}}>
                   <h3 style={{marginBottom: 12}}><Icon name="database" /> Bulk Import</h3>
                   <textarea
                     value={importJson}
@@ -575,9 +588,23 @@ data:
                       </div>
                     </div>
 
-                    <div className="form-group">
-                      <label>APN</label>
-                      <input type="text" value={formData.pdn?.[0]?.apn || 'internet'} onChange={e => { const pdn = [...(formData.pdn || [])]; pdn[0] = {...pdn[0], apn: e.target.value}; setFormData({...formData, pdn}); }} />
+                    <div style={{marginTop: 12}}>
+                      <label style={{display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 8, fontWeight: 600}}>PDN/APNs</label>
+                      {(formData.pdn || []).map((pdn, idx) => (
+                        <div key={idx} style={{background: 'var(--bg3)', padding: 12, borderRadius: 4, marginBottom: 8, border: '1px solid var(--border)'}}>
+                          <div style={{display: 'grid', gridTemplateColumns: '1fr 50px', gap: 8, marginBottom: 8}}>
+                            <div>
+                              <label style={{fontSize: 11, color: 'var(--text2)', display: 'block', marginBottom: 4}}>APN Name</label>
+                              <input type="text" value={pdn.apn || ''} onChange={e => { const newPdn = [...formData.pdn]; newPdn[idx] = {...pdn, apn: e.target.value}; setFormData({...formData, pdn: newPdn}); }} placeholder="internet" style={{width: '100%'}} />
+                            </div>
+                            <div style={{display: 'flex', alignItems: 'flex-end'}}>
+                              <button className="button small danger" onClick={() => { const newPdn = formData.pdn.filter((_, i) => i !== idx); setFormData({...formData, pdn: newPdn}); }} style={{width: '100%'}}>Remove</button>
+                            </div>
+                          </div>
+                          <div style={{fontSize: 10, color: 'var(--text3)'}}>Type: {pdn.type || 0} (0=IPv4, 1=IPv6, 2=IPv4v6)</div>
+                        </div>
+                      ))}
+                      <button className="button small" onClick={() => { const newPdn = [...(formData.pdn || []), { type: 0, apn: 'internet', slice: [{ sst: 1, sd: '000000' }] }]; setFormData({...formData, pdn: newPdn}); }} style={{width: '100%', marginTop: 8}}>+ Add APN</button>
                     </div>
 
                     <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20}}>
