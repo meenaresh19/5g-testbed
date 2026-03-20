@@ -19,12 +19,15 @@ spec:
       - name: wait-nrf
         image: busybox:1.28
         command: ['sh', '-c', 'until nc -z open5gs-nrf.5g-testbed.svc.cluster.local 7777; do echo waiting for nrf; sleep 2; done']
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       containers:
       - name: amf
         image: gradiant/open5gs:2.7.0
         imagePullPolicy: IfNotPresent
         command:
-        - /open5gs/install/bin/open5gs-amfd
+        - /opt/open5gs/bin/open5gs-amfd
         - -c
         - /etc/open5gs/amf.yaml
         ports:
@@ -61,16 +64,14 @@ spec:
             cpu: 800m
             memory: 1Gi
         livenessProbe:
-          httpGet:
-            path: /namf-comm/v1/ue-contexts
+          tcpSocket:
             port: 7777
           initialDelaySeconds: 40
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
-          httpGet:
-            path: /namf-comm/v1/ue-contexts
+          tcpSocket:
             port: 7777
           initialDelaySeconds: 30
           periodSeconds: 5

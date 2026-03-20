@@ -19,12 +19,15 @@ spec:
       - name: wait-nrf
         image: busybox:1.28
         command: ['sh', '-c', 'until nc -z open5gs-nrf.5g-testbed.svc.cluster.local 7777; do echo waiting for nrf; sleep 2; done']
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       containers:
       - name: upf
         image: gradiant/open5gs:2.7.0
         imagePullPolicy: IfNotPresent
         command:
-        - /open5gs/install/bin/open5gs-upfd
+        - /opt/open5gs/bin/open5gs-upfd
         - -c
         - /etc/open5gs/upf.yaml
         ports:
@@ -64,15 +67,13 @@ spec:
             cpu: 1200m
             memory: 2Gi
         livenessProbe:
-          httpGet:
-            path: /
+          tcpSocket:
             port: 9090
           initialDelaySeconds: 40
           periodSeconds: 10
           failureThreshold: 3
         readinessProbe:
-          httpGet:
-            path: /
+          tcpSocket:
             port: 9090
           initialDelaySeconds: 30
           periodSeconds: 5
@@ -84,5 +85,3 @@ spec:
       - name: dev-net-tun
         hostPath:
           path: /dev/net/tun
-      nodeSelector:
-        kubernetes.io/hostname: ""  # Will run on available node

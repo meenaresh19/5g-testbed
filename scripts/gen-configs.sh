@@ -35,7 +35,7 @@ mkdir -p "$CONF_DIR/open5gs" "$CONF_DIR/oai" "$CONF_DIR/zeek" "$CONF_DIR/ids"
 # ── NRF ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/nrf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/nrf.log
+
   level: info
 
 nrf:
@@ -56,7 +56,7 @@ EOF
 # ── SCP ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/scp.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/scp.log
+
   level: info
 
 scp:
@@ -72,7 +72,7 @@ EOF
 # ── AMF ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/amf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/amf.log
+
   level: info
 
 amf:
@@ -123,7 +123,7 @@ EOF
 # ── SMF ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/smf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/smf.log
+
   level: info
 
 smf:
@@ -163,7 +163,7 @@ EOF
 # ── UPF ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/upf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/upf.log
+
   level: info
 
 upf:
@@ -189,7 +189,7 @@ EOF
 # ── AUSF ─────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/ausf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/ausf.log
+
   level: info
 
 ausf:
@@ -209,7 +209,7 @@ EOF
 # ── UDM ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/udm.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/udm.log
+
   level: info
 
 udm:
@@ -229,7 +229,7 @@ EOF
 # ── UDR ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/udr.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/udr.log
+
   level: info
 
 udr:
@@ -250,7 +250,7 @@ EOF
 # ── PCF ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/pcf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/pcf.log
+
   level: info
 
 pcf:
@@ -271,7 +271,7 @@ EOF
 # ── BSF ──────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/bsf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/bsf.log
+
   level: info
 
 bsf:
@@ -292,7 +292,7 @@ EOF
 # ── NSSF ─────────────────────────────────────────────────
 cat > "$CONF_DIR/open5gs/nssf.yaml" <<EOF
 logger:
-  file: /var/log/open5gs/nssf.log
+
   level: info
 
 nssf:

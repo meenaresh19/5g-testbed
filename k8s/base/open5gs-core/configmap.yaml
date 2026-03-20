@@ -4,117 +4,253 @@ metadata:
   name: open5gs-config
   namespace: 5g-testbed
 data:
-  # These are placeholder configs. In production, use gen-configs.sh to generate
-  # and inject K8s DNS service names (e.g., mongodb.5g-testbed.svc.cluster.local)
-
   nrf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.10
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e87
+    logger:
+      file: /opt/open5gs/var/log/open5gs/nrf.log
+    global:
+    nrf:
+      serving:
+      - plmn_id:
+          mcc: 001
+          mnc: 01
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
 
   scp.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.11
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e88
+    logger:
+      file: /opt/open5gs/var/log/open5gs/scp.log
+    global:
+    scp:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          nrf:
+          - uri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
 
   amf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.12
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    ngap:
-      addr: 0.0.0.0
-      port: 38412
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e89
+    logger:
+      file: /opt/open5gs/var/log/open5gs/amf.log
+    global:
+    amf:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+      ngap:
+        server:
+        - dev: eth0
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
+      guami:
+      - plmn_id:
+          mcc: 001
+          mnc: 01
+        amf_id:
+          region: 2
+          set: 1
+      tai:
+      - plmn_id:
+          mcc: 001
+          mnc: 01
+        tac: 1
+      plmn_support:
+      - plmn_id:
+          mcc: 001
+          mnc: 01
+        s_nssai:
+        - sst: 1
+        - sst: 2
+        - sst: 3
+          sd: 000001
+      security:
+        integrity_order: [NIA2, NIA1, NIA0]
+        ciphering_order: [NEA0, NEA1, NEA2]
+      network_name:
+        full: Open5GS-5G
+        short: O5GS
+      amf_name: open5gs-amf
+      time:
+        t3512:
+          value: 540
 
   smf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.13
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8a
+    logger:
+      file: /opt/open5gs/var/log/open5gs/smf.log
+    global:
+    smf:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+      pfcp:
+        server:
+        - dev: eth0
+        client:
+          upf:
+          - address: open5gs-upf.5g-testbed.svc.cluster.local
+      gtpc:
+        server:
+        - dev: eth0
+      gtpu:
+        server:
+        - dev: eth0
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
+      session:
+      - subnet: 10.45.0.1/16
+        dnn: internet
+      dns:
+      - 8.8.8.8
+      - 8.8.4.4
+      mtu: 1400
 
   upf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    gtpu:
-      addr: 0.0.0.0
-      port: 2152
-    pfcp:
-      addr: 0.0.0.0
-      port: 8805
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8b
+    logger:
+      file: /opt/open5gs/var/log/open5gs/upf.log
+    global:
+    upf:
+      pfcp:
+        server:
+        - dev: eth0
+        client:
+          smf:
+          - address: open5gs-smf.5g-testbed.svc.cluster.local
+      gtpu:
+        server:
+        - dev: eth0
+      session:
+      - subnet: 10.45.0.1/16
+        dnn: internet
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
 
   ausf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.15
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8c
+    logger:
+      file: /opt/open5gs/var/log/open5gs/ausf.log
+    global:
+    ausf:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
 
   udm.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.16
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8d
+    logger:
+      file: /opt/open5gs/var/log/open5gs/udm.log
+    global:
+    udm:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
 
   udr.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.17
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8e
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local/open5gs
+    logger:
+      file: /opt/open5gs/var/log/open5gs/udr.log
+    global:
+    udr:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
 
   pcf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.18
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e8f
+    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local/open5gs
+    logger:
+      file: /opt/open5gs/var/log/open5gs/pcf.log
+    global:
+    pcf:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
 
   bsf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.19
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e90
+    logger:
+      file: /opt/open5gs/var/log/open5gs/bsf.log
+    global:
+    bsf:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+      metrics:
+        server:
+        - dev: eth0
+          port: 9090
 
   nssf.yaml: |
-    db_uri: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
-    sbi:
-      scheme: http
-      registerIPv4: 10.45.0.20
-      bindingIPv4: 0.0.0.0
-      port: 7777
-    nrfUri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-    nfInstanceId: 74e20c87-c0ac-4f06-a3c3-83c2f58a9e91
+    logger:
+      file: /opt/open5gs/var/log/open5gs/nssf.log
+    global:
+    nssf:
+      sbi:
+        server:
+        - dev: eth0
+          port: 7777
+        client:
+          scp:
+          - uri: http://open5gs-scp.5g-testbed.svc.cluster.local:7777
+          nsi:
+          - uri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+            s_nssai:
+              sst: 1
+          - uri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+            s_nssai:
+              sst: 2
+          - uri: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
+            s_nssai:
+              sst: 3
+              sd: 000001

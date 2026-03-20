@@ -9,22 +9,22 @@ resources:
 configMapGenerator:
   - name: open5gs-config
     files:
-      - configs/open5gs/nrf.yaml
-      - configs/open5gs/scp.yaml
-      - configs/open5gs/amf.yaml
-      - configs/open5gs/smf.yaml
-      - configs/open5gs/upf.yaml
-      - configs/open5gs/ausf.yaml
-      - configs/open5gs/udm.yaml
-      - configs/open5gs/udr.yaml
-      - configs/open5gs/pcf.yaml
-      - configs/open5gs/bsf.yaml
-      - configs/open5gs/nssf.yaml
+      - ../configs/open5gs/nrf.yaml
+      - ../configs/open5gs/scp.yaml
+      - ../configs/open5gs/amf.yaml
+      - ../configs/open5gs/smf.yaml
+      - ../configs/open5gs/upf.yaml
+      - ../configs/open5gs/ausf.yaml
+      - ../configs/open5gs/udm.yaml
+      - ../configs/open5gs/udr.yaml
+      - ../configs/open5gs/pcf.yaml
+      - ../configs/open5gs/bsf.yaml
+      - ../configs/open5gs/nssf.yaml
 
   - name: oai-config
     files:
-      - configs/oai/gnb.conf
-      - configs/oai/ue.conf
+      - ../configs/oai/gnb.conf
+      - ../configs/oai/ue.conf
 
 images:
   - name: gradiant/open5gs
