@@ -997,11 +997,35 @@ data:
 
         // Tracing section - PCAP capture
         function TracingSection() {
+          const [tab, setTab] = useState('interface');
           const [pods, setPods] = useState([]);
           const [sessions, setSessions] = useState([]);
-          const [form, setForm] = useState({ pod: '', container: '', interface: 'any', filter: '', duration: '60', fileSize: '50' });
+          const [selectedInterfaces, setSelectedInterfaces] = useState({ ngap: true, gtpu: true, pfcp: true, sbi: true, allSctp: false, ueSubnet: false });
+          const [podForm, setPodForm] = useState({ pod: '', container: '', interface: 'any', filter: '', duration: '60', fileSize: '50' });
+          const [duration, setDuration] = useState('60');
+          const [fileSize, setFileSize] = useState('50');
           const [starting, setStarting] = useState(false);
           const [loading, setLoading] = useState(false);
+
+          const interfaceDefinitions = [
+            { id: 'ngap', name: 'NGAP (N2)', protocol: 'SCTP:38412', code: 'AMF', desc: 'Control signalling between gNB and AMF (3GPP TS 38.413)', filter: 'sctp port 38412', color: 'rgba(0,150,255,0.1)', borderColor: '#0096ff' },
+            { id: 'gtpu', name: 'GTP-U (N3)', protocol: 'UDP:2152', code: 'UPF', desc: 'User-plane tunnels between gNB and UPF (3GPP TS 29.281)', filter: 'udp port 2152', color: 'rgba(0,200,100,0.1)', borderColor: '#00c864' },
+            { id: 'pfcp', name: 'PFCP (N4)', protocol: 'UDP:8805', code: 'SMF-UPF', desc: 'Session management between SMF and UPF (3GPP TS 29.244)', filter: 'udp port 8805', color: 'rgba(255,150,0,0.1)', borderColor: '#ff9600' },
+            { id: 'sbi', name: 'SBI (NS-NB)', protocol: 'TCP:7777', code: 'NRF', desc: 'Service-Based Interface — HTTP/2 NF inter-communication', filter: 'tcp port 7777', color: 'rgba(150,100,255,0.1)', borderColor: '#9664ff' },
+            { id: 'allSctp', name: 'All SCTP', protocol: 'SCTP:any', code: 'AMF/NRF', desc: 'Capture all SCTP traffic (NGAP + any other SCTP protocols)', filter: 'sctp', color: 'rgba(100,100,100,0.1)', borderColor: '#666666' },
+            { id: 'ueSubnet', name: 'UE IP Subnet', protocol: 'any=UPF', code: 'UPF', desc: 'All traffic to/from the UE IP pool (data plane inspection)', filter: 'net 10.45.0.0/16', color: 'rgba(100,200,255,0.1)', borderColor: '#64c8ff' }
+          ];
+
+          const buildCombinedFilter = () => {
+            const selected = [];
+            if (selectedInterfaces.ngap) selected.push('sctp port 38412');
+            if (selectedInterfaces.gtpu) selected.push('udp port 2152');
+            if (selectedInterfaces.pfcp) selected.push('udp port 8805');
+            if (selectedInterfaces.sbi) selected.push('tcp port 7777');
+            if (selectedInterfaces.allSctp) selected.push('sctp');
+            if (selectedInterfaces.ueSubnet) selected.push('net 10.45.0.0/16');
+            return selected.join(' or ');
+          };
 
           const fetchPods = async () => {
             try {
@@ -1009,7 +1033,7 @@ data:
               if (!res.ok) throw new Error('Failed to fetch pods');
               const data = await res.json();
               setPods(data);
-              if (data.length > 0 && !form.pod) setForm(f => ({ ...f, pod: data[0].name }));
+              if (data.length > 0 && !podForm.pod) setPodForm(f => ({ ...f, pod: data[0].name }));
             } catch (e) {
               console.error('Error fetching pods:', e);
             }
@@ -1033,24 +1057,48 @@ data:
             return () => clearInterval(interval);
           }, []);
 
-          const handleStartCapture = async () => {
-            if (!form.pod) { alert('Select a pod'); return; }
+          const handleStartInterfaceCapture = async () => {
+            if (!Object.values(selectedInterfaces).some(v => v)) { alert('Select at least one interface'); return; }
             setStarting(true);
             try {
               const res = await fetch('/api/pcap/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                  pod: form.pod,
-                  container: form.container || undefined,
-                  interface: form.interface,
-                  filter: form.filter,
-                  duration: Number(form.duration),
-                  fileSize: Number(form.fileSize)
+                  type: 'interface',
+                  interfaces: selectedInterfaces,
+                  filter: buildCombinedFilter(),
+                  duration: Number(duration),
+                  fileSize: Number(fileSize)
                 })
               });
               if (!res.ok) throw new Error('Failed to start capture');
-              setForm(f => ({ ...f, pod: '', container: '', interface: 'any', filter: '', duration: '60', fileSize: '50' }));
+              fetchSessions();
+            } catch (e) {
+              alert('Error: ' + e.message);
+            } finally {
+              setStarting(false);
+            }
+          };
+
+          const handleStartPodCapture = async () => {
+            if (!podForm.pod) { alert('Select a pod'); return; }
+            setStarting(true);
+            try {
+              const res = await fetch('/api/pcap/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                  type: 'pod',
+                  pod: podForm.pod,
+                  container: podForm.container || undefined,
+                  interface: podForm.interface,
+                  filter: podForm.filter,
+                  duration: Number(podForm.duration),
+                  fileSize: Number(podForm.fileSize)
+                })
+              });
+              if (!res.ok) throw new Error('Failed to start capture');
               fetchSessions();
             } catch (e) {
               alert('Error: ' + e.message);
@@ -1087,16 +1135,8 @@ data:
             }
           };
 
-          const selectedPod = pods.find(p => p.name === form.pod);
+          const selectedPod = pods.find(p => p.name === podForm.pod);
           const containers = selectedPod?.containers || [];
-          const commonFilters = [
-            ['NGAP (N2)', 'sctp port 38412'],
-            ['GTP-U (N3)', 'udp port 2152'],
-            ['PFCP (N4)', 'udp port 8805'],
-            ['SBI (HTTP)', 'tcp port 7777'],
-            ['All SCTP', 'sctp'],
-            ['UE subnet', 'net 10.45.0.0/16']
-          ];
 
           return (
             <div>
@@ -1119,66 +1159,119 @@ data:
               </div>
 
               <div className="info-box">
-                <Icon name="network" /> <strong>PCAP Tracing:</strong> Capture network traffic from K8s pods. Download for analysis in Wireshark.
+                <Icon name="network" /> <strong>PCAP Tracing:</strong> Multi-interface capture from 5G NF pods. Interface Capture mode selects predefined 5G interfaces; Pod Capture mode targets specific pods.
               </div>
 
-              <div className="panel">
-                <h3><Icon name="network" /> New Capture</h3>
-
-                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16}}>
-                  <div className="form-group">
-                    <label>Pod</label>
-                    <select value={form.pod} onChange={e => setForm(f => ({...f, pod: e.target.value, container: ''}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                      <option value="">— Select pod —</option>
-                      {pods.map(p => (<option key={p.name} value={p.name}>{p.app?.toUpperCase() || p.name} ({p.name})</option>))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Container</label>
-                    <select value={form.container} onChange={e => setForm(f => ({...f, container: e.target.value}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                      <option value="">Default</option>
-                      {containers.map(c => (<option key={c} value={c}>{c}</option>))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Interface</label>
-                    <input type="text" value={form.interface} onChange={e => setForm(f => ({...f, interface: e.target.value}))} placeholder="any, eth0, eth1..." style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Duration (sec)</label>
-                    <input type="number" value={form.duration} onChange={e => setForm(f => ({...f, duration: e.target.value}))} min="1" max="3600" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
-                  </div>
-
-                  <div className="form-group">
-                    <label>File Size (MB)</label>
-                    <input type="number" value={form.fileSize} onChange={e => setForm(f => ({...f, fileSize: e.target.value}))} min="1" max="5000" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
-                  </div>
-                </div>
-
-                <div className="form-group">
-                  <label>BPF Filter (optional)</label>
-                  <input type="text" value={form.filter} onChange={e => setForm(f => ({...f, filter: e.target.value}))} placeholder="e.g. port 38412, host 10.45.0.1, sctp" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '11px'}} />
-                </div>
-
-                <div style={{marginBottom: 16, padding: 12, background: 'var(--bg3)', borderRadius: 6}}>
-                  <div style={{fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 8}}>Common BPF Filters for 5G</div>
-                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 6}}>
-                    {commonFilters.map(([label, filter_text]) => (
-                      <button key={label} onClick={() => setForm(f => ({...f, filter: filter_text}))} style={{textAlign: 'left', padding: 8, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text2)', fontSize: 11, transition: 'all 0.2s'}}>
-                        <div style={{fontWeight: 600, color: 'var(--text)', marginBottom: 2}}>{label}</div>
-                        <div style={{fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text3)'}}>{filter_text}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <button className="button" onClick={handleStartCapture} disabled={starting || !form.pod} style={{width: '100%'}}>
-                  <Icon name="play" /> {starting ? 'Starting...' : 'Start Capture'}
+              <div style={{display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: 16}}>
+                <button onClick={() => setTab('interface')} style={{flex: 1, padding: '14px', background: tab === 'interface' ? 'rgba(0,200,255,0.1)' : 'transparent', borderBottom: tab === 'interface' ? '3px solid var(--accent)' : 'none', color: tab === 'interface' ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontWeight: 600, fontSize: 14, border: 'none', marginBottom: '-2px', transition: 'all 0.2s'}}>
+                  <Icon name="network" /> Interface Capture
+                </button>
+                <button onClick={() => setTab('pod')} style={{flex: 1, padding: '14px', background: tab === 'pod' ? 'rgba(0,200,255,0.1)' : 'transparent', borderBottom: tab === 'pod' ? '3px solid var(--accent)' : 'none', color: tab === 'pod' ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontWeight: 600, fontSize: 14, border: 'none', marginBottom: '-2px', transition: 'all 0.2s'}}>
+                  <Icon name="server" /> Pod Capture
                 </button>
               </div>
+
+              {tab === 'interface' && (
+                <div className="panel">
+                  <h3><Icon name="network" /> New Interface Capture</h3>
+                  <div style={{fontSize: 12, color: 'var(--text2)', textTransform: 'uppercase', marginBottom: 16, fontWeight: 600}}>Select 5G Interfaces to Capture</div>
+
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginBottom: 20}}>
+                    {interfaceDefinitions.map(iface => (
+                      <div key={iface.id} style={{padding: 16, background: selectedInterfaces[iface.id] ? iface.color : 'transparent', border: `2px solid ${selectedInterfaces[iface.id] ? iface.borderColor : 'var(--border)'}`, borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s'}} onClick={() => setSelectedInterfaces(s => ({...s, [iface.id]: !s[iface.id]}))}>
+                        <div style={{display: 'flex', alignItems: 'flex-start', gap: 8}}>
+                          <input type="checkbox" checked={selectedInterfaces[iface.id]} onChange={() => {}} style={{marginTop: 4, cursor: 'pointer'}} />
+                          <div style={{flex: 1}}>
+                            <div style={{fontWeight: 600, fontSize: 13, color: 'var(--text)', marginBottom: 4}}>
+                              <span style={{marginRight: 8}}>●</span>{iface.name}
+                            </div>
+                            <div style={{fontSize: 11, color: 'var(--text2)', marginBottom: 2}}>
+                              {iface.protocol} <span style={{color: 'var(--text3)', marginLeft: 8}}>{iface.code}</span>
+                            </div>
+                            <div style={{fontSize: 10, color: 'var(--text3)', marginBottom: 8, lineHeight: 1.4}}>{iface.desc}</div>
+                            <div style={{fontSize: 11, color: selectedInterfaces[iface.id] ? iface.borderColor : 'var(--text3)', fontFamily: 'var(--font-mono)', fontWeight: 600}}>{iface.filter}</div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{display: 'grid', gridTemplateColumns: '100px 100px 1fr', gap: 12, marginBottom: 16}}>
+                    <div className="form-group">
+                      <label style={{fontSize: 11}}>Duration (sec)</label>
+                      <input type="number" value={duration} onChange={e => setDuration(e.target.value)} min="1" max="3600" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)'}} />
+                    </div>
+                    <div className="form-group">
+                      <label style={{fontSize: 11}}>Max File Size (MB)</label>
+                      <input type="number" value={fileSize} onChange={e => setFileSize(e.target.value)} min="1" max="5000" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)'}} />
+                    </div>
+                    <div className="form-group">
+                      <label style={{fontSize: 11}}>Combined BPF Filter (auto-built from selection)</label>
+                      <div style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11, wordBreak: 'break-all', lineHeight: 1.3}}>
+                        {buildCombinedFilter() || 'Select interfaces above'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{fontSize: 11, color: 'var(--text2)', marginBottom: 16, padding: '8px 0'}}>
+                    Captures on eth0 of every selected NF pod simultaneously
+                  </div>
+
+                  <button className="button" onClick={handleStartInterfaceCapture} disabled={starting || !Object.values(selectedInterfaces).some(v => v)} style={{width: '100%'}}>
+                    <Icon name="play" /> {starting ? 'Starting...' : 'Start Capture'}
+                  </button>
+                </div>
+              )}
+
+              {tab === 'pod' && (
+                <div className="panel">
+                  <h3><Icon name="server" /> New Pod Capture</h3>
+
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16}}>
+                    <div className="form-group">
+                      <label>Pod</label>
+                      <select value={podForm.pod} onChange={e => setPodForm(f => ({...f, pod: e.target.value, container: ''}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                        <option value="">— Select pod —</option>
+                        {pods.map(p => (<option key={p.name} value={p.name}>{p.app?.toUpperCase() || p.name} ({p.name})</option>))}
+                      </select>
+                    </div>
+
+                    {containers.length > 0 && (
+                      <div className="form-group">
+                        <label>Container</label>
+                        <select value={podForm.container} onChange={e => setPodForm(f => ({...f, container: e.target.value}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                          <option value="">Default</option>
+                          {containers.map(c => (<option key={c} value={c}>{c}</option>))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="form-group">
+                      <label>Interface</label>
+                      <input type="text" value={podForm.interface} onChange={e => setPodForm(f => ({...f, interface: e.target.value}))} placeholder="any, eth0, eth1..." style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Duration (sec)</label>
+                      <input type="number" value={podForm.duration} onChange={e => setPodForm(f => ({...f, duration: e.target.value}))} min="1" max="3600" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Max File Size (MB)</label>
+                      <input type="number" value={podForm.fileSize} onChange={e => setPodForm(f => ({...f, fileSize: e.target.value}))} min="1" max="5000" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>BPF Filter (optional)</label>
+                    <input type="text" value={podForm.filter} onChange={e => setPodForm(f => ({...f, filter: e.target.value}))} placeholder="e.g. port 38412, host 10.45.0.1, sctp" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '11px'}} />
+                  </div>
+
+                  <button className="button" onClick={handleStartPodCapture} disabled={starting || !podForm.pod} style={{width: '100%'}}>
+                    <Icon name="play" /> {starting ? 'Starting...' : 'Start Capture'}
+                  </button>
+                </div>
+              )}
 
               <div className="panel">
                 <h3><Icon name="database" /> Capture Sessions ({sessions.length})</h3>
@@ -1189,10 +1282,12 @@ data:
                     <table className="table">
                       <thead>
                         <tr>
-                          <th>Pod</th>
-                          <th>Interface</th>
-                          <th>Filter</th>
+                          <th>Type</th>
+                          <th>Target</th>
+                          <th>Interface(s)</th>
+                          <th>BPF Filter</th>
                           <th>Started</th>
+                          <th>Duration</th>
                           <th>Status</th>
                           <th style={{textAlign: 'right'}}>Actions</th>
                         </tr>
@@ -1200,15 +1295,17 @@ data:
                       <tbody>
                         {sessions.map(s => (
                           <tr key={s.id}>
-                            <td style={{fontFamily: 'var(--font-mono)', fontSize: 11}}>{s.pod}</td>
-                            <td>{s.interface}</td>
-                            <td style={{fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text2)'}}>{s.filter || '—'}</td>
-                            <td style={{fontSize: 11, color: 'var(--text2)'}}>{new Date(s.startTime).toLocaleTimeString()}</td>
+                            <td><span style={{fontSize: 10, fontWeight: 600, padding: '3px 6px', background: s.type === 'interface' ? 'rgba(0,200,255,0.2)' : 'rgba(150,150,150,0.2)', borderRadius: 3, color: s.type === 'interface' ? 'var(--accent)' : 'var(--text2)'}}>{s.type === 'interface' ? 'Interface' : 'Pod'}</span></td>
+                            <td style={{fontSize: 11}}>{s.target || s.pod}</td>
+                            <td style={{fontSize: 11}}>{s.interface || '—'}</td>
+                            <td style={{fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text2)'}}>{s.filter ? s.filter.substring(0, 40) + (s.filter.length > 40 ? '...' : '') : '—'}</td>
+                            <td style={{fontSize: 10, color: 'var(--text3)'}}>{new Date(s.startTime).toLocaleTimeString()}</td>
+                            <td style={{fontSize: 11}}>{s.duration || '—'}s</td>
                             <td><span className={`badge ${s.status === 'running' ? 'danger' : 'success'}`}>{s.status}</span></td>
-                            <td style={{textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end'}}>
+                            <td style={{textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end', fontSize: 10}}>
                               {s.status === 'running' && <button className="button small danger" onClick={() => handleStopCapture(s.id)} disabled={loading}>Stop</button>}
-                              {s.status === 'stopped' && <button className="button small" onClick={() => handleDownload(s.id)}>Download</button>}
-                              <button className="button small danger" onClick={() => handleDeleteSession(s.id)}>Delete</button>
+                              {s.status === 'stopped' && <button className="button small" onClick={() => handleDownload(s.id)}>PCAP</button>}
+                              <button className="button small danger" onClick={() => handleDeleteSession(s.id)}>Del</button>
                             </td>
                           </tr>
                         ))}
