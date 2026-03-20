@@ -689,7 +689,6 @@ data:
           const [pingOut, setPingOut] = useState({});
           const [nasDeregType, setNasDeregType] = useState('switch-off');
           const [socksState, setSocksState] = useState({}); // {imsi: {running, podName, port, ...}}
-          const [adminCfg, setAdminCfg] = useState(null); // {hostNetwork, imsiBase, ...}
           const isAdmin = window.__currentUser?.role === 'admin';
 
           const flash = (text, ok=true) => { setMsg({text,ok}); setTimeout(()=>setMsg({text:'',ok:true}),5000); };
@@ -703,10 +702,7 @@ data:
             } finally { setLoading(false); }
           };
 
-          React.useEffect(() => {
-            fetchBlock();
-            if (isAdmin) apiFetch('/api/admin/config').then(r => r.ok && r.json().then(setAdminCfg));
-          }, []);
+          React.useEffect(() => { fetchBlock(); }, []);
 
           const doRegister = async (username, isReg) => {
             setBusyK(`reg-${username}`, true);
@@ -1030,33 +1026,6 @@ data:
               {msg.text && (
                 <div style={{background:msg.ok?'rgba(0,200,100,0.1)':'rgba(255,80,80,0.1)',border:`1px solid ${msg.ok?'var(--success)':'var(--danger)'}`,borderRadius:6,padding:'8px 14px',color:msg.ok?'var(--success)':'var(--danger)',fontSize:12,marginBottom:12}}>
                   {msg.text}
-                </div>
-              )}
-
-              {/* Admin: hostNetwork toggle */}
-              {isAdmin && adminCfg && (
-                <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 16px',marginBottom:12,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-                  <span style={{fontSize:12,fontWeight:600,color:'var(--text2)',flex:1}}>Default Network Mode (new UEs)</span>
-                  <div style={{display:'flex',gap:6}}>
-                    {[{val:true,label:'hostNetwork',desc:'TUN interfaces on host — run nr-binder directly'},
-                      {val:false,label:'Pod network',desc:'SOCKS port-forward required'}].map(opt => (
-                      <button key={String(opt.val)} title={opt.desc}
-                        onClick={async () => {
-                          const r = await apiFetch('/api/admin/config', { method: 'PUT', body: JSON.stringify({ hostNetwork: opt.val }) });
-                          if (r.ok) setAdminCfg(await r.json());
-                        }}
-                        style={{padding:'4px 12px',borderRadius:6,fontSize:11,fontWeight:600,cursor:'pointer',
-                          border:'1px solid ' + (adminCfg.hostNetwork===opt.val ? 'var(--accent)' : 'var(--border)'),
-                          background:adminCfg.hostNetwork===opt.val ? 'rgba(0,200,150,0.15)' : 'transparent',
-                          color:adminCfg.hostNetwork===opt.val ? 'var(--accent)' : 'var(--text2)'}}>
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                  <span style={{fontSize:10,color:'var(--text3)'}}>
-                    {adminCfg.hostNetwork ? 'uesimtunX visible on node — nr-binder works from host' : 'SOCKS: kubectl port-forward required'}
-                  </span>
-                  <span style={{fontSize:10,color:'var(--warn)'}}>Re-provision pods to apply</span>
                 </div>
               )}
 
