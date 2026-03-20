@@ -1131,7 +1131,7 @@ data:
 
           React.useEffect(() => {
             fetchStatus();
-            const t = setInterval(fetchStatus, 10000);
+            const t = setInterval(fetchStatus, 60000);
             return () => clearInterval(t);
           }, []);
 
@@ -1224,7 +1224,7 @@ data:
           const AMF   = { x:260, y:300 };
           const SMF   = { x:566, y:300 };
           const UPF   = { x:700, y:415 };
-          const GNB   = { x:72,  y:385 };
+          const GNB   = { x:72,  y:415 };
           const MONGO = { x:860, y:300 };
           const INET  = { x:860, y:415 };
 
