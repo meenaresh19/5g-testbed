@@ -19,6 +19,10 @@ spec:
         prometheus.io/port: "9090"
     spec:
       serviceAccountName: prometheus
+      securityContext:
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
       containers:
       - name: prometheus
         image: prom/prometheus:latest
