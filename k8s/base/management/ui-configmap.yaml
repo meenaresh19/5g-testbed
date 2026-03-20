@@ -1001,7 +1001,8 @@ data:
           const [pods, setPods] = useState([]);
           const [sessions, setSessions] = useState([]);
           const [selectedInterfaces, setSelectedInterfaces] = useState({ ngap: true, gtpu: false, pfcp: false, sbi: false, allSctp: false, ueSubnet: false });
-          const [podForm, setPodForm] = useState({ pod: '', container: '', interface: 'any', filter: '', duration: '60', fileSize: '50' });
+          const [podForm, setPodForm] = useState({ interface: 'any', filter: '', duration: '60' });
+          const [selectedPods, setSelectedPods] = useState([]);
           const [duration, setDuration] = useState('60');
           const [fileSize, setFileSize] = useState('50');
           const [starting, setStarting] = useState(false);
@@ -1033,7 +1034,6 @@ data:
               if (!res.ok) throw new Error('Failed to fetch pods');
               const data = await res.json();
               setPods(data);
-              if (data.length > 0 && !podForm.pod) setPodForm(f => ({ ...f, pod: data[0].name }));
             } catch (e) {
               console.error('Error fetching pods:', e);
             }
@@ -1041,7 +1041,7 @@ data:
 
           const fetchSessions = async () => {
             try {
-              const res = await fetch('/api/pcap/sessions');
+              const res = await fetch('/api/pcap/sessions');  // fetches all types
               if (!res.ok) throw new Error('Failed to fetch sessions');
               const data = await res.json();
               setSessions(data.sessions || []);
@@ -1081,21 +1081,35 @@ data:
             }
           };
 
+          const getPodCategory = (app) => {
+            if (!app) return { label: 'System', color: 'rgba(100,100,100,0.1)', border: '#888888' };
+            if (app.startsWith('open5gs-')) return { label: 'Core NF', color: 'rgba(0,150,255,0.1)', border: '#0096ff' };
+            if (app.startsWith('ueransim-')) return { label: 'RAN', color: 'rgba(0,200,100,0.1)', border: '#00c864' };
+            if (app === 'prometheus' || app === 'grafana') return { label: 'Observability', color: 'rgba(255,150,0,0.1)', border: '#ff9600' };
+            return { label: 'System', color: 'rgba(150,100,255,0.1)', border: '#9664ff' };
+          };
+
+          const togglePodSelection = (podName) => {
+            setSelectedPods(prev => prev.includes(podName) ? prev.filter(n => n !== podName) : [...prev, podName]);
+          };
+
           const handleStartPodCapture = async () => {
-            if (!podForm.pod) { alert('Select a pod'); return; }
+            if (selectedPods.length === 0) { alert('Select at least one pod'); return; }
             setStarting(true);
             try {
+              const podTargets = selectedPods.map(name => {
+                const p = pods.find(p => p.name === name);
+                return { pod: name, container: p?.containers?.[0] || '' };
+              });
               const res = await fetch('/api/pcap/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                   type: 'pod',
-                  pod: podForm.pod,
-                  container: podForm.container || undefined,
+                  pods: podTargets,
                   interface: podForm.interface,
                   filter: podForm.filter,
                   duration: Number(podForm.duration),
-                  fileSize: Number(podForm.fileSize)
                 })
               });
               if (!res.ok) throw new Error('Failed to start capture');
@@ -1134,9 +1148,6 @@ data:
               alert('Error: ' + e.message);
             }
           };
-
-          const selectedPod = pods.find(p => p.name === podForm.pod);
-          const containers = selectedPod?.containers || [];
 
           return (
             <div>
@@ -1226,103 +1237,106 @@ data:
               {tab === 'pod' && (
                 <div className="panel">
                   <h3><Icon name="server" /> New Pod Capture</h3>
+                  <div style={{fontSize: 12, color: 'var(--text2)', textTransform: 'uppercase', marginBottom: 16, fontWeight: 600}}>
+                    Select Pods to Capture ({selectedPods.length} selected)
+                  </div>
 
-                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16}}>
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10, marginBottom: 20}}>
+                    {pods.map(p => {
+                      const cat = getPodCategory(p.app);
+                      const sel = selectedPods.includes(p.name);
+                      return (
+                        <div key={p.name} onClick={() => togglePodSelection(p.name)}
+                          style={{padding: 12, background: sel ? cat.color : 'transparent', border: `2px solid ${sel ? cat.border : 'var(--border)'}`, borderRadius: 8, cursor: 'pointer', transition: 'all 0.2s'}}>
+                          <div style={{display: 'flex', alignItems: 'flex-start', gap: 8}}>
+                            <input type="checkbox" checked={sel} onChange={() => {}} style={{marginTop: 3, cursor: 'pointer', flexShrink: 0}} />
+                            <div style={{flex: 1, minWidth: 0}}>
+                              <div style={{fontWeight: 600, fontSize: 12, color: sel ? cat.border : 'var(--text)', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+                                {p.app || p.name}
+                              </div>
+                              <div style={{fontSize: 10, color: 'var(--text3)', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>{p.name}</div>
+                              <div style={{fontSize: 10, color: sel ? cat.border : 'var(--accent)', fontFamily: 'var(--font-mono)'}}>{p.podIP}</div>
+                              <div style={{marginTop: 4}}>
+                                <span style={{fontSize: 9, padding: '1px 5px', borderRadius: 3, background: sel ? cat.border : 'var(--bg3)', color: sel ? '#fff' : 'var(--text3)', fontWeight: 600}}>{cat.label}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div style={{display: 'grid', gridTemplateColumns: '100px 100px 1fr', gap: 12, marginBottom: 12}}>
                     <div className="form-group">
-                      <label>Target Pod</label>
-                      <select value={podForm.pod} onChange={e => setPodForm(f => ({...f, pod: e.target.value, container: ''}))} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontSize: 12}}>
-                        <option value="">— Select pod —</option>
-                        {pods.map(p => (<option key={p.name} value={p.name}>{p.app?.toUpperCase() || p.name} — {p.name} ({p.ip || 'N/A'})</option>))}
-                      </select>
+                      <label style={{fontSize: 11}}>Interface</label>
+                      <input type="text" value={podForm.interface} onChange={e => setPodForm(f => ({...f, interface: e.target.value}))} placeholder="any" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
                     </div>
-
                     <div className="form-group">
-                      <label>Interface</label>
-                      <input type="text" value={podForm.interface} onChange={e => setPodForm(f => ({...f, interface: e.target.value}))} placeholder="any, eth0, eth1..." style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
-                    </div>
-
-                    <div className="form-group">
-                      <label>Duration (sec)</label>
+                      <label style={{fontSize: 11}}>Duration (sec)</label>
                       <input type="number" value={podForm.duration} onChange={e => setPodForm(f => ({...f, duration: e.target.value}))} min="1" max="3600" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
                     </div>
-                  </div>
-
-                  <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16}}>
                     <div className="form-group">
-                      <label>BPF Filter</label>
-                      <input type="text" value={podForm.filter} onChange={e => setPodForm(f => ({...f, filter: e.target.value}))} placeholder="e.g. sctp port 38412" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: '11px'}} />
-                    </div>
-
-                    <div className="form-group">
-                      <label>Max File Size (MB)</label>
-                      <input type="number" value={podForm.fileSize} onChange={e => setPodForm(f => ({...f, fileSize: e.target.value}))} min="1" max="5000" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}} />
+                      <label style={{fontSize: 11}}>BPF Filter</label>
+                      <input type="text" value={podForm.filter} onChange={e => setPodForm(f => ({...f, filter: e.target.value}))} placeholder="e.g. sctp port 38412 (leave blank for all)" style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-mono)', fontSize: 11}} />
                     </div>
                   </div>
 
-                  <div style={{marginBottom: 16, padding: 12, background: 'var(--bg3)', borderRadius: 6}}>
-                    <div style={{fontSize: 11, fontWeight: 600, color: 'var(--text2)', marginBottom: 8}}>Quick-pick BPF presets</div>
-                    <div style={{display: 'flex', gap: 8, flexWrap: 'wrap'}}>
-                      {[
-                        ['sctp port 38412', 'NGAP'],
-                        ['udp port 2152', 'GTP-U'],
-                        ['udp port 8805', 'PFCP'],
-                        ['tcp port 7777', 'SBI'],
-                        ['net 10.45.0.0/16', 'UE Subnet'],
-                        ['sctp (all)', 'All SCTP']
-                      ].map(([filter_text, label]) => (
-                        <button key={filter_text} onClick={() => setPodForm(f => ({...f, filter: filter_text}))} style={{padding: '6px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text2)', fontSize: 11, fontFamily: 'var(--font-mono)', transition: 'all 0.2s', whiteSpace: 'nowrap'}} onMouseEnter={e => { e.target.style.borderColor = 'var(--accent)'; e.target.style.color = 'var(--accent)'; }} onMouseLeave={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--text2)'; }}>
-                          {filter_text}
-                        </button>
+                  <div style={{marginBottom: 16, padding: 10, background: 'var(--bg3)', borderRadius: 6}}>
+                    <div style={{fontSize: 10, fontWeight: 600, color: 'var(--text2)', marginBottom: 6}}>Quick BPF presets</div>
+                    <div style={{display: 'flex', gap: 6, flexWrap: 'wrap'}}>
+                      {[['sctp port 38412','NGAP N2'],['udp port 2152','GTP-U N3'],['udp port 8805','PFCP N4'],['tcp port 7777','SBI'],['net 10.45.0.0/16','UE Subnet']].map(([f,l]) => (
+                        <button key={f} onClick={() => setPodForm(p => ({...p, filter: f}))} style={{padding: '4px 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text2)', fontSize: 10, fontFamily: 'var(--font-mono)'}} onMouseEnter={e=>{e.target.style.borderColor='var(--accent)';e.target.style.color='var(--accent)'}} onMouseLeave={e=>{e.target.style.borderColor='var(--border)';e.target.style.color='var(--text2)'}}>{f}</button>
                       ))}
                     </div>
                   </div>
 
-                  <button className="button" onClick={handleStartPodCapture} disabled={starting || !podForm.pod} style={{width: '100%'}}>
-                    <Icon name="play" /> {starting ? 'Starting...' : 'Start Capture'}
+                  <button className="button" onClick={handleStartPodCapture} disabled={starting || selectedPods.length === 0} style={{width: '100%'}}>
+                    <Icon name="play" /> {starting ? 'Starting...' : `Start Capture${selectedPods.length > 1 ? ` (${selectedPods.length} pods)` : ''}`}
                   </button>
                 </div>
               )}
 
               <div className="panel">
-                <h3><Icon name="database" /> Capture Sessions ({sessions.length})</h3>
-                {sessions.length === 0 ? (
-                  <div style={{fontSize: 12, color: 'var(--text2)', padding: '16px', textAlign: 'center'}}>No capture sessions yet</div>
-                ) : (
-                  <div style={{overflowX: 'auto'}}>
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Type</th>
-                          <th>Target</th>
-                          <th>Interface(s)</th>
-                          <th>BPF Filter</th>
-                          <th>Started</th>
-                          <th>Duration</th>
-                          <th>Status</th>
-                          <th style={{textAlign: 'right'}}>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sessions.map(s => (
-                          <tr key={s.id}>
-                            <td><span style={{fontSize: 10, fontWeight: 600, padding: '3px 6px', background: s.type === 'interface' ? 'rgba(0,200,255,0.2)' : 'rgba(150,150,150,0.2)', borderRadius: 3, color: s.type === 'interface' ? 'var(--accent)' : 'var(--text2)'}}>{s.type === 'interface' ? 'Interface' : 'Pod'}</span></td>
-                            <td style={{fontSize: 11}}>{s.target || s.pod}</td>
-                            <td style={{fontSize: 11}}>{s.interface || '—'}</td>
-                            <td style={{fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text2)'}}>{s.filter ? s.filter.substring(0, 40) + (s.filter.length > 40 ? '...' : '') : '—'}</td>
-                            <td style={{fontSize: 10, color: 'var(--text3)'}}>{new Date(s.startTime).toLocaleTimeString()}</td>
-                            <td style={{fontSize: 11}}>{s.duration || '—'}s</td>
-                            <td><span className={`badge ${s.status === 'running' ? 'danger' : 'success'}`}>{s.status}</span></td>
-                            <td style={{textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end', fontSize: 10}}>
-                              {s.status === 'running' && <button className="button small danger" onClick={() => handleStopCapture(s.id)} disabled={loading}>Stop</button>}
-                              {s.status === 'stopped' && <button className="button small" onClick={() => handleDownload(s.id)}>PCAP</button>}
-                              <button className="button small danger" onClick={() => handleDeleteSession(s.id)}>Del</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                {(() => {
+                  const tabSessions = sessions.filter(s => s.type === tab).slice(-10).reverse();
+                  return (
+                    <>
+                      <h3><Icon name="database" /> {tab === 'interface' ? 'Interface' : 'Pod'} Capture History ({tabSessions.length}/10)</h3>
+                      {tabSessions.length === 0 ? (
+                        <div style={{fontSize: 12, color: 'var(--text2)', padding: '16px', textAlign: 'center'}}>No {tab} capture sessions yet</div>
+                      ) : (
+                        <div style={{overflowX: 'auto'}}>
+                          <table className="table">
+                            <thead>
+                              <tr>
+                                <th>Pod</th>
+                                <th>BPF Filter</th>
+                                <th>Started</th>
+                                <th>Status</th>
+                                <th style={{textAlign: 'right'}}>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {tabSessions.map(s => (
+                                <tr key={s.id}>
+                                  <td style={{fontSize: 11}}>{s.pod}</td>
+                                  <td style={{fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text2)'}}>{s.filter || '(all traffic)'}</td>
+                                  <td style={{fontSize: 10, color: 'var(--text3)'}}>{new Date(s.startTime).toLocaleTimeString()}</td>
+                                  <td><span className={`badge ${s.status === 'running' ? 'danger' : s.status === 'error' ? 'warn' : 'success'}`}>{s.status}</span></td>
+                                  <td style={{textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end', fontSize: 10}}>
+                                    {s.status === 'running' && <button className="button small danger" onClick={() => handleStopCapture(s.id)} disabled={loading}>Stop</button>}
+                                    {s.status === 'stopped' && <button className="button small" onClick={() => handleDownload(s.id)}>PCAP</button>}
+                                    <button className="button small danger" onClick={() => handleDeleteSession(s.id)}>Del</button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           );
