@@ -174,6 +174,50 @@ data:
       }
     });
 
+    // UE Management endpoints
+    // Stub implementation - would connect to MongoDB in production
+    const mockUEs = [
+      { imsi: '001010000000001', k: 'fec86ba6eb707ed08ce33ae45b4a0fba', opc: 'c42449363464e2e4fa8adca3063168ca', registered: true }
+    ];
+
+    // GET /ue - List all UEs
+    app.get('/ue', (req, res) => {
+      res.json({ status: 'ok', ues: mockUEs, count: mockUEs.length });
+    });
+
+    // POST /ue/add - Add new UE
+    app.post('/ue/add', (req, res) => {
+      try {
+        const { imsi, k, opc } = req.body;
+        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
+
+        // TODO: Write to MongoDB (open5gs database, subscribers collection)
+        const newUE = { imsi, k: k || 'fec86ba6eb707ed08ce33ae45b4a0fba', opc: opc || 'c42449363464e2e4fa8adca3063168ca', registered: false };
+        mockUEs.push(newUE);
+
+        res.json({ status: 'ok', message: `UE ${imsi} added`, ue: newUE });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // DELETE /ue/delete - Delete UE by IMSI
+    app.delete('/ue/delete', (req, res) => {
+      try {
+        const { imsi } = req.query;
+        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
+
+        // TODO: Delete from MongoDB (open5gs database, subscribers collection)
+        const idx = mockUEs.findIndex(u => u.imsi === imsi);
+        if (idx === -1) return res.status(404).json({ error: 'UE not found' });
+
+        const deleted = mockUEs.splice(idx, 1);
+        res.json({ status: 'ok', message: `UE ${imsi} deleted`, ue: deleted[0] });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // Health check
     app.get('/health', (req, res) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -184,6 +228,7 @@ data:
       console.log(`[testbed-api] Listening on port ${PORT}`);
       console.log(`[testbed-api] K8s namespace: ${ns}`);
       console.log(`[testbed-api] Connected to K8s cluster`);
+      console.log(`[testbed-api] UE management endpoints ready at /ue`);
     });
 
   # package.json for testbed-api
