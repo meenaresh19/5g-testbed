@@ -1000,7 +1000,7 @@ data:
           const [tab, setTab] = useState('interface');
           const [pods, setPods] = useState([]);
           const [sessions, setSessions] = useState([]);
-          const [selectedInterfaces, setSelectedInterfaces] = useState({ ngap: true, gtpu: true, pfcp: true, sbi: true, allSctp: false, ueSubnet: false });
+          const [selectedInterfaces, setSelectedInterfaces] = useState({ ngap: true, gtpu: false, pfcp: false, sbi: false, allSctp: false, ueSubnet: false });
           const [podForm, setPodForm] = useState({ pod: '', container: '', interface: 'any', filter: '', duration: '60', fileSize: '50' });
           const [duration, setDuration] = useState('60');
           const [fileSize, setFileSize] = useState('50');

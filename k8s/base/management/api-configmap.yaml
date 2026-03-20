@@ -725,8 +725,20 @@ data:
     // POST /pcap/start - Start packet capture using K8s Exec API (no kubectl binary needed)
     app.post('/pcap/start', async (req, res) => {
       try {
-        const { pod, container, interface: iface = 'any', filter = '', duration = 60 } = req.body;
-        if (!pod) return res.status(400).json({ error: 'pod required' });
+        let { type = 'pod', pod, container, interface: iface = 'any', filter = '', duration = 60 } = req.body;
+
+        // Interface Capture mode: auto-select the AMF pod (has tcpdump, handles N2/NGAP traffic)
+        if (type === 'interface' || !pod) {
+          try {
+            const amfPods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, 'app=open5gs-amf');
+            const amfPod = amfPods.body.items.find(p => p.status?.phase === 'Running');
+            if (!amfPod) return res.status(503).json({ error: 'AMF pod not ready — cannot start interface capture' });
+            pod = amfPod.metadata.name;
+            container = amfPod.spec.containers[0].name;
+          } catch (e) {
+            return res.status(500).json({ error: `Failed to find AMF pod: ${e.message}` });
+          }
+        }
 
         if (captureSession && captureSession.status === 'running') {
           return res.status(400).json({ error: 'Capture already running. Stop the current session first.' });
