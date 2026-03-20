@@ -58,11 +58,6 @@ resources:
   # - autoscaling/controller-deployment.yaml
   # - autoscaling/rbac.yaml
 
-commonMetadata:
-  labels:
-    app: 5g-testbed
-    version: "1.0"
-
 images:
   - name: mongo
     newTag: "6.0"
@@ -77,4 +72,5 @@ images:
   - name: nginx
     newTag: "1.25-alpine"
   - name: towards5gs/ueransim
-    newTag: "v3.2.6"
+    newName: gradiant/ueransim
+    newTag: "3.2.6"

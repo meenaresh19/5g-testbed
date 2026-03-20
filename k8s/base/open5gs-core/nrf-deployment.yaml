@@ -19,12 +19,15 @@ spec:
       - name: wait-mongodb
         image: busybox:1.28
         command: ['sh', '-c', 'until nc -z mongodb.5g-testbed.svc.cluster.local 27017; do echo waiting for mongodb; sleep 1; done']
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       containers:
       - name: nrf
         image: gradiant/open5gs:2.7.0
         imagePullPolicy: IfNotPresent
         command:
-        - /open5gs/install/bin/open5gs-nrfd
+        - /opt/open5gs/bin/open5gs-nrfd
         - -c
         - /etc/open5gs/nrf.yaml
         ports:
@@ -50,16 +53,14 @@ spec:
             cpu: 500m
             memory: 512Mi
         livenessProbe:
-          httpGet:
-            path: /nnrf-nfm/v1/nf-instances
+          tcpSocket:
             port: 7777
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
-          httpGet:
-            path: /nnrf-nfm/v1/nf-instances
+          tcpSocket:
             port: 7777
           initialDelaySeconds: 20
           periodSeconds: 5

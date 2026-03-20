@@ -15,6 +15,9 @@ spec:
       labels:
         app: open5gs-ausf
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       initContainers:
       - name: wait-nrf
         image: busybox:1.28
@@ -22,7 +25,7 @@ spec:
       containers:
       - name: ausf
         image: gradiant/open5gs:2.7.0
-        command: [/open5gs/install/bin/open5gs-ausfd, -c, /etc/open5gs/ausf.yaml]
+        command: [/opt/open5gs/bin/open5gs-ausfd, -c, /etc/open5gs/ausf.yaml]
         ports:
         - containerPort: 7777
           name: sbi
@@ -63,6 +66,9 @@ spec:
       labels:
         app: open5gs-udm
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       initContainers:
       - name: wait-nrf
         image: busybox:1.28
@@ -70,7 +76,7 @@ spec:
       containers:
       - name: udm
         image: gradiant/open5gs:2.7.0
-        command: [/open5gs/install/bin/open5gs-udmd, -c, /etc/open5gs/udm.yaml]
+        command: [/opt/open5gs/bin/open5gs-udmd, -c, /etc/open5gs/udm.yaml]
         ports:
         - containerPort: 7777
           name: sbi
@@ -111,6 +117,9 @@ spec:
       labels:
         app: open5gs-udr
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       initContainers:
       - name: wait-mongodb
         image: busybox:1.28
@@ -121,7 +130,7 @@ spec:
       containers:
       - name: udr
         image: gradiant/open5gs:2.7.0
-        command: [/open5gs/install/bin/open5gs-udrd, -c, /etc/open5gs/udr.yaml]
+        command: [/opt/open5gs/bin/open5gs-udrd, -c, /etc/open5gs/udr.yaml]
         ports:
         - containerPort: 7777
           name: sbi
@@ -134,8 +143,8 @@ spec:
         env:
         - name: NRF_URI
           value: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-        - name: MONGODB_URL
-          value: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+        - name: DB_URI
+          value: mongodb://mongodb.5g-testbed.svc.cluster.local/open5gs
         resources:
           requests:
             cpu: 100m
@@ -164,6 +173,9 @@ spec:
       labels:
         app: open5gs-pcf
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       initContainers:
       - name: wait-mongodb
         image: busybox:1.28
@@ -174,7 +186,7 @@ spec:
       containers:
       - name: pcf
         image: gradiant/open5gs:2.7.0
-        command: [/open5gs/install/bin/open5gs-pcfd, -c, /etc/open5gs/pcf.yaml]
+        command: [/opt/open5gs/bin/open5gs-pcfd, -c, /etc/open5gs/pcf.yaml]
         ports:
         - containerPort: 7777
           name: sbi
@@ -187,8 +199,8 @@ spec:
         env:
         - name: NRF_URI
           value: http://open5gs-nrf.5g-testbed.svc.cluster.local:7777
-        - name: MONGODB_URL
-          value: mongodb://mongodb.5g-testbed.svc.cluster.local:27017
+        - name: DB_URI
+          value: mongodb://mongodb.5g-testbed.svc.cluster.local/open5gs
         resources:
           requests:
             cpu: 100m
@@ -217,6 +229,9 @@ spec:
       labels:
         app: open5gs-bsf
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       initContainers:
       - name: wait-mongodb
         image: busybox:1.28
@@ -227,7 +242,7 @@ spec:
       containers:
       - name: bsf
         image: gradiant/open5gs:2.7.0
-        command: [/open5gs/install/bin/open5gs-bsfd, -c, /etc/open5gs/bsf.yaml]
+        command: [/opt/open5gs/bin/open5gs-bsfd, -c, /etc/open5gs/bsf.yaml]
         ports:
         - containerPort: 7777
           name: sbi
@@ -270,6 +285,9 @@ spec:
       labels:
         app: open5gs-nssf
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       initContainers:
       - name: wait-nrf
         image: busybox:1.28
@@ -277,7 +295,7 @@ spec:
       containers:
       - name: nssf
         image: gradiant/open5gs:2.7.0
-        command: [/open5gs/install/bin/open5gs-nssfd, -c, /etc/open5gs/nssf.yaml]
+        command: [/opt/open5gs/bin/open5gs-nssfd, -c, /etc/open5gs/nssf.yaml]
         ports:
         - containerPort: 7777
           name: sbi
@@ -318,6 +336,9 @@ spec:
       labels:
         app: open5gs-webui
     spec:
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       initContainers:
       - name: wait-mongodb
         image: busybox:1.28
@@ -326,11 +347,11 @@ spec:
       - name: webui
         image: gradiant/open5gs-webui:2.7.0
         ports:
-        - containerPort: 3000
+        - containerPort: 9999
           name: http
         env:
         - name: DB_URI
-          value: mongodb://mongodb.5g-testbed.svc.cluster.local:27017/open5gs
+          value: mongodb://mongodb.5g-testbed.svc.cluster.local/open5gs
         - name: ADMIN_USER
           value: admin
         - name: ADMIN_PASS
@@ -345,13 +366,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /
-            port: 3000
+            port: 9999
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
             path: /
-            port: 3000
+            port: 9999
           initialDelaySeconds: 20
           periodSeconds: 5
       volumes: []
@@ -368,6 +389,6 @@ spec:
     app: open5gs-webui
   ports:
   - name: http
-    port: 3000
-    targetPort: 3000
+    port: 9999
+    targetPort: 9999
     protocol: TCP

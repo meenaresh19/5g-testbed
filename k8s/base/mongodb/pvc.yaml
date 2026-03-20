@@ -6,7 +6,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path
+  storageClassName: csi-rawfile-default
   resources:
     requests:
       storage: 10Gi

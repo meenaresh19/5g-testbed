@@ -19,6 +19,9 @@ spec:
       - name: wait-gnb
         image: busybox:1.28
         command: ['sh', '-c', 'sleep 10']  # Give gNB time to start
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       containers:
       - name: ue
         image: towards5gs/ueransim:v3.2.6
@@ -40,11 +43,11 @@ spec:
         - name: UE_IP
           value: 192.168.70.30
         securityContext:
+          privileged: true
           capabilities:
             add:
             - NET_ADMIN
             - NET_RAW
-          allowPrivilegeEscalation: true
         resources:
           requests:
             cpu: 100m
@@ -55,12 +58,12 @@ spec:
         livenessProbe:
           exec:
             command:
-            - bash
+            - sh
             - -c
-            - pgrep -f 'nr-ue -c'
+            - pgrep -f 'nr-ue'
           initialDelaySeconds: 40
           periodSeconds: 10
-          failureThreshold: 3
+          failureThreshold: 5
       dnsPolicy: ClusterFirstWithHostNet
       hostNetwork: false
       volumes:
@@ -93,6 +96,9 @@ spec:
       - name: wait-gnb
         image: busybox:1.28
         command: ['sh', '-c', 'sleep 15']
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       containers:
       - name: ue
         image: towards5gs/ueransim:v3.2.6

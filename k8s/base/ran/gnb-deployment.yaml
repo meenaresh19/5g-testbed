@@ -18,13 +18,13 @@ spec:
       initContainers:
       - name: wait-amf
         image: busybox:1.28
-        command: ['sh', '-c', 'until nc -z open5gs-amf.5g-testbed.svc.cluster.local 38412; do echo waiting for amf; sleep 2; done']
+        command: ['sh', '-c', 'until nc -z open5gs-amf.5g-testbed.svc.cluster.local 7777; do echo waiting for amf; sleep 2; done']
       containers:
       - name: gnb
         image: towards5gs/ueransim:v3.2.6
         imagePullPolicy: IfNotPresent
         command:
-        - gnb
+        - nr-gnb
         - -c
         - /etc/ueransim/gnb.yaml
         ports:
@@ -62,14 +62,17 @@ spec:
         livenessProbe:
           exec:
             command:
-            - bash
+            - sh
             - -c
-            - pgrep -f 'gnb -c'
+            - pgrep -f 'nr-gnb'
           initialDelaySeconds: 30
           periodSeconds: 10
           failureThreshold: 3
       dnsPolicy: ClusterFirstWithHostNet
       hostNetwork: false
+      securityContext:
+        seccompProfile:
+          type: Unconfined
       volumes:
       - name: config
         configMap:
@@ -77,3 +80,20 @@ spec:
       - name: dev-net-tun
         hostPath:
           path: /dev/net/tun
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ueransim-gnb
+  namespace: 5g-testbed
+  labels:
+    app: ueransim-gnb
+spec:
+  type: ClusterIP
+  selector:
+    app: ueransim-gnb
+  ports:
+  - name: uu
+    port: 4997
+    targetPort: 4997
+    protocol: UDP

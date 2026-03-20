@@ -9,126 +9,101 @@ data:
     mnc: '01'
     nci: '0x000000010'
     idLength: 32
-    linkIp: 127.0.0.1
+    linkIp: 0.0.0.0
     ngapIp: 0.0.0.0
     gtpIp: 0.0.0.0
-
     amfConfigs:
     - address: open5gs-amf.5g-testbed.svc.cluster.local
       port: 38412
-
-    ignoreStreamIds: false
-
     slices:
     - sst: 1
-      sd: '000000'
-
-    gnbName: gNodeB-1
-
-    gtpAdvertiseAddress: 192.168.70.20
-
-    plmn:
-    - mcc: '001'
-      mnc: '01'
-
     tac: 1
-
-    supportedAlgorithms:
-      ciphering:
-      - '128-EEA0'
-      - '128-EEA2'
-      integrity:
-      - '128-EIA0'
-      - '128-EIA2'
+    ignoreStreamIds: true
 
   ue.yaml: |
-    # UERANSIM UE1 Configuration
-    supi: imsi-001010000000001
+    supi: 'imsi-001010000000001'
     mcc: '001'
     mnc: '01'
-    key: fec86ba6eb707ed08ce33ae45b4a0fba
-    opc: c42449363464e2e4fa8adca3063168ca
-    amf: c3d4
-    imei: 356938035643800
-    imeiSv: 4
-
-    plmn:
-    - mcc: '001'
-      mnc: '01'
-
-    ConfiguredNssai:
-    - sst: 1
-      sd: '000000'
-
-    Snssai:
-    - sst: 1
-      sd: '000000'
-
+    key: 'fec86ba6eb707ed08ce33ae45b4a0fba'
+    op: 'c42449363464e2e4fa8adca3063168ca'
+    opType: 'OPC'
+    amf: '8000'
+    imei: '356938035643800'
+    imeiSv: '4370816125816151'
+    gnbSearchList:
+    - ueransim-gnb.5g-testbed.svc.cluster.local
     uacAic:
       mps: false
       mcs: false
-
     uacAcc:
       normalClass: 0
-      classMarkb: 0
-
-    sessionConfig:
-    - type: IPv4
-      apn: internet
+      class11: false
+      class12: false
+      class13: false
+      class14: false
+      class15: false
+    sessions:
+    - type: 'IPv4'
+      apn: 'internet'
       slice:
         sst: 1
-        sd: '000000'
-
-    deviceProperties:
-      types:
-      - IPv4
-      ipVersion: 4
-
-    defaultAs: 192.168.70.30
-
-    linkIp: 127.0.0.1
-
-    gnbSearchList:
-    - 192.168.70.20
+    configured-nssai:
+    - sst: 1
+    default-nssai:
+    - sst: 1
+    integrity:
+      IA1: true
+      IA2: true
+      IA3: true
+    ciphering:
+      EA0: true
+      EA1: true
+      EA2: true
+      EA3: true
+    integrityMaxRate:
+      uplink: 'full'
+      downlink: 'full'
 
   ue2.yaml: |
-    # UERANSIM UE2 Configuration
-    supi: imsi-001010000000002
+    supi: 'imsi-001010000000002'
     mcc: '001'
     mnc: '01'
-    key: fec86ba6eb707ed08ce33ae45b4a0fba
-    opc: c42449363464e2e4fa8adca3063168ca
-    amf: c3d4
-    imei: 356938035643801
-    imeiSv: 4
-
-    plmn:
-    - mcc: '001'
-      mnc: '01'
-
-    ConfiguredNssai:
-    - sst: 1
-      sd: '000000'
-
-    Snssai:
-    - sst: 1
-      sd: '000000'
-
-    sessionConfig:
-    - type: IPv4
-      apn: internet
+    key: 'fec86ba6eb707ed08ce33ae45b4a0fba'
+    op: 'c42449363464e2e4fa8adca3063168ca'
+    opType: 'OPC'
+    amf: '8000'
+    imei: '356938035643801'
+    imeiSv: '4370816125816151'
+    gnbSearchList:
+    - ueransim-gnb.5g-testbed.svc.cluster.local
+    uacAic:
+      mps: false
+      mcs: false
+    uacAcc:
+      normalClass: 0
+      class11: false
+      class12: false
+      class13: false
+      class14: false
+      class15: false
+    sessions:
+    - type: 'IPv4'
+      apn: 'internet'
       slice:
         sst: 1
-        sd: '000000'
-
-    deviceProperties:
-      types:
-      - IPv4
-      ipVersion: 4
-
-    defaultAs: 192.168.70.31
-
-    linkIp: 127.0.0.1
-
-    gnbSearchList:
-    - 192.168.70.20
+    configured-nssai:
+    - sst: 1
+    default-nssai:
+    - sst: 1
+    integrity:
+      IA1: true
+      IA2: true
+      IA3: true
+    ciphering:
+      EA0: true
+      EA1: true
+      EA2: true
+      EA3: true
+    integrityMaxRate:
+      uplink: 'full'
+      downlink: 'full'
