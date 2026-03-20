@@ -675,85 +675,64 @@ data:
         const C = { bg:'#0d1117', card:'#161b22', border:'#30363d', text:'#e6edf3', muted:'#8b949e', accent:'#00c896' };
 
         function UEManager() {
-          const [tab, setTab] = useState('config');
-          const [ues, setUes] = useState([]);
-          const [inventory, setInventory] = useState([]);
+          const [tab, setTab] = useState('overview');
+          // block data: null (loading), object (single user), array (admin all users)
+          const [block, setBlock] = useState(null);
           const [loading, setLoading] = useState(false);
-          const [showAddModal, setShowAddModal] = useState(false);
-          const [editUe, setEditUe] = useState(null);
+          const [busy, setBusy] = useState({});
+          const [msg, setMsg] = useState({ text: '', ok: true });
           const [expandedImsi, setExpandedImsi] = useState(null);
           const [detailData, setDetailData] = useState({});
-          const [sessionForm, setSessionForm] = useState({ type: 'IPv4', dnn: 'internet', sst: 1, sd: '' });
+          const [sessionForm, setSessionForm] = useState({ type: 'IPv4', dnn: 'internet', sst: 1 });
           const [pingForm, setPingForm] = useState({ target: '8.8.8.8', count: 4 });
           const [pingOut, setPingOut] = useState({});
           const [nasDeregType, setNasDeregType] = useState('normal');
+          const isAdmin = window.__currentUser?.role === 'admin';
 
-          const defaultForm = () => ({
-            imsi: '', k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
-            opc: 'c42449363464e2e4fa8adca3063168ca',
-            amf: '8000', dnn: 'internet', sst: 1, sd: '',
-            ambrDl: 1, ambrUl: 1, label: ''
-          });
-          const [form, setForm] = useState(defaultForm());
+          const flash = (text, ok=true) => { setMsg({text,ok}); setTimeout(()=>setMsg({text:'',ok:true}),5000); };
+          const setBusyK = (k,v) => setBusy(b=>({...b,[k]:v}));
 
-          const genCreds = () => {
-            const hex = n => Array.from({length: n}, () => Math.floor(Math.random()*16).toString(16)).join('');
-            setForm(f => ({ ...f, k: hex(32), opc: hex(32) }));
-          };
-
-          const fetchUes = async () => {
-            try {
-              const r = await apiFetch('/api/ue');
-              if (r.ok) setUes(await r.json());
-            } catch (e) {}
-          };
-
-          const fetchInventory = async () => {
+          const fetchBlock = async () => {
             setLoading(true);
             try {
-              const r = await apiFetch('/api/ue/inventory');
-              if (r.ok) setInventory(await r.json());
-            } catch (e) {}
-            setLoading(false);
+              const r = await apiFetch('/api/ue');
+              if (r.ok) setBlock(await r.json());
+            } finally { setLoading(false); }
           };
 
-          React.useEffect(() => { fetchUes(); }, []);
-          React.useEffect(() => { if (tab === 'ops') fetchInventory(); }, [tab]);
+          React.useEffect(() => { fetchBlock(); }, []);
+          React.useEffect(() => {
+            if (tab === 'ops') {
+              fetchBlock();
+              const t = setInterval(fetchBlock, 8000);
+              return () => clearInterval(t);
+            }
+          }, [tab]);
 
-          const handleAdd = async () => {
-            if (!form.imsi || !/^\d{15}$/.test(form.imsi)) { alert('IMSI must be exactly 15 digits'); return; }
-            const r = await apiFetch('/api/ue', { method: 'POST', body: JSON.stringify({ ...form, label: form.label || `UE-${form.imsi.slice(-4)}` }) });
-            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
-            setShowAddModal(false); setForm(defaultForm()); fetchUes();
+          const doRegister = async (username, isReg) => {
+            setBusyK(`reg-${username}`, true);
+            const url = isReg ? '/api/ue/register' : '/api/ue/register';
+            const method = isReg ? 'DELETE' : 'POST';
+            const qs = (isReg && isAdmin) ? `?username=${username}` : '';
+            const body = (!isReg && isAdmin) ? JSON.stringify({ username }) : undefined;
+            const r = await apiFetch(url + qs, { method, body });
+            const d = await r.json();
+            r.ok ? flash(`${username}: ${d.message || (isReg ? 'Deregistered' : 'Registered')}`) : flash(d.error || 'Failed', false);
+            fetchBlock();
+            setBusyK(`reg-${username}`, false);
           };
 
-          const handleEdit = async () => {
-            const { imsi, ...fields } = form;
-            const r = await apiFetch(`/api/ue/${imsi}`, { method: 'PUT', body: JSON.stringify(fields) });
-            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
-            setEditUe(null); setForm(defaultForm()); fetchUes();
-          };
-
-          const handleDelete = async (imsi) => {
-            if (!confirm(`Remove ${imsi} from store?`)) return;
-            const r = await apiFetch(`/api/ue/${imsi}`, { method: 'DELETE' });
-            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
-            fetchUes();
-          };
-
-          const handleRegister = async (imsi, isRegistered) => {
-            const method = isRegistered ? 'DELETE' : 'POST';
-            const r = await apiFetch(`/api/ue/${imsi}/register`, { method });
-            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
-            fetchUes();
-          };
-
-          const handleProvision = async (imsi, isProvisioned) => {
-            const url = isProvisioned ? `/api/ue/${imsi}/deprovision` : `/api/ue/${imsi}/provision`;
-            const method = isProvisioned ? 'DELETE' : 'POST';
-            const r = await apiFetch(url, { method });
-            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
-            fetchInventory();
+          const doProvision = async (username, isProv) => {
+            setBusyK(`prov-${username}`, true);
+            const url = isProv ? '/api/ue/deprovision' : '/api/ue/provision';
+            const method = isProv ? 'DELETE' : 'POST';
+            const qs = (isProv && isAdmin) ? `?username=${username}` : '';
+            const body = (!isProv && isAdmin) ? JSON.stringify({ username }) : undefined;
+            const r = await apiFetch(url + qs, { method, body });
+            const d = await r.json();
+            r.ok ? flash(`${username}: pod ${isProv ? 'removed' : 'created'} (ue-${username})`) : flash(d.error || 'Failed', false);
+            fetchBlock();
+            setBusyK(`prov-${username}`, false);
           };
 
           const loadDetail = async (imsi) => {
@@ -767,34 +746,31 @@ data:
               const nas = nasR.ok ? await nasR.json() : {};
               const sess = sessR.ok ? await sessR.json() : {};
               setDetailData(d => ({ ...d, [imsi]: { nas, sessions: sess.sessions || [] } }));
-            } catch (e) {}
+            } catch {}
           };
 
           const handleEstablish = async (imsi) => {
             const r = await apiFetch(`/api/ue/${imsi}/sessions`, { method: 'POST', body: JSON.stringify(sessionForm) });
             const d = await r.json();
-            alert(d.output || d.error || 'Done');
+            flash(d.ok ? `Session established for ${imsi}` : (d.error || 'Failed'), d.ok);
             loadDetail(imsi);
           };
 
           const handleReleaseAll = async (imsi) => {
             const r = await apiFetch(`/api/ue/${imsi}/sessions`, { method: 'DELETE' });
-            const d = await r.json();
-            alert(d.output || d.error || 'Done');
+            const d = await r.json(); flash(d.ok ? 'Sessions released' : (d.error||'Failed'), d.ok);
             loadDetail(imsi);
           };
 
           const handleReleasePsi = async (imsi, psi) => {
             const r = await apiFetch(`/api/ue/${imsi}/sessions/${psi}`, { method: 'DELETE' });
-            const d = await r.json();
-            alert(d.output || d.error || 'Done');
+            const d = await r.json(); flash(d.ok ? `PSI ${psi} released` : (d.error||'Failed'), d.ok);
             loadDetail(imsi);
           };
 
           const handleNasDeregister = async (imsi) => {
             const r = await apiFetch(`/api/ue/${imsi}/nas-deregister`, { method: 'POST', body: JSON.stringify({ type: nasDeregType }) });
-            const d = await r.json();
-            alert(d.output || d.error || 'Done');
+            const d = await r.json(); flash(d.ok ? `Deregistered ${imsi}` : (d.error||'Failed'), d.ok);
           };
 
           const handlePing = async (imsi) => {
@@ -803,70 +779,80 @@ data:
             setPingOut(o => ({ ...o, [imsi]: d.output || d.error || '' }));
           };
 
-          const openEdit = (ue) => {
-            setForm({ imsi: ue.imsi, k: ue.k, opc: ue.opc, amf: ue.amf || '8000',
-              dnn: ue.dnn || 'internet', sst: ue.sst || 1, sd: ue.sd || '',
-              ambrDl: ue.ambrDl || 1, ambrUl: ue.ambrUl || 1, label: ue.label || '' });
-            setEditUe(ue.imsi);
-          };
+          // Normalize to array for rendering
+          const blocks = block === null ? [] : Array.isArray(block) ? block : [block];
+          const totalImsis = blocks.reduce((s, b) => s + (b.imsiCount || 0), 0);
+          const totalReg = blocks.reduce((s, b) => s + (b.registeredCount || 0), 0);
+          const totalPods = blocks.filter(b => b.ueProvisioned).length;
 
-          const configUes = ues;
-          const opsUes = inventory;
-          const regCount = configUes.filter(u => u.registered).length;
-          const provCount = opsUes.filter(u => u.provisioned).length;
+          const sel = (css) => ({ padding:'4px 8px', background:'var(--bg)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:3, fontSize:11, ...css });
 
-          const UeFormModal = ({ title, onSave, onClose }) => (
-            <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
-              <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,padding:24,maxWidth:580,width:'90%',maxHeight:'85vh',overflowY:'auto'}}>
-                <h2 style={{marginBottom:16,color:'var(--accent)',fontSize:16}}>{title}</h2>
-                <div className="form-group">
-                  <label>IMSI (15 digits)</label>
-                  <input type="text" value={form.imsi} disabled={!!editUe} onChange={e=>setForm(f=>({...f,imsi:e.target.value}))} placeholder="001010000000001" />
+          const ImsiOpsPanel = ({ imsi }) => (
+            <div style={{borderTop:'1px solid var(--border)',padding:16}}>
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:6}}>NAS Status</div>
+                {detailData[imsi]?.nas?.parsed ? (
+                  <div style={{display:'flex',gap:16,fontSize:11,fontFamily:'var(--font-mono)'}}>
+                    <span>CM: {detailData[imsi].nas.parsed.cmState||'—'}</span>
+                    <span>MM: {detailData[imsi].nas.parsed.mmState||'—'}</span>
+                    <span>RM: {detailData[imsi].nas.parsed.rmState||'—'}</span>
+                  </div>
+                ) : <div style={{fontSize:11,color:'var(--text3)'}}>Loading…</div>}
+              </div>
+              <div style={{marginBottom:12}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                  <span style={{fontSize:12,fontWeight:600,color:'var(--accent)'}}>PDU Sessions ({(detailData[imsi]?.sessions||[]).length})</span>
+                  <button className="button small danger" onClick={()=>handleReleaseAll(imsi)}>Release All</button>
                 </div>
-                <div className="form-group">
-                  <label>Label</label>
-                  <input type="text" value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))} placeholder={`UE-${(form.imsi||'????').slice(-4)}`} />
-                </div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                  <div className="form-group">
-                    <label>K (Auth Key)</label>
-                    <input type="text" value={form.k} onChange={e=>setForm(f=>({...f,k:e.target.value}))} style={{fontSize:10,fontFamily:'var(--font-mono)'}} />
-                  </div>
-                  <div className="form-group">
-                    <label>OPc</label>
-                    <input type="text" value={form.opc} onChange={e=>setForm(f=>({...f,opc:e.target.value}))} style={{fontSize:10,fontFamily:'var(--font-mono)'}} />
-                  </div>
-                </div>
-                <button className="button small" onClick={genCreds} style={{marginBottom:12,background:'var(--accent2)'}}>Generate credentials</button>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                  <div className="form-group">
-                    <label>AMF</label>
-                    <input type="text" value={form.amf} onChange={e=>setForm(f=>({...f,amf:e.target.value}))} />
-                  </div>
-                  <div className="form-group">
-                    <label>DNN</label>
-                    <input type="text" value={form.dnn} onChange={e=>setForm(f=>({...f,dnn:e.target.value}))} />
-                  </div>
-                  <div className="form-group">
-                    <label>SST</label>
-                    <input type="number" value={form.sst} onChange={e=>setForm(f=>({...f,sst:parseInt(e.target.value)||1}))} min="1" max="4" />
-                  </div>
-                  <div className="form-group">
-                    <label>SD (hex, optional)</label>
-                    <input type="text" value={form.sd} onChange={e=>setForm(f=>({...f,sd:e.target.value}))} placeholder="leave blank for none" />
-                  </div>
-                  <div className="form-group">
-                    <label>AMBR DL (Gbps unit)</label>
-                    <input type="number" value={form.ambrDl} onChange={e=>setForm(f=>({...f,ambrDl:parseInt(e.target.value)||1}))} min="1" />
-                  </div>
-                  <div className="form-group">
-                    <label>AMBR UL (Gbps unit)</label>
-                    <input type="number" value={form.ambrUl} onChange={e=>setForm(f=>({...f,ambrUl:parseInt(e.target.value)||1}))} min="1" />
+                {(detailData[imsi]?.sessions||[]).length === 0 ? (
+                  <div style={{fontSize:11,color:'var(--text3)'}}>No active sessions</div>
+                ) : (
+                  <table className="table" style={{fontSize:11}}>
+                    <thead><tr><th>PSI</th><th>State</th><th>Type</th><th>DNN</th><th>IP</th><th></th></tr></thead>
+                    <tbody>
+                      {(detailData[imsi]?.sessions||[]).map((s,i) => (
+                        <tr key={i}>
+                          <td>{s.psi}</td><td><span className="badge success">{s.state}</span></td>
+                          <td>{s.type}</td><td>{s.dnn}</td>
+                          <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{s.ip}</td>
+                          <td><button className="button small danger" onClick={()=>handleReleasePsi(imsi,s.psi)}>Release</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                <div style={{background:'var(--bg3)',padding:10,borderRadius:6}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Establish Session</div>
+                  <div style={{display:'flex',gap:6,flexWrap:'wrap',alignItems:'flex-end'}}>
+                    <select value={sessionForm.type} onChange={e=>setSessionForm(f=>({...f,type:e.target.value}))} style={sel()}>
+                      <option>IPv4</option><option>IPv6</option><option>IPv4v6</option>
+                    </select>
+                    <input placeholder="DNN" value={sessionForm.dnn} onChange={e=>setSessionForm(f=>({...f,dnn:e.target.value}))} style={sel({width:80})} />
+                    <input type="number" placeholder="SST" value={sessionForm.sst} onChange={e=>setSessionForm(f=>({...f,sst:parseInt(e.target.value)||1}))} min="1" max="4" style={sel({width:48})} />
+                    <button className="button small" onClick={()=>handleEstablish(imsi)}>Establish</button>
                   </div>
                 </div>
-                <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:16}}>
-                  <button className="button" onClick={onClose} style={{background:'var(--muted)'}}>Cancel</button>
-                  <button className="button" onClick={onSave}>Save</button>
+                <div style={{background:'var(--bg3)',padding:10,borderRadius:6}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Ping</div>
+                  <div style={{display:'flex',gap:6,alignItems:'flex-end',flexWrap:'wrap'}}>
+                    <input placeholder="8.8.8.8" value={pingForm.target} onChange={e=>setPingForm(f=>({...f,target:e.target.value}))} style={sel({width:110})} />
+                    <input type="number" value={pingForm.count} onChange={e=>setPingForm(f=>({...f,count:parseInt(e.target.value)||4}))} min="1" max="10" style={sel({width:48})} />
+                    <button className="button small" onClick={()=>handlePing(imsi)}>Ping</button>
+                  </div>
+                  {pingOut[imsi] && <pre style={{marginTop:6,fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)',background:'var(--bg)',padding:6,borderRadius:4,maxHeight:80,overflowY:'auto'}}>{pingOut[imsi]}</pre>}
+                </div>
+              </div>
+              <div style={{marginTop:12,background:'var(--bg3)',padding:10,borderRadius:6}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--accent)',marginBottom:6}}>NAS Deregister</div>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <select value={nasDeregType} onChange={e=>setNasDeregType(e.target.value)} style={sel()}>
+                    <option value="normal">normal</option>
+                    <option value="switch-off">switch-off</option>
+                    <option value="disable-5g">disable-5g</option>
+                  </select>
+                  <button className="button small danger" onClick={()=>handleNasDeregister(imsi)}>Deregister</button>
                 </div>
               </div>
             </div>
@@ -876,221 +862,137 @@ data:
             <div>
               <div className="stat-grid">
                 <div className="stat-card">
-                  <div className="stat-label">Configured UEs</div>
-                  <div className="stat-value">{configUes.length}</div>
-                  <div className="stat-sub">In testbed store</div>
+                  <div className="stat-label">Total Allocated IMSIs</div>
+                  <div className="stat-value">{totalImsis}</div>
+                  <div className="stat-sub">Across {blocks.length} user(s)</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">Registered in Core</div>
-                  <div className="stat-value" style={{color: regCount > 0 ? 'var(--success)' : 'var(--muted)'}}>{regCount}</div>
+                  <div className="stat-value" style={{color:totalReg>0?'var(--success)':'var(--muted)'}}>{totalReg}</div>
                   <div className="stat-sub">In Open5GS MongoDB</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">UERANSIM Pods</div>
-                  <div className="stat-value" style={{color: provCount > 0 ? 'var(--accent)' : 'var(--muted)'}}>{provCount}</div>
-                  <div className="stat-sub">K8s Deployments</div>
+                  <div className="stat-value" style={{color:totalPods>0?'var(--accent)':'var(--muted)'}}>{totalPods}</div>
+                  <div className="stat-sub">Active K8s Deployments</div>
                 </div>
               </div>
 
+              {msg.text && (
+                <div style={{background:msg.ok?'rgba(0,200,100,0.1)':'rgba(255,80,80,0.1)',border:`1px solid ${msg.ok?'var(--success)':'var(--danger)'}`,borderRadius:6,padding:'8px 14px',color:msg.ok?'var(--success)':'var(--danger)',fontSize:12,marginBottom:12}}>
+                  {msg.text}
+                </div>
+              )}
+
               <div style={{display:'flex',gap:0,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
-                {['config','ops'].map(t => (
+                {['overview','ops'].map(t => (
                   <div key={t} onClick={()=>setTab(t)} style={{padding:'10px 22px',cursor:'pointer',fontWeight:600,fontSize:13,color:tab===t?'var(--accent)':'var(--text2)',borderBottom:tab===t?'2px solid var(--accent)':'2px solid transparent',marginBottom:-2,userSelect:'none'}}>
-                    {t === 'config' ? 'Config' : 'Operations'}
+                    {t === 'overview' ? 'Overview' : 'Operations'}
                   </div>
                 ))}
               </div>
 
-              {tab === 'config' && (
+              {loading && <div className="loading">Loading…</div>}
+
+              {!loading && tab === 'overview' && (
                 <div>
-                  <div style={{background:'rgba(0,200,150,0.07)',border:'1px solid var(--accent)',borderRadius:6,padding:'10px 16px',marginBottom:16,fontSize:12,color:'var(--accent)'}}>
-                    Workflow: <strong>①ADD</strong> → <strong>②REGISTER</strong> → <strong>③PROVISION</strong> → <strong>④OPERATE</strong>
-                  </div>
-                  <div className="panel">
-                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-                      <h3 style={{margin:0}}><Icon name="users" /> UE Store</h3>
-                      <button className="button" onClick={()=>{setForm(defaultForm());setShowAddModal(true);}}>+ Add UE</button>
+                  {blocks.length === 0 ? (
+                    <div style={{fontSize:12,color:'var(--text2)',padding:24,textAlign:'center',background:'var(--panel)',borderRadius:8}}>
+                      {isAdmin ? 'No IMSI blocks allocated. Go to User Management to allocate blocks when creating users.' : 'No IMSI block assigned to your account. Contact an admin.'}
                     </div>
-                    {configUes.length === 0 ? (
-                      <div style={{fontSize:12,color:'var(--text2)',padding:16,textAlign:'center'}}>No UEs configured. Click "+ Add UE" to start.</div>
-                    ) : (
-                      <div style={{overflowX:'auto'}}>
-                        <table className="table">
-                          <thead>
-                            <tr>
-                              <th>IMSI / Label</th>
-                              <th>K (truncated)</th>
-                              <th>Registration</th>
-                              <th style={{textAlign:'right'}}>Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {configUes.map(ue => (
-                              <tr key={ue.imsi}>
-                                <td>
-                                  <strong>{ue.imsi}</strong>
-                                  {ue.label && <div style={{fontSize:10,color:'var(--text2)'}}>{ue.label}</div>}
-                                </td>
-                                <td style={{fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)'}}>{(ue.k||'').slice(0,12)}…</td>
-                                <td>
-                                  <span className={`badge ${ue.registered ? 'success' : 'warn'}`}>
-                                    {ue.registered ? 'Registered' : 'Unregistered'}
-                                  </span>
-                                </td>
-                                <td style={{textAlign:'right'}}>
-                                  <button className="button small" onClick={()=>openEdit(ue)} style={{marginRight:4}}>Edit</button>
-                                  <button className="button small" onClick={()=>handleRegister(ue.imsi, ue.registered)} style={{marginRight:4,background:ue.registered?'var(--warn)':'var(--accent)'}}>
-                                    {ue.registered ? 'Deregister' : 'Register'}
-                                  </button>
-                                  <button className="button small danger" onClick={()=>handleDelete(ue.imsi)}>Delete</button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {tab === 'ops' && (
-                <div>
-                  <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
-                    <button className="button" onClick={fetchInventory}>Refresh</button>
-                  </div>
-                  {loading ? <div className="loading">Loading inventory...</div> : opsUes.length === 0 ? (
-                    <div style={{fontSize:12,color:'var(--text2)',padding:16,textAlign:'center'}}>No UEs in store. Add UEs in the Config tab first.</div>
-                  ) : opsUes.map(ue => (
-                    <div key={ue.imsi} style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,marginBottom:12,overflow:'hidden'}}>
-                      <div style={{display:'flex',alignItems:'center',padding:'12px 16px',gap:12,flexWrap:'wrap'}}>
-                        <div style={{flex:1,minWidth:160}}>
-                          <strong style={{fontSize:13}}>{ue.imsi}</strong>
-                          {ue.label && <span style={{fontSize:11,color:'var(--text2)',marginLeft:8}}>{ue.label}</span>}
-                          <div style={{fontSize:11,color:'var(--text2)',marginTop:2}}>
-                            <span style={{marginRight:8}}>Pod: <span style={{color:ue.podRunning?'var(--success)':'var(--muted)'}}>{ue.podPhase || 'none'}</span></span>
-                            <span style={{marginRight:8}}>Tun: <span style={{fontFamily:'var(--font-mono)',fontSize:10}}>{ue.tunIp || '—'}</span></span>
-                            <span>Sessions: {ue.hasPduSession ? '✓' : '—'}</span>
+                  ) : blocks.map(b => (
+                    <div key={b.username} style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,marginBottom:16,overflow:'hidden'}}>
+                      <div style={{padding:'14px 18px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:14,fontWeight:700,color:'var(--text)'}}>
+                            {isAdmin && <span style={{color:'var(--text2)',fontWeight:400,fontSize:12,marginRight:8}}>user:</span>}
+                            {b.username}
+                            <span style={{marginLeft:10,fontSize:11,padding:'2px 8px',borderRadius:12,background:'rgba(0,200,255,0.15)',color:'var(--accent)',fontWeight:600}}>
+                              {b.imsiCount} UEs · pod: ue-{b.username}
+                            </span>
+                          </div>
+                          <div style={{fontSize:12,color:'var(--text2)',marginTop:4,fontFamily:'var(--font-mono)'}}>
+                            {b.imsiStart} → {b.imsiStart ? String(parseInt(b.imsiStart)+b.imsiCount-1).padStart(15,'0') : '—'}
                           </div>
                         </div>
-                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-                          <button className="button small" onClick={()=>handleProvision(ue.imsi, ue.provisioned)} style={{background:ue.provisioned?'var(--warn)':'var(--accent)'}}>
-                            {ue.provisioned ? 'Deprovision' : 'Provision'}
+                        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                          <div style={{textAlign:'center',padding:'6px 12px',background:'rgba(0,200,100,0.1)',borderRadius:6}}>
+                            <div style={{fontSize:10,color:'var(--text2)'}}>Registered</div>
+                            <div style={{fontSize:16,fontWeight:700,color:b.ueRegistered?'var(--success)':'var(--text3)'}}>{b.registeredCount}/{b.imsiCount}</div>
+                          </div>
+                          <div style={{textAlign:'center',padding:'6px 12px',background:'rgba(0,150,255,0.1)',borderRadius:6}}>
+                            <div style={{fontSize:10,color:'var(--text2)'}}>Pod</div>
+                            <div style={{fontSize:13,fontWeight:700,color:b.podRunning?'var(--accent)':'var(--text3)'}}>{b.podPhase||'none'}</div>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:6}}>
+                          <button className="button small" disabled={busy[`reg-${b.username}`]}
+                            style={{background:b.ueRegistered?'rgba(255,150,0,0.8)':'var(--success)'}}
+                            onClick={()=>doRegister(b.username, b.ueRegistered)}>
+                            {busy[`reg-${b.username}`] ? '…' : b.ueRegistered ? 'Deregister All' : 'Register All'}
                           </button>
-                          {ue.provisioned && (
-                            <button className="button small" onClick={()=>loadDetail(ue.imsi)} style={{background:'var(--accent2)'}}>
-                              {expandedImsi===ue.imsi ? 'Collapse' : 'Operate'}
-                            </button>
-                          )}
+                          <button className="button small" disabled={busy[`prov-${b.username}`]}
+                            style={{background:b.ueProvisioned?'var(--warn)':'var(--accent)'}}
+                            onClick={()=>doProvision(b.username, b.ueProvisioned)}>
+                            {busy[`prov-${b.username}`] ? '…' : b.ueProvisioned ? 'Deprovision' : 'Provision Pod'}
+                          </button>
                         </div>
                       </div>
-
-                      {expandedImsi === ue.imsi && (
-                        <div style={{borderTop:'1px solid var(--border)',padding:16}}>
-                          {/* NAS Status */}
-                          <div style={{marginBottom:14}}>
-                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:6}}>NAS Status</div>
-                            {detailData[ue.imsi]?.nas?.parsed ? (
-                              <div style={{display:'flex',gap:16,fontSize:11,fontFamily:'var(--font-mono)'}}>
-                                <span>CM: {detailData[ue.imsi].nas.parsed.cmState || '—'}</span>
-                                <span>MM: {detailData[ue.imsi].nas.parsed.mmState || '—'}</span>
-                                <span>RM: {detailData[ue.imsi].nas.parsed.rmState || '—'}</span>
-                              </div>
-                            ) : <div style={{fontSize:11,color:'var(--muted)'}}>Loading…</div>}
-                          </div>
-
-                          {/* PDU Sessions */}
-                          <div style={{marginBottom:14}}>
-                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                              <span style={{fontSize:12,fontWeight:600,color:'var(--accent)'}}>PDU Sessions ({(detailData[ue.imsi]?.sessions||[]).length})</span>
-                              <button className="button small danger" onClick={()=>handleReleaseAll(ue.imsi)}>Release All</button>
-                            </div>
-                            {(detailData[ue.imsi]?.sessions||[]).length === 0 ? (
-                              <div style={{fontSize:11,color:'var(--muted)'}}>No active sessions</div>
-                            ) : (
-                              <table className="table" style={{fontSize:11}}>
-                                <thead><tr><th>PSI</th><th>State</th><th>Type</th><th>DNN</th><th>IP</th><th></th></tr></thead>
-                                <tbody>
-                                  {(detailData[ue.imsi]?.sessions||[]).map((s,i) => (
-                                    <tr key={i}>
-                                      <td>{s.psi}</td>
-                                      <td><span className="badge success">{s.state}</span></td>
-                                      <td>{s.type}</td>
-                                      <td>{s.dnn}</td>
-                                      <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{s.ip}</td>
-                                      <td><button className="button small danger" onClick={()=>handleReleasePsi(ue.imsi,s.psi)}>Release</button></td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            )}
-                          </div>
-
-                          {/* Establish Session */}
-                          <div style={{marginBottom:14,background:'var(--bg3)',padding:10,borderRadius:6}}>
-                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Establish Session</div>
-                            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
-                              <div>
-                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>Type</div>
-                                <select value={sessionForm.type} onChange={e=>setSessionForm(f=>({...f,type:e.target.value}))} style={{padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}}>
-                                  <option>IPv4</option><option>IPv6</option><option>IPv4v6</option>
-                                </select>
-                              </div>
-                              <div>
-                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>DNN</div>
-                                <input type="text" value={sessionForm.dnn} onChange={e=>setSessionForm(f=>({...f,dnn:e.target.value}))} style={{width:90,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
-                              </div>
-                              <div>
-                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>SST</div>
-                                <input type="number" value={sessionForm.sst} onChange={e=>setSessionForm(f=>({...f,sst:parseInt(e.target.value)||1}))} min="1" max="4" style={{width:50,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
-                              </div>
-                              <button className="button small" onClick={()=>handleEstablish(ue.imsi)}>Establish</button>
-                            </div>
-                          </div>
-
-                          {/* Ping */}
-                          <div style={{marginBottom:14,background:'var(--bg3)',padding:10,borderRadius:6}}>
-                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Ping</div>
-                            <div style={{display:'flex',gap:8,alignItems:'flex-end',flexWrap:'wrap'}}>
-                              <div>
-                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>Target</div>
-                                <input type="text" value={pingForm.target} onChange={e=>setPingForm(f=>({...f,target:e.target.value}))} style={{width:120,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
-                              </div>
-                              <div>
-                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>Count</div>
-                                <input type="number" value={pingForm.count} onChange={e=>setPingForm(f=>({...f,count:parseInt(e.target.value)||4}))} min="1" max="10" style={{width:50,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
-                              </div>
-                              <button className="button small" onClick={()=>handlePing(ue.imsi)}>Ping</button>
-                            </div>
-                            {pingOut[ue.imsi] && (
-                              <pre style={{marginTop:8,fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)',background:'var(--bg)',padding:8,borderRadius:4,overflowX:'auto',maxHeight:120,overflowY:'auto'}}>{pingOut[ue.imsi]}</pre>
-                            )}
-                          </div>
-
-                          {/* NAS Deregister */}
-                          <div style={{background:'var(--bg3)',padding:10,borderRadius:6}}>
-                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:8}}>NAS Deregister</div>
-                            <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                              <select value={nasDeregType} onChange={e=>setNasDeregType(e.target.value)} style={{padding:'4px 8px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}}>
-                                <option value="normal">normal</option>
-                                <option value="switch-off">switch-off</option>
-                                <option value="disable-5g">disable-5g</option>
-                              </select>
-                              <button className="button small danger" onClick={()=>handleNasDeregister(ue.imsi)}>Deregister</button>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                      {/* IMSI list */}
+                      <div style={{padding:'8px 18px 14px',display:'flex',gap:6,flexWrap:'wrap'}}>
+                        {(b.imsis||[]).map(i => (
+                          <span key={i.imsi} style={{fontSize:10,padding:'3px 8px',borderRadius:12,fontFamily:'var(--font-mono)',
+                            background:i.inMongo?'rgba(0,200,100,0.15)':'rgba(100,100,100,0.12)',
+                            color:i.inMongo?'var(--success)':'var(--text3)',
+                            border:`1px solid ${i.inMongo?'rgba(0,200,100,0.3)':'var(--border)'}`}}>
+                            {i.imsi.slice(-6)}
+                          </span>
+                        ))}
+                        {b.tunIp && <span style={{fontSize:10,padding:'3px 8px',borderRadius:12,background:'rgba(0,100,255,0.15)',color:'var(--accent)',border:'1px solid rgba(0,150,255,0.3)'}}>tun: {b.tunIp}</span>}
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
 
-              {(showAddModal || editUe) && (
-                <UeFormModal
-                  title={editUe ? `Edit UE: ${editUe}` : 'Add UE'}
-                  onSave={editUe ? handleEdit : handleAdd}
-                  onClose={() => { setShowAddModal(false); setEditUe(null); setForm(defaultForm()); }}
-                />
+              {!loading && tab === 'ops' && (
+                <div>
+                  {blocks.filter(b => b.ueProvisioned && b.imsis?.length > 0).length === 0 ? (
+                    <div style={{fontSize:12,color:'var(--text2)',padding:24,textAlign:'center',background:'var(--panel)',borderRadius:8}}>
+                      No provisioned pods. Go to Overview → Provision Pod first.
+                    </div>
+                  ) : blocks.filter(b => b.ueProvisioned).map(b => (
+                    <div key={b.username} style={{marginBottom:16}}>
+                      <div style={{fontSize:13,fontWeight:600,color:'var(--text2)',marginBottom:8}}>
+                        ue-{b.username} · {b.imsiCount} UEs
+                        <span style={{marginLeft:10,fontSize:11,padding:'2px 8px',borderRadius:12,
+                          background:b.podRunning?'rgba(0,200,100,0.15)':'rgba(255,150,0,0.15)',
+                          color:b.podRunning?'var(--success)':'var(--warn)'}}>
+                          {b.podPhase}
+                        </span>
+                      </div>
+                      {(b.imsis||[]).map(i => (
+                        <div key={i.imsi} style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:6,marginBottom:8,overflow:'hidden'}}>
+                          <div style={{display:'flex',alignItems:'center',padding:'10px 16px',gap:10}}>
+                            <div style={{flex:1}}>
+                              <strong style={{fontFamily:'var(--font-mono)',fontSize:12}}>{i.imsi}</strong>
+                              <span style={{marginLeft:8,fontSize:10,padding:'1px 6px',borderRadius:10,
+                                background:i.inMongo?'rgba(0,200,100,0.15)':'rgba(100,100,100,0.15)',
+                                color:i.inMongo?'var(--success)':'var(--text3)'}}>
+                                {i.inMongo ? 'registered' : 'not registered'}
+                              </span>
+                            </div>
+                            <button className="button small" onClick={()=>loadDetail(i.imsi)}
+                              style={{background:'var(--accent2)',fontSize:11}}>
+                              {expandedImsi===i.imsi ? 'Collapse' : 'Operate'}
+                            </button>
+                          </div>
+                          {expandedImsi === i.imsi && <ImsiOpsPanel imsi={i.imsi} />}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           );
@@ -1798,7 +1700,7 @@ data:
           const [users, setUsers] = React.useState([]);
           const [loading, setLoading] = React.useState(true);
           const [showAdd, setShowAdd] = React.useState(false);
-          const [form, setForm] = React.useState({ username: '', password: '', role: 'researcher' });
+          const [form, setForm] = React.useState({ username: '', password: '', role: 'researcher', imsiStart: '', imsiCount: '5' });
           const [error, setError] = React.useState('');
 
           const fetchUsers = async () => {
@@ -1809,14 +1711,28 @@ data:
             } finally { setLoading(false); }
           };
 
+          const openAddForm = async () => {
+            // Auto-fill next IMSI from server
+            try {
+              const res = await apiFetch('/api/admin/next-imsi');
+              if (res.ok) {
+                const { nextImsi, defaultImsiCount } = await res.json();
+                setForm(f => ({ ...f, imsiStart: nextImsi, imsiCount: String(defaultImsiCount) }));
+              }
+            } catch {}
+            setShowAdd(true);
+          };
+
           React.useEffect(() => { fetchUsers(); }, []);
 
           const handleAdd = async (e) => {
             e.preventDefault(); setError('');
-            const res = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify(form) });
+            const res = await apiFetch('/api/users', { method: 'POST', body: JSON.stringify({
+              ...form, imsiCount: parseInt(form.imsiCount) || 5
+            }) });
             const data = await res.json();
             if (!res.ok) { setError(data.error); return; }
-            setForm({ username: '', password: '', role: 'researcher' });
+            setForm({ username: '', password: '', role: 'researcher', imsiStart: '', imsiCount: '5' });
             setShowAdd(false);
             fetchUsers();
           };
@@ -1827,35 +1743,52 @@ data:
             fetchUsers();
           };
 
+          const inp = { width:'100%', padding:'8px', borderRadius:4, border:'1px solid var(--border)', background:'var(--bg3)', color:'var(--text)', boxSizing:'border-box' };
+
           return (
             <div>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
                 <h2 style={{margin:0}}>User Management</h2>
-                <button className="button" onClick={()=>setShowAdd(s=>!s)}>+ Add User</button>
+                <button className="button" onClick={openAddForm}>+ Add User</button>
               </div>
 
               {showAdd && (
                 <div className="panel" style={{marginBottom:20}}>
                   <h3 style={{marginTop:0}}>New User</h3>
                   <form onSubmit={handleAdd}>
-                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 140px auto',gap:12,alignItems:'flex-end'}}>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 140px',gap:12,marginBottom:12}}>
                       <div className="form-group">
                         <label style={{fontSize:11}}>Username</label>
-                        <input value={form.username} onChange={e=>setForm(p=>({...p,username:e.target.value}))} style={{width:'100%',padding:'8px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)'}} placeholder="username" required />
+                        <input value={form.username} onChange={e=>setForm(p=>({...p,username:e.target.value}))} style={inp} placeholder="username" required />
                       </div>
                       <div className="form-group">
                         <label style={{fontSize:11}}>Password</label>
-                        <input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={{width:'100%',padding:'8px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)'}} placeholder="password" required minLength={6} />
+                        <input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={inp} placeholder="password" required minLength={6} />
                       </div>
                       <div className="form-group">
                         <label style={{fontSize:11}}>Role</label>
-                        <select value={form.role} onChange={e=>setForm(p=>({...p,role:e.target.value}))} style={{width:'100%',padding:'8px',borderRadius:4,border:'1px solid var(--border)',background:'var(--bg3)',color:'var(--text)'}}>
+                        <select value={form.role} onChange={e=>setForm(p=>({...p,role:e.target.value}))} style={inp}>
                           <option value="researcher">Researcher</option>
                           <option value="admin">Admin</option>
                         </select>
                       </div>
-                      <button type="submit" className="button">Create</button>
                     </div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 120px auto',gap:12,alignItems:'flex-end'}}>
+                      <div className="form-group" style={{margin:0}}>
+                        <label style={{fontSize:11}}>Starting IMSI <span style={{color:'var(--text3)',fontWeight:400}}>(auto-filled from last allocation)</span></label>
+                        <input value={form.imsiStart} onChange={e=>setForm(p=>({...p,imsiStart:e.target.value}))} style={inp} placeholder="001010000000001" pattern="\d{15}" title="15-digit IMSI" required />
+                      </div>
+                      <div className="form-group" style={{margin:0}}>
+                        <label style={{fontSize:11}}># of IMSIs</label>
+                        <input type="number" min={1} max={100} value={form.imsiCount} onChange={e=>setForm(p=>({...p,imsiCount:e.target.value}))} style={inp} />
+                      </div>
+                      <button type="submit" className="button" style={{alignSelf:'flex-end',marginBottom:1}}>Create</button>
+                    </div>
+                    {form.imsiStart && form.imsiCount && (
+                      <div style={{fontSize:11,color:'var(--accent)',marginTop:8}}>
+                        Allocated: {form.imsiStart} → {String(parseInt(form.imsiStart) + parseInt(form.imsiCount) - 1).padStart(15,'0')} ({form.imsiCount} UEs)
+                      </div>
+                    )}
                     {error && <div style={{color:'var(--danger)',fontSize:12,marginTop:8}}>{error}</div>}
                   </form>
                 </div>
@@ -1864,12 +1797,30 @@ data:
               <div className="panel">
                 {loading ? <div style={{padding:20,textAlign:'center',color:'var(--text2)'}}>Loading...</div> : (
                   <table className="table">
-                    <thead><tr><th>Username</th><th>Role</th><th>Created</th><th style={{textAlign:'right'}}>Actions</th></tr></thead>
+                    <thead>
+                      <tr>
+                        <th>Username</th><th>Role</th>
+                        <th>IMSI Block</th><th>UE Status</th>
+                        <th>Created</th><th style={{textAlign:'right'}}>Actions</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {users.map(u => (
                         <tr key={u.id}>
                           <td style={{fontWeight:600}}>{u.username}</td>
-                          <td><span style={{fontSize:11,padding:'2px 8px',borderRadius:12,background: u.role==='admin'?'rgba(255,150,0,0.2)':'rgba(0,200,255,0.2)',color:u.role==='admin'?'#ff9600':'var(--accent)',fontWeight:600}}>{u.role}</span></td>
+                          <td><span style={{fontSize:11,padding:'2px 8px',borderRadius:12,background:u.role==='admin'?'rgba(255,150,0,0.2)':'rgba(0,200,255,0.2)',color:u.role==='admin'?'#ff9600':'var(--accent)',fontWeight:600}}>{u.role}</span></td>
+                          <td style={{fontSize:11}}>
+                            {u.imsiStart ? (
+                              <span style={{color:'var(--text2)'}}>
+                                {u.imsiStart}<br/>
+                                <span style={{color:'var(--text3)'}}>+{u.imsiCount} UEs · pod: ue-{u.username}</span>
+                              </span>
+                            ) : <span style={{color:'var(--text3)'}}>—</span>}
+                          </td>
+                          <td style={{fontSize:11}}>
+                            <span style={{color:u.ueRegistered?'var(--success)':'var(--text3)',marginRight:8}}>{u.ueRegistered?'✓ Reg':'○ Reg'}</span>
+                            <span style={{color:u.ueProvisioned?'var(--accent)':'var(--text3)'}}>{u.ueProvisioned?'✓ Pod':'○ Pod'}</span>
+                          </td>
                           <td style={{fontSize:11,color:'var(--text3)'}}>{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '—'}</td>
                           <td style={{textAlign:'right'}}>
                             {u.username !== 'admin' && <button className="button small danger" onClick={()=>handleDelete(u.id)}>Delete</button>}

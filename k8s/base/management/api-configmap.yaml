@@ -270,27 +270,35 @@ data:
     // GET /users (admin only)
     app.get('/users', authenticateToken, requireAdmin, async (req, res) => {
       try {
-        const users = db.collection('testbed_users');
-        const list = await users.find({}).toArray();
-        res.json(list.map(u => ({ id: u._id.toString(), username: u.username, role: u.role, createdAt: u.createdAt })));
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
+        const list = await db.collection('testbed_users').find({}).toArray();
+        res.json(list.map(u => ({
+          id: u._id.toString(), username: u.username, role: u.role, createdAt: u.createdAt,
+          imsiStart: u.imsiStart || null, imsiCount: u.imsiCount || 0,
+          ueRegistered: u.ueRegistered || false, ueProvisioned: u.ueProvisioned || false,
+        })));
+      } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // POST /users (admin only)
+    // POST /users (admin only) — includes IMSI block allocation
     app.post('/users', authenticateToken, requireAdmin, async (req, res) => {
       try {
-        const { username, password, role = 'researcher' } = req.body || {};
+        const { username, password, role = 'researcher', imsiStart, imsiCount } = req.body || {};
         if (!username || !password) return res.status(400).json({ error: 'username and password required' });
         const users = db.collection('testbed_users');
         if (await users.findOne({ username })) return res.status(409).json({ error: 'Username already exists' });
+        // Validate IMSI block if provided
+        const cfg = await getImsiConfig();
+        const count = parseInt(imsiCount) || cfg.defaultImsiCount;
+        let start = imsiStart;
+        if (start && !/^\d{15}$/.test(start)) return res.status(400).json({ error: 'imsiStart must be 15 digits' });
         const hash = bcrypt.hashSync(password, 10);
-        const result = await users.insertOne({ username, passwordHash: hash, role, createdAt: new Date().toISOString() });
-        res.json({ id: result.insertedId.toString(), username, role });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
+        const doc = { username, passwordHash: hash, role, createdAt: new Date().toISOString(),
+          imsiStart: start || null, imsiCount: count,
+          ueRegistered: false, ueProvisioned: false };
+        const result = await users.insertOne(doc);
+        res.json({ id: result.insertedId.toString(), username, role,
+          imsiStart: doc.imsiStart, imsiCount: doc.imsiCount });
+      } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
     // DELETE /users/:id (admin only, cannot delete self)
@@ -327,26 +335,68 @@ data:
     });
 
     // ═══════════════════════════════════════════════════════════
-    // UE STORE (testbed_ues) — local config, register, provision
+    // ADMIN CONFIG — IMSI range settings
     // ═══════════════════════════════════════════════════════════
 
-    function ueDefaults(imsi) {
-      return {
-        imsi,
-        k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
-        opc: 'c42449363464e2e4fa8adca3063168ca',
-        amf: '8000',
-        dnn: 'internet',
-        sst: 1,
-        sd: null,
-        ambrDl: 1,
-        ambrUl: 1,
-        label: `UE-${imsi.slice(-4)}`,
-        registered: false,
-        provisioned: false,
-        createdAt: new Date().toISOString(),
-      };
+    async function getImsiConfig() {
+      const defaults = { imsiBase: '00101', rangeStart: 1, defaultImsiCount: 5 };
+      try {
+        const doc = await db.collection('testbed_config').findOne({ key: 'imsi' });
+        return doc ? { ...defaults, ...doc } : defaults;
+      } catch { return defaults; }
     }
+
+    // Seed default IMSI config if not present
+    async function seedImsiConfig() {
+      try {
+        const col = db.collection('testbed_config');
+        if (!await col.findOne({ key: 'imsi' }))
+          await col.insertOne({ key: 'imsi', imsiBase: '00101', rangeStart: 1, defaultImsiCount: 5 });
+      } catch (e) { console.error('[CONFIG] Seed error:', e.message); }
+    }
+    setTimeout(seedImsiConfig, 4000);
+
+    // GET /admin/config
+    app.get('/admin/config', authenticateToken, requireAdmin, async (req, res) => {
+      try { res.json(await getImsiConfig()); }
+      catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // PUT /admin/config
+    app.put('/admin/config', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { imsiBase, rangeStart, defaultImsiCount } = req.body || {};
+        const update = {};
+        if (imsiBase) update.imsiBase = imsiBase;
+        if (rangeStart !== undefined) update.rangeStart = parseInt(rangeStart);
+        if (defaultImsiCount !== undefined) update.defaultImsiCount = parseInt(defaultImsiCount);
+        await db.collection('testbed_config').updateOne({ key: 'imsi' }, { $set: update }, { upsert: true });
+        res.json(await getImsiConfig());
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // GET /admin/next-imsi — next available IMSI start based on existing user allocations
+    app.get('/admin/next-imsi', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const cfg = await getImsiConfig();
+        // IMSI = imsiBase (5 digits) + suffix (10 digits), e.g. "00101" + "0000000001" = "001010000000001"
+        const suffixLen = 15 - cfg.imsiBase.length;
+        const users = await db.collection('testbed_users').find({ imsiStart: { $ne: null } }).toArray();
+        let nextSuffix = cfg.rangeStart;
+        for (const u of users) {
+          // Extract suffix from stored full IMSI
+          const storedSuffix = parseInt(u.imsiStart.slice(cfg.imsiBase.length));
+          const end = storedSuffix + (u.imsiCount || cfg.defaultImsiCount);
+          if (end > nextSuffix) nextSuffix = end;
+        }
+        const nextImsi = cfg.imsiBase + String(nextSuffix).padStart(suffixLen, '0');
+        res.json({ nextImsi, defaultImsiCount: cfg.defaultImsiCount });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // UE BLOCK — per-user IMSI allocation, register, provision
+    // ═══════════════════════════════════════════════════════════
 
     // Helper: exec command in a pod via K8s Exec API, return stdout as string
     const { PassThrough } = require('stream');
@@ -365,11 +415,20 @@ data:
       });
     }
 
-    // Helper: find running UE pod by IMSI label
+    // Helper: find user who owns a given IMSI (by range)
+    async function getUserForImsi(imsi) {
+      const imsiNum = parseInt(imsi);
+      const users = await db.collection('testbed_users').find({ imsiStart: { $ne: null } }).toArray();
+      return users.find(u => imsiNum >= parseInt(u.imsiStart) && imsiNum < parseInt(u.imsiStart) + (u.imsiCount || 5));
+    }
+
+    // Helper: find running UE pod by username label
     async function getUePod(imsi) {
-      const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+      const owner = await getUserForImsi(imsi);
+      if (!owner) throw new Error(`No user owns IMSI ${imsi}`);
+      const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,username=${owner.username}`);
       const pod = pods.body.items.find(p => p.status?.phase === 'Running');
-      if (!pod) throw new Error(`No running pod for IMSI ${imsi}`);
+      if (!pod) throw new Error(`No running pod for user ${owner.username}`);
       return pod;
     }
 
@@ -461,144 +520,120 @@ data:
       };
     }
 
-    // GET /ue — list UEs (admin: all, user: own)
+    // Helper: expand IMSI range for a user → [{imsi, k, opc, amf, dnn, sst}]
+    function userImsiList(user) {
+      const start = parseInt(user.imsiStart);
+      return Array.from({ length: user.imsiCount || 1 }, (_, i) => ({
+        imsi: String(start + i).padStart(15, '0'),
+        k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
+        opc: 'c42449363464e2e4fa8adca3063168ca',
+        amf: '8000', dnn: 'internet', sst: 1, ambrDl: 1, ambrUl: 1,
+      }));
+    }
+
+    // GET /ue — user's IMSI block (admin: all users; user: own block)
     app.get('/ue', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const query = req.user.role === 'admin' ? {} : { owner: req.user.id };
-        const ues = await db.collection('testbed_ues').find(query).sort({ createdAt: 1 }).toArray();
-        res.json(ues.map(({ _id, ...u }) => u));
-      } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    // POST /ue — add UE to store
-    app.post('/ue', authenticateToken, async (req, res) => {
-      try {
-        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const { imsi } = req.body;
-        if (!imsi || !/^\d{15}$/.test(imsi))
-          return res.status(400).json({ error: 'imsi must be exactly 15 digits' });
-        const col = db.collection('testbed_ues');
-        if (await col.findOne({ imsi })) return res.status(409).json({ error: 'IMSI already exists' });
-        const { _id, ...ue } = { ...ueDefaults(imsi), ...req.body, imsi, registered: false, provisioned: false, owner: req.user.id };
-        await col.insertOne(ue);
-        res.json(ue);
-      } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    // GET /ue/inventory — merged: store + K8s pods + Open5GS MongoDB
-    app.get('/ue/inventory', authenticateToken, async (req, res) => {
-      try {
-        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const query = req.user.role === 'admin' ? {} : { owner: req.user.id };
-        const storeUes = await db.collection('testbed_ues').find(query).sort({ createdAt: 1 }).toArray();
         const podsRes = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, 'app=ueransim-ue');
         const pods = podsRes.body.items;
         const mongoImsis = new Set(
           (await db.collection('subscribers').find({}, { projection: { imsi: 1 } }).toArray()).map(s => s.imsi)
         );
-        const result = await Promise.all(storeUes.map(async ({ _id, ...ue }) => {
-          const pod = pods.find(p => p.metadata?.labels?.imsi === ue.imsi);
-          let tunIp = null, podRunning = false, podPhase = 'none';
-          if (pod) {
-            podPhase = pod.status?.phase || 'Unknown';
-            podRunning = podPhase === 'Running' &&
-              pod.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True';
-            if (podRunning) tunIp = await getUeTunIp(pod.metadata.name, pod.spec.containers[0].name);
-          }
-          return { ...ue, inMongo: mongoImsis.has(ue.imsi), podName: pod?.metadata?.name || null,
-            podPhase, podRunning, tunIp, hasPduSession: !!tunIp };
+        const usersQuery = req.user.role === 'admin'
+          ? { imsiStart: { $ne: null } }
+          : { _id: require('mongodb').ObjectId ? undefined : undefined, username: req.user.username };
+        // For current user, get their own doc
+        const userDocs = req.user.role === 'admin'
+          ? await db.collection('testbed_users').find({ imsiStart: { $ne: null } }).toArray()
+          : [await db.collection('testbed_users').findOne({ username: req.user.username })].filter(Boolean);
+
+        const result = await Promise.all(userDocs.map(async u => {
+          const pod = pods.find(p => p.metadata?.labels?.username === u.username);
+          const podPhase = pod?.status?.phase || 'none';
+          const podRunning = podPhase === 'Running' &&
+            pod?.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True';
+          const tunIp = podRunning ? await getUeTunIp(pod.metadata.name, pod.spec.containers[0].name) : null;
+          const imsis = u.imsiStart ? userImsiList(u) : [];
+          const registeredCount = imsis.filter(i => mongoImsis.has(i.imsi)).length;
+          return {
+            username: u.username, imsiStart: u.imsiStart, imsiCount: u.imsiCount || 0,
+            ueRegistered: u.ueRegistered || false, ueProvisioned: u.ueProvisioned || false,
+            registeredCount, podName: pod?.metadata?.name || null,
+            podPhase, podRunning, tunIp, hasPduSession: !!tunIp,
+            imsis: imsis.map(i => ({ ...i, inMongo: mongoImsis.has(i.imsi) })),
+          };
         }));
-        res.json(result);
+        res.json(req.user.role === 'admin' ? result : (result[0] || null));
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // PUT /ue/:imsi — update editable fields
-    app.put('/ue/:imsi', authenticateToken, async (req, res) => {
+    // POST /ue/register — bulk-register all IMSIs in user's block
+    app.post('/ue/register', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const col = db.collection('testbed_ues');
-        const ue = await col.findOne({ imsi: req.params.imsi });
-        if (!ue) return res.status(404).json({ error: 'UE not found' });
-        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-        const { imsi: _i, registered: _r, provisioned: _p, createdAt: _c, owner: _o, _id: _x, ...editable } = req.body;
-        await col.updateOne({ imsi: req.params.imsi }, { $set: { ...editable, updatedAt: new Date().toISOString() } });
-        const { _id, ...updated } = await col.findOne({ imsi: req.params.imsi });
-        res.json(updated);
-      } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    // DELETE /ue/:imsi — remove from store only (does not deregister/deprovision)
-    app.delete('/ue/:imsi', authenticateToken, async (req, res) => {
-      try {
-        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const col = db.collection('testbed_ues');
-        const ue = await col.findOne({ imsi: req.params.imsi });
-        if (!ue) return res.status(404).json({ error: 'UE not found' });
-        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-        await col.deleteOne({ imsi: req.params.imsi });
-        res.json({ ok: true });
-      } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    // POST /ue/:imsi/register — insert subscriber into Open5GS MongoDB
-    app.post('/ue/:imsi/register', authenticateToken, async (req, res) => {
-      try {
-        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const col = db.collection('testbed_ues');
-        const ue = await col.findOne({ imsi: req.params.imsi });
-        if (!ue) return res.status(404).json({ error: 'UE not found in store' });
-        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
+        const user = await db.collection('testbed_users').findOne({ username });
+        if (!user || !user.imsiStart) return res.status(400).json({ error: 'No IMSI block assigned to this user' });
         const subs = db.collection('subscribers');
-        if (!await subs.findOne({ imsi: ue.imsi })) await subs.insertOne(buildSubscriberDoc(ue));
-        await col.updateOne({ imsi: ue.imsi }, { $set: { registered: true, registeredAt: new Date().toISOString() } });
-        res.json({ ok: true, message: `${ue.imsi} registered in Open5GS` });
+        const imsis = userImsiList(user);
+        let added = 0;
+        for (const ue of imsis) {
+          if (!await subs.findOne({ imsi: ue.imsi })) {
+            await subs.insertOne(buildSubscriberDoc(ue));
+            added++;
+          }
+        }
+        await db.collection('testbed_users').updateOne({ username }, { $set: { ueRegistered: true, ueRegisteredAt: new Date().toISOString() } });
+        res.json({ ok: true, registered: added, total: imsis.length, message: `Registered ${added} new IMSIs (${imsis.length - added} already existed)` });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // DELETE /ue/:imsi/register — remove subscriber from Open5GS MongoDB
-    app.delete('/ue/:imsi/register', authenticateToken, async (req, res) => {
+    // DELETE /ue/register — bulk-deregister all IMSIs from Open5GS
+    app.delete('/ue/register', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const col = db.collection('testbed_ues');
-        const ue = await col.findOne({ imsi: req.params.imsi });
-        if (!ue) return res.status(404).json({ error: 'UE not found' });
-        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-        await db.collection('subscribers').deleteOne({ imsi: ue.imsi });
-        await col.updateOne({ imsi: ue.imsi }, { $set: { registered: false, registeredAt: null } });
-        res.json({ ok: true });
+        const username = (req.user.role === 'admin' && req.query?.username) ? req.query.username : req.user.username;
+        const user = await db.collection('testbed_users').findOne({ username });
+        if (!user || !user.imsiStart) return res.status(400).json({ error: 'No IMSI block assigned' });
+        const imsis = userImsiList(user);
+        for (const ue of imsis)
+          await db.collection('subscribers').deleteOne({ imsi: ue.imsi });
+        await db.collection('testbed_users').updateOne({ username }, { $set: { ueRegistered: false } });
+        res.json({ ok: true, deregistered: imsis.length });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // POST /ue/:imsi/provision — create K8s Deployment + ConfigMap
-    app.post('/ue/:imsi/provision', authenticateToken, async (req, res) => {
+    // POST /ue/provision — create K8s Deployment+ConfigMap for user's block (pod: ue-{username})
+    app.post('/ue/provision', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const col = db.collection('testbed_ues');
-        const ue = await col.findOne({ imsi: req.params.imsi });
-        if (!ue) return res.status(404).json({ error: 'UE not found in store' });
-        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-        const depName = `ue-${ue.imsi}`, cmName = `ue-config-${ue.imsi}`;
+        const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
+        const user = await db.collection('testbed_users').findOne({ username });
+        if (!user || !user.imsiStart) return res.status(400).json({ error: 'No IMSI block assigned' });
+        const depName = `ue-${username}`, cmName = `ue-config-${username}`;
+        const baseUe = { imsi: user.imsiStart, k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
+          opc: 'c42449363464e2e4fa8adca3063168ca', amf: '8000', dnn: 'internet', sst: 1 };
         const configMap = {
           apiVersion: 'v1', kind: 'ConfigMap',
-          metadata: { name: cmName, namespace: ns, labels: { app: 'ueransim-ue', imsi: ue.imsi } },
-          data: { 'ue.yaml': buildUeYaml(ue) }
+          metadata: { name: cmName, namespace: ns, labels: { app: 'ueransim-ue', username } },
+          data: { 'ue.yaml': buildUeYaml(baseUe) }
         };
         const deployment = {
           apiVersion: 'apps/v1', kind: 'Deployment',
-          metadata: { name: depName, namespace: ns, labels: { app: 'ueransim-ue', imsi: ue.imsi } },
+          metadata: { name: depName, namespace: ns, labels: { app: 'ueransim-ue', username } },
           spec: {
             replicas: 1,
-            selector: { matchLabels: { app: 'ueransim-ue', imsi: ue.imsi } },
+            selector: { matchLabels: { app: 'ueransim-ue', username } },
             template: {
-              metadata: { labels: { app: 'ueransim-ue', imsi: ue.imsi } },
+              metadata: { labels: { app: 'ueransim-ue', username } },
               spec: {
                 containers: [{
                   name: 'ue', image: 'gradiant/ueransim:3.2.6',
-                  command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml'],
+                  command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml', '-n', String(user.imsiCount || 1)],
                   securityContext: { capabilities: { add: ['NET_ADMIN'] } },
                   volumeMounts: [{ name: 'config', mountPath: '/etc/ueransim', readOnly: true }],
-                  resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '200m', memory: '256Mi' } }
+                  resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '500m', memory: '512Mi' } }
                 }],
                 volumes: [{ name: 'config', configMap: { name: cmName, items: [{ key: 'ue.yaml', path: 'ue.yaml' }] } }]
               }
@@ -607,39 +642,22 @@ data:
         };
         await k8sApi.createNamespacedConfigMap(ns, configMap);
         await appsApi.createNamespacedDeployment(ns, deployment);
-        await col.updateOne({ imsi: ue.imsi }, { $set: { provisioned: true, provisionedAt: new Date().toISOString() } });
-        res.json({ ok: true, containerName: depName });
+        await db.collection('testbed_users').updateOne({ username }, { $set: { ueProvisioned: true, ueProvisionedAt: new Date().toISOString() } });
+        res.json({ ok: true, podName: depName, imsiCount: user.imsiCount });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // DELETE /ue/:imsi/deprovision — delete K8s Deployment + ConfigMap
-    app.delete('/ue/:imsi/deprovision', authenticateToken, async (req, res) => {
+    // DELETE /ue/deprovision — delete K8s Deployment+ConfigMap for user's block
+    app.delete('/ue/deprovision', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-        const col = db.collection('testbed_ues');
-        const ue = await col.findOne({ imsi: req.params.imsi });
-        if (!ue) return res.status(404).json({ error: 'UE not found' });
-        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
-        try { await appsApi.deleteNamespacedDeployment(`ue-${ue.imsi}`, ns); } catch (_) {}
-        try { await k8sApi.deleteNamespacedConfigMap(`ue-config-${ue.imsi}`, ns); } catch (_) {}
-        await col.updateOne({ imsi: ue.imsi }, { $set: { provisioned: false, provisionedAt: null } });
+        const username = (req.user.role === 'admin' && req.query?.username) ? req.query.username : req.user.username;
+        const user = await db.collection('testbed_users').findOne({ username });
+        if (!user) return res.status(404).json({ error: 'User not found' });
+        try { await appsApi.deleteNamespacedDeployment(`ue-${username}`, ns); } catch (_) {}
+        try { await k8sApi.deleteNamespacedConfigMap(`ue-config-${username}`, ns); } catch (_) {}
+        await db.collection('testbed_users').updateOne({ username }, { $set: { ueProvisioned: false } });
         res.json({ ok: true });
-      } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    // GET /ue/:imsi/status — pod phase + tunnel IP + inMongo
-    app.get('/ue/:imsi/status', authenticateToken, async (req, res) => {
-      try {
-        const { imsi } = req.params;
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
-        const pod = pods.body.items[0];
-        if (!pod) return res.json({ imsi, containerName: null, containerRunning: false, tunIp: null, hasPduSession: false, inMongo: false });
-        const podRunning = pod.status?.phase === 'Running' &&
-          pod.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True';
-        const tunIp = podRunning ? await getUeTunIp(pod.metadata.name, pod.spec.containers[0].name) : null;
-        const inMongo = !!(db && await db.collection('subscribers').findOne({ imsi }, { projection: { imsi: 1 } }));
-        res.json({ imsi, containerName: pod.metadata.name, containerState: pod.status?.phase || 'Unknown',
-          containerRunning: podRunning, tunIp, hasPduSession: !!tunIp, inMongo });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
