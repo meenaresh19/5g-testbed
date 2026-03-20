@@ -692,20 +692,40 @@ data:
           }, []);
 
           const handleAddUE = async () => {
-            if (!formData.imsi) { alert('IMSI required'); return; }
+            if (!formData.imsi || !/^\d{15}$/.test(formData.imsi)) {
+              alert('IMSI must be 15 digits');
+              return;
+            }
             try {
               const res = await fetch('/api/ue-management', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(formData)
+                body: JSON.stringify({
+                  imsi: formData.imsi,
+                  k: formData.k,
+                  opc: formData.opc
+                })
               });
               if (!res.ok) throw new Error('Failed to create UE');
               setShowAddModal(false);
-              setFormData({ imsi: '', k: '', opc: '' });
+              resetFormData();
               fetchUEs();
             } catch (e) {
               alert('Error: ' + e.message);
             }
+          };
+
+          const resetFormData = () => {
+            setFormData({
+              imsi: '',
+              k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
+              opc: 'c42449363464e2e4fa8adca3063168ca',
+              amf: 'c3d4',
+              imei: '356938035643803',
+              imeiSv: '8944',
+              sst: 1,
+              sd: '000000'
+            });
           };
 
           const handleDeleteUE = async (imsi) => {
@@ -732,6 +752,11 @@ data:
             } catch (e) {
               alert('Error: ' + e.message);
             }
+          };
+
+          const openAddModal = () => {
+            resetFormData();
+            setShowAddModal(true);
           };
 
           const handleEstablishSession = async (imsi) => {
@@ -800,7 +825,7 @@ data:
 
               <div className="panel">
                 <h3><Icon name="antenna" /> UE Instances</h3>
-                <button className="button" onClick={() => setShowAddModal(true)} style={{marginBottom: 16}}><Icon name="check" /> + Add UE</button>
+                <button className="button" onClick={openAddModal} style={{marginBottom: 16}}><Icon name="check" /> + Add UE</button>
 
                 {loading ? (
                   <div className="loading">Loading UEs...</div>
@@ -842,23 +867,73 @@ data:
 
               {showAddModal && (
                 <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}}>
-                  <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 500, width: '90%'}}>
+                  <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 600, width: '90%', maxHeight: '80vh', overflowY: 'auto'}}>
                     <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>Create New UE</h2>
-                    <div className="form-group">
-                      <label>IMSI</label>
-                      <input type="text" value={formData.imsi} onChange={e => setFormData({...formData, imsi: e.target.value})} placeholder="001010000000099" />
+
+                    <div style={{background: 'rgba(0,200,255,0.05)', padding: 12, borderRadius: 6, marginBottom: 16, border: '1px solid var(--accent)', fontSize: 11, color: 'var(--accent)'}}>
+                      All fields have sensible defaults. Edit as needed.
                     </div>
-                    <div className="form-group">
-                      <label>K (Auth Key)</label>
-                      <input type="text" value={formData.k} onChange={e => setFormData({...formData, k: e.target.value})} placeholder="fec86ba6eb707ed08ce33ae45b4a0fba" />
+
+                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12}}>
+                      <div className="form-group">
+                        <label>IMSI (15 digits)</label>
+                        <input type="text" value={formData.imsi} onChange={e => setFormData({...formData, imsi: e.target.value})} placeholder="001010000000099" />
+                      </div>
+                      <div className="form-group">
+                        <label>IMEI</label>
+                        <input type="text" value={formData.imei} onChange={e => setFormData({...formData, imei: e.target.value})} />
+                      </div>
                     </div>
-                    <div className="form-group">
-                      <label>OPc (Operator Key)</label>
-                      <input type="text" value={formData.opc} onChange={e => setFormData({...formData, opc: e.target.value})} placeholder="c42449363464e2e4fa8adca3063168ca" />
+
+                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12}}>
+                      <div className="form-group">
+                        <label>K (Auth Key)</label>
+                        <input type="text" value={formData.k} onChange={e => setFormData({...formData, k: e.target.value})} style={{fontSize: 10, fontFamily: 'var(--font-mono)'}} />
+                      </div>
+                      <div className="form-group">
+                        <label>OPc (Operator Key)</label>
+                        <input type="text" value={formData.opc} onChange={e => setFormData({...formData, opc: e.target.value})} style={{fontSize: 10, fontFamily: 'var(--font-mono)'}} />
+                      </div>
                     </div>
-                    <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20}}>
-                      <button className="button" onClick={() => setShowAddModal(false)} style={{background: 'var(--muted)'}}>Cancel</button>
-                      <button className="button" onClick={handleAddUE}><Icon name="check" /> Create</button>
+
+                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12}}>
+                      <div className="form-group">
+                        <label>AMF</label>
+                        <input type="text" value={formData.amf} onChange={e => setFormData({...formData, amf: e.target.value})} />
+                      </div>
+                      <div className="form-group">
+                        <label>IMEI SV</label>
+                        <input type="text" value={formData.imeiSv} onChange={e => setFormData({...formData, imeiSv: e.target.value})} />
+                      </div>
+                    </div>
+
+                    <div style={{background: 'var(--bg3)', padding: 12, borderRadius: 6, marginBottom: 12, border: '1px solid var(--border)'}}>
+                      <div style={{fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--accent)'}}>Network Slice (S-NSSAI)</div>
+                      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                        <div className="form-group">
+                          <label>SST (Slice Service Type)</label>
+                          <select value={formData.sst} onChange={e => setFormData({...formData, sst: parseInt(e.target.value)})} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)'}}>
+                            <option value="1">1 (eMBB)</option>
+                            <option value="2">2 (URLLC)</option>
+                            <option value="3">3 (MMTC)</option>
+                            <option value="4">4 (MPS)</option>
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label>SD (Slice Differentiator)</label>
+                          <input type="text" value={formData.sd} onChange={e => setFormData({...formData, sd: e.target.value})} placeholder="000000" maxLength="6" style={{fontSize: 11, fontFamily: 'var(--font-mono)'}} />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{fontSize: 10, color: 'var(--text3)', marginBottom: 16, padding: 12, background: 'var(--bg3)', borderRadius: 6}}>
+                      <strong>SST Values:</strong> 1=eMBB (broadband), 2=URLLC (low latency), 3=MMTC (IoT), 4=MPS (public safety)
+                      <br/><strong>SD:</strong> Hex differentiator (000000-FFFFFF)
+                    </div>
+
+                    <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end'}}>
+                      <button className="button" onClick={() => { setShowAddModal(false); resetFormData(); }} style={{background: 'var(--muted)'}}>Cancel</button>
+                      <button className="button" onClick={handleAddUE}><Icon name="check" /> Create UE</button>
                     </div>
                   </div>
                 </div>
@@ -922,10 +997,12 @@ data:
 
         // Tracing section - PCAP capture
         function TracingSection() {
+          const [tracingTab, setTracingTab] = useState('pod');  // 'pod' or 'interface'
           const [pods, setPods] = useState([]);
           const [sessions, setSessions] = useState([]);
           const [selectedPod, setSelectedPod] = useState('');
           const [selectedContainer, setSelectedContainer] = useState('');
+          const [selectedIface, setSelectedIface] = useState('eth0');
           const [iface, setIface] = useState('any');
           const [filter, setFilter] = useState('');
           const [capturing, setCapturing] = useState(false);
@@ -1042,57 +1119,108 @@ data:
                 <Icon name="network" /> <strong>PCAP Tracing:</strong> Capture network traffic from K8s pods. Download for analysis in Wireshark.
               </div>
 
+              <div style={{marginBottom: 16, display: 'flex', gap: 0, borderBottom: '2px solid var(--border)'}}>
+                <button onClick={() => setTracingTab('pod')} style={{flex: 1, padding: '12px', background: tracingTab === 'pod' ? 'rgba(0,200,255,0.1)' : 'transparent', borderBottom: tracingTab === 'pod' ? '3px solid var(--accent)' : 'none', color: tracingTab === 'pod' ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontWeight: 600, fontSize: 14, border: 'none', marginBottom: '-2px'}}>
+                  Pod Capture
+                </button>
+                <button onClick={() => setTracingTab('interface')} style={{flex: 1, padding: '12px', background: tracingTab === 'interface' ? 'rgba(0,200,255,0.1)' : 'transparent', borderBottom: tracingTab === 'interface' ? '3px solid var(--accent)' : 'none', color: tracingTab === 'interface' ? 'var(--accent)' : 'var(--text2)', cursor: 'pointer', fontWeight: 600, fontSize: 14, border: 'none', marginBottom: '-2px'}}>
+                  Interface Capture
+                </button>
+              </div>
+
               <div className="grid-2">
-                <div className="panel">
-                  <h3><Icon name="network" /> Capture Configuration</h3>
+                {tracingTab === 'pod' && (
+                  <div className="panel">
+                    <h3><Icon name="network" /> Pod Capture</h3>
 
-                  <div className="form-group">
-                    <label>Pod</label>
-                    <select value={selectedPod} onChange={e => { setSelectedPod(e.target.value); setSelectedContainer(''); }} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                      <option value="">-- Select Pod --</option>
-                      {pods.map(p => (<option key={p.name} value={p.name}>{p.name} ({p.app})</option>))}
-                    </select>
-                  </div>
-
-                  {containers.length > 0 && (
                     <div className="form-group">
-                      <label>Container (optional)</label>
-                      <select value={selectedContainer} onChange={e => setSelectedContainer(e.target.value)} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                        <option value="">-- Any Container --</option>
-                        {containers.map(c => (<option key={c} value={c}>{c}</option>))}
+                      <label>Pod</label>
+                      <select value={selectedPod} onChange={e => { setSelectedPod(e.target.value); setSelectedContainer(''); }} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                        <option value="">-- Select Pod --</option>
+                        {pods.map(p => (<option key={p.name} value={p.name}>{p.name} ({p.app})</option>))}
                       </select>
                     </div>
-                  )}
 
-                  <div className="form-group">
-                    <label>Interface</label>
-                    <select value={iface} onChange={e => setIface(e.target.value)} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
-                      <option value="any">Any (all interfaces)</option>
-                      <option value="eth0">eth0</option>
-                      <option value="eth1">eth1</option>
-                      <option value="lo">lo (localhost)</option>
-                    </select>
+                    {containers.length > 0 && (
+                      <div className="form-group">
+                        <label>Container (optional)</label>
+                        <select value={selectedContainer} onChange={e => setSelectedContainer(e.target.value)} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                          <option value="">-- Any Container --</option>
+                          {containers.map(c => (<option key={c} value={c}>{c}</option>))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="form-group">
+                      <label>Interface</label>
+                      <select value={iface} onChange={e => setIface(e.target.value)} disabled={capturing} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)'}}>
+                        <option value="any">Any (all interfaces)</option>
+                        <option value="eth0">eth0</option>
+                        <option value="eth1">eth1</option>
+                        <option value="lo">lo (localhost)</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Filter (tcpdump syntax, optional)</label>
+                      <input type="text" value={filter} onChange={e => setFilter(e.target.value)} placeholder="e.g., 'tcp port 7777' or 'udp port 2152'" disabled={capturing} style={{width: '100%'}} />
+                    </div>
+
+                    <div style={{fontSize: 11, color: 'var(--text3)', marginBottom: 16}}>
+                      Examples: tcp port 7777 | udp | ip.src==10.45.0.10 | port 5000
+                    </div>
+
+                    {!capturing ? (
+                      <button className="button" onClick={handleStartCapture} disabled={!selectedPod || loading} style={{width: '100%'}}>
+                        <Icon name="play" /> {loading ? 'Starting...' : 'Start Capture'}
+                      </button>
+                    ) : (
+                      <button className="button danger" onClick={() => handleStopCapture(sessions[0]?.id)} disabled={loading} style={{width: '100%'}}>
+                        <Icon name="stop" /> {loading ? 'Stopping...' : 'Stop Capture'}
+                      </button>
+                    )}
                   </div>
+                )}
 
-                  <div className="form-group">
-                    <label>Filter (tcpdump syntax, optional)</label>
-                    <input type="text" value={filter} onChange={e => setFilter(e.target.value)} placeholder="e.g., 'tcp port 7777' or 'udp port 2152'" disabled={capturing} style={{width: '100%'}} />
+                {tracingTab === 'interface' && (
+                  <div className="panel">
+                    <h3><Icon name="network" /> Interface Capture</h3>
+
+                    <div className="form-group">
+                      <label>Interface</label>
+                      <input type="text" value={selectedIface} onChange={e => setSelectedIface(e.target.value)} placeholder="eth0, eth1, any, lo" disabled={capturing} />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Filter (tcpdump syntax, optional)</label>
+                      <input type="text" value={filter} onChange={e => setFilter(e.target.value)} placeholder="e.g., 'tcp port 7777' or 'udp port 2152'" disabled={capturing} style={{width: '100%'}} />
+                    </div>
+
+                    <div style={{fontSize: 11, color: 'var(--text3)', marginBottom: 16}}>
+                      Common filters:
+                      <div style={{marginTop: 8}}>
+                        tcp port 7777 = SBI traffic
+                        <br/>udp port 2152 = GTP-U traffic
+                        <br/>icmp = Ping traffic
+                        <br/>tcp.port == 5000 = testbed-api
+                      </div>
+                    </div>
+
+                    {!capturing ? (
+                      <button className="button" onClick={() => {
+                        if (!selectedIface) { alert('Enter interface name'); return; }
+                        setIface(selectedIface);
+                        handleStartCapture();
+                      }} disabled={loading} style={{width: '100%'}}>
+                        <Icon name="play" /> {loading ? 'Starting...' : 'Start Capture'}
+                      </button>
+                    ) : (
+                      <button className="button danger" onClick={() => handleStopCapture(sessions[0]?.id)} disabled={loading} style={{width: '100%'}}>
+                        <Icon name="stop" /> {loading ? 'Stopping...' : 'Stop Capture'}
+                      </button>
+                    )}
                   </div>
-
-                  <div style={{fontSize: 11, color: 'var(--text3)', marginBottom: 16}}>
-                    Examples: tcp port 7777 | udp | ip.src==10.45.0.10 | port 5000
-                  </div>
-
-                  {!capturing ? (
-                    <button className="button" onClick={handleStartCapture} disabled={!selectedPod || loading} style={{width: '100%'}}>
-                      <Icon name="play" /> {loading ? 'Starting...' : 'Start Capture'}
-                    </button>
-                  ) : (
-                    <button className="button danger" onClick={() => handleStopCapture(sessions[0]?.id)} disabled={loading} style={{width: '100%'}}>
-                      <Icon name="stop" /> {loading ? 'Stopping...' : 'Stop Capture'}
-                    </button>
-                  )}
-                </div>
+                )}
 
                 <div className="panel">
                   <h3><Icon name="database" /> Capture Sessions</h3>
