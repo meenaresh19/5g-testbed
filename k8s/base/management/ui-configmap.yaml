@@ -1057,8 +1057,11 @@ data:
             return () => clearInterval(interval);
           }, []);
 
+          const hasRunning = sessions.some(s => s.status === 'running');
+
           const handleStartInterfaceCapture = async () => {
             if (!Object.values(selectedInterfaces).some(v => v)) { alert('Select at least one interface'); return; }
+            if (hasRunning) { alert('A capture is already in progress. Stop it before starting a new one.'); return; }
             setStarting(true);
             try {
               const res = await fetch('/api/pcap/start', {
@@ -1073,6 +1076,7 @@ data:
                 })
               });
               if (!res.ok) throw new Error('Failed to start capture');
+              setSelectedInterfaces({ ngap: true, gtpu: false, pfcp: false, sbi: false, allSctp: false, ueSubnet: false });
               fetchSessions();
             } catch (e) {
               alert('Error: ' + e.message);
@@ -1095,6 +1099,7 @@ data:
 
           const handleStartPodCapture = async () => {
             if (selectedPods.length === 0) { alert('Select at least one pod'); return; }
+            if (hasRunning) { alert('A capture is already in progress. Stop it before starting a new one.'); return; }
             setStarting(true);
             try {
               const podTargets = selectedPods.map(name => {
@@ -1113,6 +1118,7 @@ data:
                 })
               });
               if (!res.ok) throw new Error('Failed to start capture');
+              setSelectedPods([]);
               fetchSessions();
             } catch (e) {
               alert('Error: ' + e.message);
@@ -1228,7 +1234,12 @@ data:
                     Captures on eth0 of every selected NF pod simultaneously
                   </div>
 
-                  <button className="button" onClick={handleStartInterfaceCapture} disabled={starting || !Object.values(selectedInterfaces).some(v => v)} style={{width: '100%'}}>
+                  {hasRunning && (
+                    <div style={{marginBottom: 12, padding: '10px 14px', background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: 6, fontSize: 12, color: 'var(--danger)'}}>
+                      ⚠ A capture is in progress. Stop it before starting a new one.
+                    </div>
+                  )}
+                  <button className="button" onClick={handleStartInterfaceCapture} disabled={starting || hasRunning || !Object.values(selectedInterfaces).some(v => v)} style={{width: '100%'}}>
                     <Icon name="play" /> {starting ? 'Starting...' : 'Start Capture'}
                   </button>
                 </div>
@@ -1290,7 +1301,12 @@ data:
                     </div>
                   </div>
 
-                  <button className="button" onClick={handleStartPodCapture} disabled={starting || selectedPods.length === 0} style={{width: '100%'}}>
+                  {hasRunning && (
+                    <div style={{marginBottom: 12, padding: '10px 14px', background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.4)', borderRadius: 6, fontSize: 12, color: 'var(--danger)'}}>
+                      ⚠ A capture is in progress. Stop it before starting a new one.
+                    </div>
+                  )}
+                  <button className="button" onClick={handleStartPodCapture} disabled={starting || hasRunning || selectedPods.length === 0} style={{width: '100%'}}>
                     <Icon name="play" /> {starting ? 'Starting...' : `Start Capture${selectedPods.length > 1 ? ` (${selectedPods.length} pods)` : ''}`}
                   </button>
                 </div>
