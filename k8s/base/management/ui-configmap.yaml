@@ -671,335 +671,426 @@ data:
           );
         }
 
-        // UE Management section - UERANSIM instances
-        function UEManagementSection() {
+        // UE Manager — 4-step workflow: Add → Register → Provision → Operate
+        const C = { bg:'#0d1117', card:'#161b22', border:'#30363d', text:'#e6edf3', muted:'#8b949e', accent:'#00c896' };
+
+        function UEManager() {
+          const [tab, setTab] = useState('config');
           const [ues, setUes] = useState([]);
+          const [inventory, setInventory] = useState([]);
           const [loading, setLoading] = useState(false);
           const [showAddModal, setShowAddModal] = useState(false);
-          const [selectedUe, setSelectedUe] = useState(null);
-          const [showDetailsModal, setShowDetailsModal] = useState(false);
-          const [formData, setFormData] = useState({ imsi: '', k: '', opc: '' });
-          const [ueDetails, setUeDetails] = useState(null);
+          const [editUe, setEditUe] = useState(null);
+          const [expandedImsi, setExpandedImsi] = useState(null);
+          const [detailData, setDetailData] = useState({});
+          const [sessionForm, setSessionForm] = useState({ type: 'IPv4', dnn: 'internet', sst: 1, sd: '' });
+          const [pingForm, setPingForm] = useState({ target: '8.8.8.8', count: 4 });
+          const [pingOut, setPingOut] = useState({});
+          const [nasDeregType, setNasDeregType] = useState('normal');
 
-          const fetchUEs = async () => {
+          const defaultForm = () => ({
+            imsi: '', k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
+            opc: 'c42449363464e2e4fa8adca3063168ca',
+            amf: '8000', dnn: 'internet', sst: 1, sd: '',
+            ambrDl: 1, ambrUl: 1, label: ''
+          });
+          const [form, setForm] = useState(defaultForm());
+
+          const genCreds = () => {
+            const hex = n => Array.from({length: n}, () => Math.floor(Math.random()*16).toString(16)).join('');
+            setForm(f => ({ ...f, k: hex(32), opc: hex(32) }));
+          };
+
+          const fetchUes = async () => {
+            try {
+              const r = await apiFetch('/api/ue');
+              if (r.ok) setUes(await r.json());
+            } catch (e) {}
+          };
+
+          const fetchInventory = async () => {
             setLoading(true);
             try {
-              const res = await apiFetch('/api/ue-management');
-              if (!res.ok) throw new Error('Failed to fetch UEs');
-              const data = await res.json();
-              setUes(data.ues);
-            } catch (e) {
-              alert('Error: ' + e.message);
-            } finally {
-              setLoading(false);
-            }
+              const r = await apiFetch('/api/ue/inventory');
+              if (r.ok) setInventory(await r.json());
+            } catch (e) {}
+            setLoading(false);
           };
 
-          React.useEffect(() => {
-            fetchUEs();
-            const interval = setInterval(fetchUEs, 5000);
-            return () => clearInterval(interval);
-          }, []);
+          React.useEffect(() => { fetchUes(); }, []);
+          React.useEffect(() => { if (tab === 'ops') fetchInventory(); }, [tab]);
 
-          const handleAddUE = async () => {
-            if (!formData.imsi || !/^\d{15}$/.test(formData.imsi)) {
-              alert('IMSI must be 15 digits');
-              return;
-            }
+          const handleAdd = async () => {
+            if (!form.imsi || !/^\d{15}$/.test(form.imsi)) { alert('IMSI must be exactly 15 digits'); return; }
+            const r = await apiFetch('/api/ue', { method: 'POST', body: JSON.stringify({ ...form, label: form.label || `UE-${form.imsi.slice(-4)}` }) });
+            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
+            setShowAddModal(false); setForm(defaultForm()); fetchUes();
+          };
+
+          const handleEdit = async () => {
+            const { imsi, ...fields } = form;
+            const r = await apiFetch(`/api/ue/${imsi}`, { method: 'PUT', body: JSON.stringify(fields) });
+            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
+            setEditUe(null); setForm(defaultForm()); fetchUes();
+          };
+
+          const handleDelete = async (imsi) => {
+            if (!confirm(`Remove ${imsi} from store?`)) return;
+            const r = await apiFetch(`/api/ue/${imsi}`, { method: 'DELETE' });
+            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
+            fetchUes();
+          };
+
+          const handleRegister = async (imsi, isRegistered) => {
+            const method = isRegistered ? 'DELETE' : 'POST';
+            const r = await apiFetch(`/api/ue/${imsi}/register`, { method });
+            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
+            fetchUes();
+          };
+
+          const handleProvision = async (imsi, isProvisioned) => {
+            const url = isProvisioned ? `/api/ue/${imsi}/deprovision` : `/api/ue/${imsi}/provision`;
+            const method = isProvisioned ? 'DELETE' : 'POST';
+            const r = await apiFetch(url, { method });
+            if (!r.ok) { const e = await r.json(); alert(e.error || 'Failed'); return; }
+            fetchInventory();
+          };
+
+          const loadDetail = async (imsi) => {
+            if (expandedImsi === imsi) { setExpandedImsi(null); return; }
+            setExpandedImsi(imsi);
             try {
-              const res = await apiFetch('/api/ue-management', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                  imsi: formData.imsi,
-                  k: formData.k,
-                  opc: formData.opc
-                })
-              });
-              if (!res.ok) throw new Error('Failed to create UE');
-              setShowAddModal(false);
-              resetFormData();
-              fetchUEs();
-            } catch (e) {
-              alert('Error: ' + e.message);
-            }
-          };
-
-          const resetFormData = () => {
-            setFormData({
-              imsi: '',
-              k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
-              opc: 'c42449363464e2e4fa8adca3063168ca',
-              amf: 'c3d4',
-              imei: '356938035643803',
-              imeiSv: '8944',
-              sst: 1,
-              sd: '000000'
-            });
-          };
-
-          const handleDeleteUE = async (imsi) => {
-            if (!confirm(`Delete UE ${imsi}?`)) return;
-            try {
-              const res = await apiFetch(`/api/ue-management/${imsi}`, {method: 'DELETE'});
-              if (!res.ok) throw new Error('Failed to delete UE');
-              fetchUEs();
-            } catch (e) {
-              alert('Error: ' + e.message);
-            }
-          };
-
-          const handleShowDetails = async (imsi) => {
-            try {
-              const [sessionsRes, nasRes] = await Promise.all([
-                apiFetch(`/api/ue-management/${imsi}/sessions`),
-                apiFetch(`/api/ue-management/${imsi}/nas-status`)
+              const [nasR, sessR] = await Promise.all([
+                apiFetch(`/api/ue/${imsi}/nas-status`),
+                apiFetch(`/api/ue/${imsi}/sessions`)
               ]);
-              const sessions = await sessionsRes.json();
-              const nas = await nasRes.json();
-              setUeDetails({ imsi, sessions: sessions.sessions || [], nasStatus: nas.nasStatus || 'Unknown' });
-              setShowDetailsModal(true);
-            } catch (e) {
-              alert('Error: ' + e.message);
-            }
+              const nas = nasR.ok ? await nasR.json() : {};
+              const sess = sessR.ok ? await sessR.json() : {};
+              setDetailData(d => ({ ...d, [imsi]: { nas, sessions: sess.sessions || [] } }));
+            } catch (e) {}
           };
 
-          const openAddModal = () => {
-            resetFormData();
-            setShowAddModal(true);
+          const handleEstablish = async (imsi) => {
+            const r = await apiFetch(`/api/ue/${imsi}/sessions`, { method: 'POST', body: JSON.stringify(sessionForm) });
+            const d = await r.json();
+            alert(d.output || d.error || 'Done');
+            loadDetail(imsi);
           };
 
-          const handleEstablishSession = async (imsi) => {
-            try {
-              const res = await apiFetch(`/api/ue-management/${imsi}/sessions`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ dnn: 'internet', sst: 1, sd: '000000' })
-              });
-              if (!res.ok) throw new Error('Failed to establish session');
-              alert('PDU session established');
-              handleShowDetails(imsi);
-            } catch (e) {
-              alert('Error: ' + e.message);
-            }
+          const handleReleaseAll = async (imsi) => {
+            const r = await apiFetch(`/api/ue/${imsi}/sessions`, { method: 'DELETE' });
+            const d = await r.json();
+            alert(d.output || d.error || 'Done');
+            loadDetail(imsi);
           };
 
-          const handleReleaseSession = async (imsi, psi) => {
-            try {
-              const res = await apiFetch(`/api/ue-management/${imsi}/sessions/${psi}`, {method: 'DELETE'});
-              if (!res.ok) throw new Error('Failed to release session');
-              handleShowDetails(imsi);
-            } catch (e) {
-              alert('Error: ' + e.message);
-            }
+          const handleReleasePsi = async (imsi, psi) => {
+            const r = await apiFetch(`/api/ue/${imsi}/sessions/${psi}`, { method: 'DELETE' });
+            const d = await r.json();
+            alert(d.output || d.error || 'Done');
+            loadDetail(imsi);
           };
 
-          const handleDeregister = async (imsi) => {
-            try {
-              const res = await apiFetch(`/api/ue-management/${imsi}/nas-deregister`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ method: 'normal' })
-              });
-              if (!res.ok) throw new Error('Failed to deregister');
-              alert('UE deregistered');
-              fetchUEs();
-            } catch (e) {
-              alert('Error: ' + e.message);
-            }
+          const handleNasDeregister = async (imsi) => {
+            const r = await apiFetch(`/api/ue/${imsi}/nas-deregister`, { method: 'POST', body: JSON.stringify({ type: nasDeregType }) });
+            const d = await r.json();
+            alert(d.output || d.error || 'Done');
           };
+
+          const handlePing = async (imsi) => {
+            const r = await apiFetch(`/api/ue/${imsi}/ping`, { method: 'POST', body: JSON.stringify(pingForm) });
+            const d = await r.json();
+            setPingOut(o => ({ ...o, [imsi]: d.output || d.error || '' }));
+          };
+
+          const openEdit = (ue) => {
+            setForm({ imsi: ue.imsi, k: ue.k, opc: ue.opc, amf: ue.amf || '8000',
+              dnn: ue.dnn || 'internet', sst: ue.sst || 1, sd: ue.sd || '',
+              ambrDl: ue.ambrDl || 1, ambrUl: ue.ambrUl || 1, label: ue.label || '' });
+            setEditUe(ue.imsi);
+          };
+
+          const configUes = ues;
+          const opsUes = inventory;
+          const regCount = configUes.filter(u => u.registered).length;
+          const provCount = opsUes.filter(u => u.provisioned).length;
+
+          const UeFormModal = ({ title, onSave, onClose }) => (
+            <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000}}>
+              <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,padding:24,maxWidth:580,width:'90%',maxHeight:'85vh',overflowY:'auto'}}>
+                <h2 style={{marginBottom:16,color:'var(--accent)',fontSize:16}}>{title}</h2>
+                <div className="form-group">
+                  <label>IMSI (15 digits)</label>
+                  <input type="text" value={form.imsi} disabled={!!editUe} onChange={e=>setForm(f=>({...f,imsi:e.target.value}))} placeholder="001010000000001" />
+                </div>
+                <div className="form-group">
+                  <label>Label</label>
+                  <input type="text" value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))} placeholder={`UE-${(form.imsi||'????').slice(-4)}`} />
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                  <div className="form-group">
+                    <label>K (Auth Key)</label>
+                    <input type="text" value={form.k} onChange={e=>setForm(f=>({...f,k:e.target.value}))} style={{fontSize:10,fontFamily:'var(--font-mono)'}} />
+                  </div>
+                  <div className="form-group">
+                    <label>OPc</label>
+                    <input type="text" value={form.opc} onChange={e=>setForm(f=>({...f,opc:e.target.value}))} style={{fontSize:10,fontFamily:'var(--font-mono)'}} />
+                  </div>
+                </div>
+                <button className="button small" onClick={genCreds} style={{marginBottom:12,background:'var(--accent2)'}}>Generate credentials</button>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                  <div className="form-group">
+                    <label>AMF</label>
+                    <input type="text" value={form.amf} onChange={e=>setForm(f=>({...f,amf:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label>DNN</label>
+                    <input type="text" value={form.dnn} onChange={e=>setForm(f=>({...f,dnn:e.target.value}))} />
+                  </div>
+                  <div className="form-group">
+                    <label>SST</label>
+                    <input type="number" value={form.sst} onChange={e=>setForm(f=>({...f,sst:parseInt(e.target.value)||1}))} min="1" max="4" />
+                  </div>
+                  <div className="form-group">
+                    <label>SD (hex, optional)</label>
+                    <input type="text" value={form.sd} onChange={e=>setForm(f=>({...f,sd:e.target.value}))} placeholder="leave blank for none" />
+                  </div>
+                  <div className="form-group">
+                    <label>AMBR DL (Gbps unit)</label>
+                    <input type="number" value={form.ambrDl} onChange={e=>setForm(f=>({...f,ambrDl:parseInt(e.target.value)||1}))} min="1" />
+                  </div>
+                  <div className="form-group">
+                    <label>AMBR UL (Gbps unit)</label>
+                    <input type="number" value={form.ambrUl} onChange={e=>setForm(f=>({...f,ambrUl:parseInt(e.target.value)||1}))} min="1" />
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:16}}>
+                  <button className="button" onClick={onClose} style={{background:'var(--muted)'}}>Cancel</button>
+                  <button className="button" onClick={onSave}>Save</button>
+                </div>
+              </div>
+            </div>
+          );
 
           return (
             <div>
               <div className="stat-grid">
                 <div className="stat-card">
-                  <div className="stat-label">Active UEs</div>
-                  <div className="stat-value">{ues.length}</div>
-                  <div className="stat-sub">Running pods</div>
+                  <div className="stat-label">Configured UEs</div>
+                  <div className="stat-value">{configUes.length}</div>
+                  <div className="stat-sub">In testbed store</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-label">Connected</div>
-                  <div className="stat-value" style={{color: 'var(--success)'}}>{ues.filter(u => u.ready).length}</div>
-                  <div className="stat-sub">Ready status</div>
+                  <div className="stat-label">Registered in Core</div>
+                  <div className="stat-value" style={{color: regCount > 0 ? 'var(--success)' : 'var(--muted)'}}>{regCount}</div>
+                  <div className="stat-sub">In Open5GS MongoDB</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-label">Sessions</div>
-                  <div className="stat-value">{ues.reduce((sum, u) => sum + u.sessions, 0)}</div>
-                  <div className="stat-sub">PDU sessions</div>
+                  <div className="stat-label">UERANSIM Pods</div>
+                  <div className="stat-value" style={{color: provCount > 0 ? 'var(--accent)' : 'var(--muted)'}}>{provCount}</div>
+                  <div className="stat-sub">K8s Deployments</div>
                 </div>
               </div>
 
-              <div className="info-box">
-                <Icon name="antenna" /> <strong>UE Management:</strong> Create, manage, and control UERANSIM UE instances. PDU sessions, NAS status, registration procedures.
+              <div style={{display:'flex',gap:0,marginBottom:16,borderBottom:'2px solid var(--border)'}}>
+                {['config','ops'].map(t => (
+                  <div key={t} onClick={()=>setTab(t)} style={{padding:'10px 22px',cursor:'pointer',fontWeight:600,fontSize:13,color:tab===t?'var(--accent)':'var(--text2)',borderBottom:tab===t?'2px solid var(--accent)':'2px solid transparent',marginBottom:-2,userSelect:'none'}}>
+                    {t === 'config' ? 'Config' : 'Operations'}
+                  </div>
+                ))}
               </div>
 
-              <div className="panel">
-                <h3><Icon name="antenna" /> UE Instances</h3>
-                <button className="button" onClick={openAddModal} style={{marginBottom: 16}}><Icon name="check" /> + Add UE</button>
-
-                {loading ? (
-                  <div className="loading">Loading UEs...</div>
-                ) : ues.length === 0 ? (
-                  <div style={{fontSize: 12, color: 'var(--text2)', padding: '16px', textAlign: 'center'}}>No UEs running. Click "+ Add UE" to create.</div>
-                ) : (
-                  <div style={{overflowX: 'auto'}}>
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>IMSI</th>
-                          <th>Pod Name</th>
-                          <th>Status</th>
-                          <th>NAS State</th>
-                          <th>Sessions</th>
-                          <th style={{textAlign: 'right'}}>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ues.map(ue => (
-                          <tr key={ue.podName}>
-                            <td><strong>{ue.imsi}</strong></td>
-                            <td style={{fontSize: 11, color: 'var(--text2)'}}>{ue.podName}</td>
-                            <td><span className={`badge ${ue.ready ? 'success' : ue.status === 'Pending' ? 'warn' : 'danger'}`}>{ue.status}</span></td>
-                            <td><span style={{fontSize: 11, color: 'var(--accent)'}}>{ue.nasState}</span></td>
-                            <td>{ue.sessions} active</td>
-                            <td style={{textAlign: 'right', display: 'flex', gap: 4, justifyContent: 'flex-end'}}>
-                              <button className="button small" onClick={() => handleShowDetails(ue.imsi)}>Details</button>
-                              <button className="button small" onClick={() => handleEstablishSession(ue.imsi)}>+ Session</button>
-                              <button className="button small danger" onClick={() => handleDeleteUE(ue.imsi)}>Delete</button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+              {tab === 'config' && (
+                <div>
+                  <div style={{background:'rgba(0,200,150,0.07)',border:'1px solid var(--accent)',borderRadius:6,padding:'10px 16px',marginBottom:16,fontSize:12,color:'var(--accent)'}}>
+                    Workflow: <strong>①ADD</strong> → <strong>②REGISTER</strong> → <strong>③PROVISION</strong> → <strong>④OPERATE</strong>
                   </div>
-                )}
-              </div>
-
-              {showAddModal && (
-                <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}}>
-                  <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 600, width: '90%', maxHeight: '80vh', overflowY: 'auto'}}>
-                    <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>Create New UE</h2>
-
-                    <div style={{background: 'rgba(0,200,255,0.05)', padding: 12, borderRadius: 6, marginBottom: 16, border: '1px solid var(--accent)', fontSize: 11, color: 'var(--accent)'}}>
-                      All fields have sensible defaults. Edit as needed.
+                  <div className="panel">
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                      <h3 style={{margin:0}}><Icon name="users" /> UE Store</h3>
+                      <button className="button" onClick={()=>{setForm(defaultForm());setShowAddModal(true);}}>+ Add UE</button>
                     </div>
-
-                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12}}>
-                      <div className="form-group">
-                        <label>IMSI (15 digits)</label>
-                        <input type="text" value={formData.imsi} onChange={e => setFormData({...formData, imsi: e.target.value})} placeholder="001010000000099" />
-                      </div>
-                      <div className="form-group">
-                        <label>IMEI</label>
-                        <input type="text" value={formData.imei} onChange={e => setFormData({...formData, imei: e.target.value})} />
-                      </div>
-                    </div>
-
-                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12}}>
-                      <div className="form-group">
-                        <label>K (Auth Key)</label>
-                        <input type="text" value={formData.k} onChange={e => setFormData({...formData, k: e.target.value})} style={{fontSize: 10, fontFamily: 'var(--font-mono)'}} />
-                      </div>
-                      <div className="form-group">
-                        <label>OPc (Operator Key)</label>
-                        <input type="text" value={formData.opc} onChange={e => setFormData({...formData, opc: e.target.value})} style={{fontSize: 10, fontFamily: 'var(--font-mono)'}} />
-                      </div>
-                    </div>
-
-                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12}}>
-                      <div className="form-group">
-                        <label>AMF</label>
-                        <input type="text" value={formData.amf} onChange={e => setFormData({...formData, amf: e.target.value})} />
-                      </div>
-                      <div className="form-group">
-                        <label>IMEI SV</label>
-                        <input type="text" value={formData.imeiSv} onChange={e => setFormData({...formData, imeiSv: e.target.value})} />
-                      </div>
-                    </div>
-
-                    <div style={{background: 'var(--bg3)', padding: 12, borderRadius: 6, marginBottom: 12, border: '1px solid var(--border)'}}>
-                      <div style={{fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--accent)'}}>Network Slice (S-NSSAI)</div>
-                      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
-                        <div className="form-group">
-                          <label>SST (Slice Service Type)</label>
-                          <select value={formData.sst} onChange={e => setFormData({...formData, sst: parseInt(e.target.value)})} style={{width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)'}}>
-                            <option value="1">1 (eMBB)</option>
-                            <option value="2">2 (URLLC)</option>
-                            <option value="3">3 (MMTC)</option>
-                            <option value="4">4 (MPS)</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label>SD (Slice Differentiator)</label>
-                          <input type="text" value={formData.sd} onChange={e => setFormData({...formData, sd: e.target.value})} placeholder="000000" maxLength="6" style={{fontSize: 11, fontFamily: 'var(--font-mono)'}} />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{fontSize: 10, color: 'var(--text3)', marginBottom: 16, padding: 12, background: 'var(--bg3)', borderRadius: 6}}>
-                      <strong>SST Values:</strong> 1=eMBB (broadband), 2=URLLC (low latency), 3=MMTC (IoT), 4=MPS (public safety)
-                      <br/><strong>SD:</strong> Hex differentiator (000000-FFFFFF)
-                    </div>
-
-                    <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end'}}>
-                      <button className="button" onClick={() => { setShowAddModal(false); resetFormData(); }} style={{background: 'var(--muted)'}}>Cancel</button>
-                      <button className="button" onClick={handleAddUE}><Icon name="check" /> Create UE</button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {showDetailsModal && ueDetails && (
-                <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}}>
-                  <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 700, width: '90%', maxHeight: '80vh', overflowY: 'auto'}}>
-                    <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>UE Details: {ueDetails.imsi}</h2>
-
-                    <div style={{background: 'var(--bg3)', padding: 12, borderRadius: 6, marginBottom: 16}}>
-                      <div style={{fontSize: 12, color: 'var(--text2)', marginBottom: 8}}>NAS Status:</div>
-                      <div style={{fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--accent)', whiteSpace: 'pre-wrap', wordBreak: 'break-word'}}>
-                        {ueDetails.nasStatus || 'Fetching...'}
-                      </div>
-                    </div>
-
-                    <div style={{marginBottom: 16}}>
-                      <h3 style={{marginBottom: 8, fontSize: 14}}>PDU Sessions ({ueDetails.sessions.length})</h3>
-                      {ueDetails.sessions.length === 0 ? (
-                        <div style={{fontSize: 12, color: 'var(--text2)', padding: 8}}>No active sessions</div>
-                      ) : (
+                    {configUes.length === 0 ? (
+                      <div style={{fontSize:12,color:'var(--text2)',padding:16,textAlign:'center'}}>No UEs configured. Click "+ Add UE" to start.</div>
+                    ) : (
+                      <div style={{overflowX:'auto'}}>
                         <table className="table">
                           <thead>
                             <tr>
-                              <th>PSI</th>
-                              <th>State</th>
-                              <th>Type</th>
-                              <th>DNN</th>
-                              <th>IP</th>
-                              <th></th>
+                              <th>IMSI / Label</th>
+                              <th>K (truncated)</th>
+                              <th>Registration</th>
+                              <th style={{textAlign:'right'}}>Actions</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {ueDetails.sessions.map((s, idx) => (
-                              <tr key={idx}>
-                                <td>{s.psi || idx}</td>
-                                <td><span className="badge success">{s.state}</span></td>
-                                <td>{s.type}</td>
-                                <td>{s.dnn}</td>
-                                <td style={{fontSize: 10, fontFamily: 'var(--font-mono)'}}>{s.ip}</td>
-                                <td><button className="button small danger" onClick={() => handleReleaseSession(ueDetails.imsi, s.psi)}>Release</button></td>
+                            {configUes.map(ue => (
+                              <tr key={ue.imsi}>
+                                <td>
+                                  <strong>{ue.imsi}</strong>
+                                  {ue.label && <div style={{fontSize:10,color:'var(--text2)'}}>{ue.label}</div>}
+                                </td>
+                                <td style={{fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)'}}>{(ue.k||'').slice(0,12)}…</td>
+                                <td>
+                                  <span className={`badge ${ue.registered ? 'success' : 'warn'}`}>
+                                    {ue.registered ? 'Registered' : 'Unregistered'}
+                                  </span>
+                                </td>
+                                <td style={{textAlign:'right'}}>
+                                  <button className="button small" onClick={()=>openEdit(ue)} style={{marginRight:4}}>Edit</button>
+                                  <button className="button small" onClick={()=>handleRegister(ue.imsi, ue.registered)} style={{marginRight:4,background:ue.registered?'var(--warn)':'var(--accent)'}}>
+                                    {ue.registered ? 'Deregister' : 'Register'}
+                                  </button>
+                                  <button className="button small danger" onClick={()=>handleDelete(ue.imsi)}>Delete</button>
+                                </td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
-                      )}
-                    </div>
-
-                    <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end'}}>
-                      <button className="button" onClick={() => handleEstablishSession(ueDetails.imsi)}>+ Establish Session</button>
-                      <button className="button" onClick={() => handleDeregister(ueDetails.imsi)} style={{background: 'var(--warn)'}}>Deregister</button>
-                      <button className="button" onClick={() => setShowDetailsModal(false)} style={{background: 'var(--muted)'}}>Close</button>
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </div>
+              )}
+
+              {tab === 'ops' && (
+                <div>
+                  <div style={{display:'flex',justifyContent:'flex-end',marginBottom:12}}>
+                    <button className="button" onClick={fetchInventory}>Refresh</button>
+                  </div>
+                  {loading ? <div className="loading">Loading inventory...</div> : opsUes.length === 0 ? (
+                    <div style={{fontSize:12,color:'var(--text2)',padding:16,textAlign:'center'}}>No UEs in store. Add UEs in the Config tab first.</div>
+                  ) : opsUes.map(ue => (
+                    <div key={ue.imsi} style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,marginBottom:12,overflow:'hidden'}}>
+                      <div style={{display:'flex',alignItems:'center',padding:'12px 16px',gap:12,flexWrap:'wrap'}}>
+                        <div style={{flex:1,minWidth:160}}>
+                          <strong style={{fontSize:13}}>{ue.imsi}</strong>
+                          {ue.label && <span style={{fontSize:11,color:'var(--text2)',marginLeft:8}}>{ue.label}</span>}
+                          <div style={{fontSize:11,color:'var(--text2)',marginTop:2}}>
+                            <span style={{marginRight:8}}>Pod: <span style={{color:ue.podRunning?'var(--success)':'var(--muted)'}}>{ue.podPhase || 'none'}</span></span>
+                            <span style={{marginRight:8}}>Tun: <span style={{fontFamily:'var(--font-mono)',fontSize:10}}>{ue.tunIp || '—'}</span></span>
+                            <span>Sessions: {ue.hasPduSession ? '✓' : '—'}</span>
+                          </div>
+                        </div>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                          <button className="button small" onClick={()=>handleProvision(ue.imsi, ue.provisioned)} style={{background:ue.provisioned?'var(--warn)':'var(--accent)'}}>
+                            {ue.provisioned ? 'Deprovision' : 'Provision'}
+                          </button>
+                          {ue.provisioned && (
+                            <button className="button small" onClick={()=>loadDetail(ue.imsi)} style={{background:'var(--accent2)'}}>
+                              {expandedImsi===ue.imsi ? 'Collapse' : 'Operate'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {expandedImsi === ue.imsi && (
+                        <div style={{borderTop:'1px solid var(--border)',padding:16}}>
+                          {/* NAS Status */}
+                          <div style={{marginBottom:14}}>
+                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:6}}>NAS Status</div>
+                            {detailData[ue.imsi]?.nas?.parsed ? (
+                              <div style={{display:'flex',gap:16,fontSize:11,fontFamily:'var(--font-mono)'}}>
+                                <span>CM: {detailData[ue.imsi].nas.parsed.cmState || '—'}</span>
+                                <span>MM: {detailData[ue.imsi].nas.parsed.mmState || '—'}</span>
+                                <span>RM: {detailData[ue.imsi].nas.parsed.rmState || '—'}</span>
+                              </div>
+                            ) : <div style={{fontSize:11,color:'var(--muted)'}}>Loading…</div>}
+                          </div>
+
+                          {/* PDU Sessions */}
+                          <div style={{marginBottom:14}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                              <span style={{fontSize:12,fontWeight:600,color:'var(--accent)'}}>PDU Sessions ({(detailData[ue.imsi]?.sessions||[]).length})</span>
+                              <button className="button small danger" onClick={()=>handleReleaseAll(ue.imsi)}>Release All</button>
+                            </div>
+                            {(detailData[ue.imsi]?.sessions||[]).length === 0 ? (
+                              <div style={{fontSize:11,color:'var(--muted)'}}>No active sessions</div>
+                            ) : (
+                              <table className="table" style={{fontSize:11}}>
+                                <thead><tr><th>PSI</th><th>State</th><th>Type</th><th>DNN</th><th>IP</th><th></th></tr></thead>
+                                <tbody>
+                                  {(detailData[ue.imsi]?.sessions||[]).map((s,i) => (
+                                    <tr key={i}>
+                                      <td>{s.psi}</td>
+                                      <td><span className="badge success">{s.state}</span></td>
+                                      <td>{s.type}</td>
+                                      <td>{s.dnn}</td>
+                                      <td style={{fontFamily:'var(--font-mono)',fontSize:10}}>{s.ip}</td>
+                                      <td><button className="button small danger" onClick={()=>handleReleasePsi(ue.imsi,s.psi)}>Release</button></td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+
+                          {/* Establish Session */}
+                          <div style={{marginBottom:14,background:'var(--bg3)',padding:10,borderRadius:6}}>
+                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Establish Session</div>
+                            <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'flex-end'}}>
+                              <div>
+                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>Type</div>
+                                <select value={sessionForm.type} onChange={e=>setSessionForm(f=>({...f,type:e.target.value}))} style={{padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}}>
+                                  <option>IPv4</option><option>IPv6</option><option>IPv4v6</option>
+                                </select>
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>DNN</div>
+                                <input type="text" value={sessionForm.dnn} onChange={e=>setSessionForm(f=>({...f,dnn:e.target.value}))} style={{width:90,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>SST</div>
+                                <input type="number" value={sessionForm.sst} onChange={e=>setSessionForm(f=>({...f,sst:parseInt(e.target.value)||1}))} min="1" max="4" style={{width:50,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
+                              </div>
+                              <button className="button small" onClick={()=>handleEstablish(ue.imsi)}>Establish</button>
+                            </div>
+                          </div>
+
+                          {/* Ping */}
+                          <div style={{marginBottom:14,background:'var(--bg3)',padding:10,borderRadius:6}}>
+                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:8}}>Ping</div>
+                            <div style={{display:'flex',gap:8,alignItems:'flex-end',flexWrap:'wrap'}}>
+                              <div>
+                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>Target</div>
+                                <input type="text" value={pingForm.target} onChange={e=>setPingForm(f=>({...f,target:e.target.value}))} style={{width:120,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:'var(--text2)',marginBottom:2}}>Count</div>
+                                <input type="number" value={pingForm.count} onChange={e=>setPingForm(f=>({...f,count:parseInt(e.target.value)||4}))} min="1" max="10" style={{width:50,padding:'4px 6px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}} />
+                              </div>
+                              <button className="button small" onClick={()=>handlePing(ue.imsi)}>Ping</button>
+                            </div>
+                            {pingOut[ue.imsi] && (
+                              <pre style={{marginTop:8,fontSize:10,fontFamily:'var(--font-mono)',color:'var(--text2)',background:'var(--bg)',padding:8,borderRadius:4,overflowX:'auto',maxHeight:120,overflowY:'auto'}}>{pingOut[ue.imsi]}</pre>
+                            )}
+                          </div>
+
+                          {/* NAS Deregister */}
+                          <div style={{background:'var(--bg3)',padding:10,borderRadius:6}}>
+                            <div style={{fontSize:12,fontWeight:600,color:'var(--accent)',marginBottom:8}}>NAS Deregister</div>
+                            <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                              <select value={nasDeregType} onChange={e=>setNasDeregType(e.target.value)} style={{padding:'4px 8px',background:'var(--bg)',border:'1px solid var(--border)',color:'var(--text)',borderRadius:3,fontSize:11}}>
+                                <option value="normal">normal</option>
+                                <option value="switch-off">switch-off</option>
+                                <option value="disable-5g">disable-5g</option>
+                              </select>
+                              <button className="button small danger" onClick={()=>handleNasDeregister(ue.imsi)}>Deregister</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {(showAddModal || editUe) && (
+                <UeFormModal
+                  title={editUe ? `Edit UE: ${editUe}` : 'Add UE'}
+                  onSave={editUe ? handleEdit : handleAdd}
+                  onClose={() => { setShowAddModal(false); setEditUe(null); setForm(defaultForm()); }}
+                />
               )}
             </div>
           );
@@ -1590,7 +1681,7 @@ data:
                       <SubscriberManagement />
                     </div>
                     <div className={`section ${page === 'ue-mgmt' ? 'active' : ''}`}>
-                      <UEManagementSection />
+                      <UEManager />
                     </div>
                     <div className={`section ${page === 'tracing' ? 'active' : ''}`}>
                       <TracingSection />

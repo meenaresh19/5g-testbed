@@ -326,155 +326,401 @@ data:
       }
     });
 
-    // GET /ue - List all UEs from MongoDB
+    // ═══════════════════════════════════════════════════════════
+    // UE STORE (testbed_ues) — local config, register, provision
+    // ═══════════════════════════════════════════════════════════
+
+    function ueDefaults(imsi) {
+      return {
+        imsi,
+        k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
+        opc: 'c42449363464e2e4fa8adca3063168ca',
+        amf: '8000',
+        dnn: 'internet',
+        sst: 1,
+        sd: null,
+        ambrDl: 1,
+        ambrUl: 1,
+        label: `UE-${imsi.slice(-4)}`,
+        registered: false,
+        provisioned: false,
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    // Helper: exec command in a pod via K8s Exec API, return stdout as string
+    const { PassThrough } = require('stream');
+    async function execPodCmd(podName, containerName, cmd) {
+      const cmdArr = Array.isArray(cmd) ? cmd : ['sh', '-c', cmd];
+      return new Promise(async (resolve, reject) => {
+        const stdout = new PassThrough(), stderr = new PassThrough();
+        let out = '', err = '';
+        stdout.on('data', d => out += d);
+        stderr.on('data', d => err += d);
+        try {
+          await execApi.exec(ns, podName, containerName || undefined, cmdArr, stdout, stderr, null, false,
+            (status) => { resolve((out || err).trim()); }
+          );
+        } catch (e) { reject(e); }
+      });
+    }
+
+    // Helper: find running UE pod by IMSI label
+    async function getUePod(imsi) {
+      const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+      const pod = pods.body.items.find(p => p.status?.phase === 'Running');
+      if (!pod) throw new Error(`No running pod for IMSI ${imsi}`);
+      return pod;
+    }
+
+    // Helper: get uesimtun0 IP from UE pod
+    async function getUeTunIp(podName, container) {
+      try {
+        return (await execPodCmd(podName, container,
+          "ip addr show | grep -oE 'inet [0-9.]+' | grep -v '127.0.0' | head -1 | awk '{print $2}'")) || null;
+      } catch { return null; }
+    }
+
+    // Helper: build Open5GS subscriber document
+    function buildSubscriberDoc(ue) {
+      const { Long } = require('mongodb');
+      return {
+        imsi: ue.imsi, msisdn: [], imeisv: '4370816125816151',
+        mme_host: [], mme_realm: [], purge_flag: [],
+        security: { k: ue.k, op: null, opc: ue.opc, amf: ue.amf || '8000', sqn: Long.fromNumber(0) },
+        ambr: { downlink: { value: ue.ambrDl || 1, unit: 3 }, uplink: { value: ue.ambrUl || 1, unit: 3 } },
+        slice: [{ sst: ue.sst || 1, default_indicator: true, session: [{
+          name: ue.dnn || 'internet', type: 3,
+          qos: { index: 9, arp: { priority_level: 8, pre_emption_capability: 1, pre_emption_vulnerability: 1 } },
+          ambr: { downlink: { value: ue.ambrDl || 1, unit: 3 }, uplink: { value: ue.ambrUl || 1, unit: 3 } }
+        }] }],
+        access_restriction_data: 32, subscriber_status: 0, network_access_mode: 0,
+        subscribed_rau_tau_timer: 12, __v: 0
+      };
+    }
+
+    // Helper: build UERANSIM ue.yaml config
+    function buildUeYaml(ue) {
+      return [
+        `supi: 'imsi-${ue.imsi}'`, "mcc: '001'", "mnc: '01'",
+        `key: '${ue.k}'`, `op: '${ue.opc}'`, "opType: 'OPC'",
+        `amf: '${ue.amf || '8000'}'`, "imei: '356938035643803'", "imeiSv: '4370816125816151'",
+        "gnbSearchList:", "- ueransim-gnb.5g-testbed.svc.cluster.local",
+        "uacAic:", "  mps: false", "  mcs: false",
+        "uacAcc:", "  normalClass: 0", "  class11: false", "  class12: false",
+        "  class13: false", "  class14: false", "  class15: false",
+        "sessions:", "- type: 'IPv4'", `  apn: '${ue.dnn || 'internet'}'`, "  slice:",
+        `    sst: ${ue.sst || 1}`,
+        ...(ue.sd ? [`    sd: '${ue.sd}'`] : []),
+        "configured-nssai:", `- sst: ${ue.sst || 1}`,
+        ...(ue.sd ? [`  sd: '${ue.sd}'`] : []),
+        "default-nssai:", `- sst: ${ue.sst || 1}`,
+        ...(ue.sd ? [`  sd: '${ue.sd}'`] : []),
+        "integrity:", "  IA1: true", "  IA2: true", "  IA3: true",
+        "ciphering:", "  EA0: true", "  EA1: true", "  EA2: true", "  EA3: true",
+        "integrityMaxRate:", "  uplink: 'full'", "  downlink: 'full'",
+      ].join('\n');
+    }
+
+    // Parse UERANSIM ps-list output into [{psi, state, type, dnn, ip}]
+    function parsePsList(raw) {
+      const sessions = [];
+      const blocks = raw.split(/(?=PDU Session\s*\[?\d+\]?)/i);
+      for (const block of blocks) {
+        const psiM = block.match(/PDU Session\s*\[?(\d+)\]?/i);
+        if (!psiM) continue;
+        const get = (keys) => {
+          for (const k of keys) {
+            const m = block.match(new RegExp(`${k}\\s*[:\\[\\s]\\s*([^\\]\\n]+)`, 'i'));
+            if (m) return m[1].replace(/\].*/, '').trim();
+          }
+          return null;
+        };
+        sessions.push({
+          psi: parseInt(psiM[1]), state: get(['State', 'status']),
+          type: get(['Session Type', 'session-type', 'Type']),
+          dnn: get(['APN/DNN', 'DNN', 'apn']), ip: get(['Address', 'PDU address', 'IP', 'IPv4']),
+        });
+      }
+      return sessions;
+    }
+
+    // Parse UERANSIM UE status output
+    function parseNasStatus(raw) {
+      const get = (keys) => {
+        for (const k of keys) {
+          const m = raw.match(new RegExp(`${k}\\s*[:\\[\\s]\\s*([^\\]\\n]+)`, 'i'));
+          if (m) return m[1].replace(/\].*/, '').trim();
+        }
+        return null;
+      };
+      return {
+        cmState: get(['cm-state', 'CM-STATE']),
+        mmState: get(['mm-state', '5GMM-STATE', '5gmm-state']),
+        rmState: get(['rm-state', 'RM-STATE']),
+      };
+    }
+
+    // GET /ue — list UEs (admin: all, user: own)
     app.get('/ue', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-
-        const subscribers = db.collection('subscribers');
-        const ues = await subscribers.find({}).toArray();
-
-        res.json({
-          status: 'ok',
-          count: ues.length,
-          ues: ues.map(u => ({
-            imsi: u.imsi,
-            k: u.security?.k || 'N/A',
-            opc: u.security?.opc || 'N/A',
-            registered: !!u.slice,
-            slices: u.slice || []
-          }))
-        });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
+        const query = req.user.role === 'admin' ? {} : { owner: req.user.id };
+        const ues = await db.collection('testbed_ues').find(query).sort({ createdAt: 1 }).toArray();
+        res.json(ues.map(({ _id, ...u }) => u));
+      } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // POST /ue/add - Add new UE to MongoDB
-    app.post('/ue/add', authenticateToken, async (req, res) => {
+    // POST /ue — add UE to store
+    app.post('/ue', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const { imsi } = req.body;
+        if (!imsi || !/^\d{15}$/.test(imsi))
+          return res.status(400).json({ error: 'imsi must be exactly 15 digits' });
+        const col = db.collection('testbed_ues');
+        if (await col.findOne({ imsi })) return res.status(409).json({ error: 'IMSI already exists' });
+        const { _id, ...ue } = { ...ueDefaults(imsi), ...req.body, imsi, registered: false, provisioned: false, owner: req.user.id };
+        await col.insertOne(ue);
+        res.json(ue);
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-        const { imsi, k, opc } = req.body;
-        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
-
-        const subscribers = db.collection('subscribers');
-
-        // Check if IMSI already exists
-        const existing = await subscribers.findOne({ imsi });
-        if (existing) return res.status(409).json({ error: 'IMSI already exists' });
-
-        // Create new subscriber document (Open5GS schema)
-        const newSubscriber = {
-          imsi: imsi,
-          pdn: [
-            {
-              type: 0,
-              apn: 'internet',
-              slice: [{ sst: 1, sd: '000000' }]
-            }
-          ],
-          slice: [
-            { sst: 1, sd: '000000' }
-          ],
-          security: {
-            k: k || 'fec86ba6eb707ed08ce33ae45b4a0fba',
-            opc: opc || 'c42449363464e2e4fa8adca3063168ca',
-            amf: 'c3d4'
-          },
-          ambr: {
-            uplink: 1000000,
-            downlink: 1000000
-          },
-          subscribed_rau_tau_timer: 12
-        };
-
-        const result = await subscribers.insertOne(newSubscriber);
-
-        res.json({
-          status: 'ok',
-          message: `UE ${imsi} added to MongoDB`,
-          ue: {
-            imsi: newSubscriber.imsi,
-            k: newSubscriber.security.k,
-            opc: newSubscriber.security.opc,
-            registered: true
+    // GET /ue/inventory — merged: store + K8s pods + Open5GS MongoDB
+    app.get('/ue/inventory', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const query = req.user.role === 'admin' ? {} : { owner: req.user.id };
+        const storeUes = await db.collection('testbed_ues').find(query).sort({ createdAt: 1 }).toArray();
+        const podsRes = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, 'app=ueransim-ue');
+        const pods = podsRes.body.items;
+        const mongoImsis = new Set(
+          (await db.collection('subscribers').find({}, { projection: { imsi: 1 } }).toArray()).map(s => s.imsi)
+        );
+        const result = await Promise.all(storeUes.map(async ({ _id, ...ue }) => {
+          const pod = pods.find(p => p.metadata?.labels?.imsi === ue.imsi);
+          let tunIp = null, podRunning = false, podPhase = 'none';
+          if (pod) {
+            podPhase = pod.status?.phase || 'Unknown';
+            podRunning = podPhase === 'Running' &&
+              pod.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True';
+            if (podRunning) tunIp = await getUeTunIp(pod.metadata.name, pod.spec.containers[0].name);
           }
-        });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
+          return { ...ue, inMongo: mongoImsis.has(ue.imsi), podName: pod?.metadata?.name || null,
+            podPhase, podRunning, tunIp, hasPduSession: !!tunIp };
+        }));
+        res.json(result);
+      } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // DELETE /ue/delete - Delete UE from MongoDB
-    app.delete('/ue/delete', authenticateToken, async (req, res) => {
+    // PUT /ue/:imsi — update editable fields
+    app.put('/ue/:imsi', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
-
-        const { imsi } = req.query;
-        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
-
-        const subscribers = db.collection('subscribers');
-        const result = await subscribers.deleteOne({ imsi });
-
-        if (result.deletedCount === 0) {
-          return res.status(404).json({ error: 'UE not found' });
-        }
-
-        res.json({
-          status: 'ok',
-          message: `UE ${imsi} deleted from MongoDB`,
-          deleted: 1
-        });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
+        const col = db.collection('testbed_ues');
+        const ue = await col.findOne({ imsi: req.params.imsi });
+        if (!ue) return res.status(404).json({ error: 'UE not found' });
+        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        const { imsi: _i, registered: _r, provisioned: _p, createdAt: _c, owner: _o, _id: _x, ...editable } = req.body;
+        await col.updateOne({ imsi: req.params.imsi }, { $set: { ...editable, updatedAt: new Date().toISOString() } });
+        const { _id, ...updated } = await col.findOne({ imsi: req.params.imsi });
+        res.json(updated);
+      } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // GET /subscriber/:imsi - Get full subscriber profile
-    app.get('/subscriber/:imsi', async (req, res) => {
+    // DELETE /ue/:imsi — remove from store only (does not deregister/deprovision)
+    app.delete('/ue/:imsi', authenticateToken, async (req, res) => {
       try {
         if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const col = db.collection('testbed_ues');
+        const ue = await col.findOne({ imsi: req.params.imsi });
+        if (!ue) return res.status(404).json({ error: 'UE not found' });
+        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        await col.deleteOne({ imsi: req.params.imsi });
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
+    // POST /ue/:imsi/register — insert subscriber into Open5GS MongoDB
+    app.post('/ue/:imsi/register', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const col = db.collection('testbed_ues');
+        const ue = await col.findOne({ imsi: req.params.imsi });
+        if (!ue) return res.status(404).json({ error: 'UE not found in store' });
+        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        const subs = db.collection('subscribers');
+        if (!await subs.findOne({ imsi: ue.imsi })) await subs.insertOne(buildSubscriberDoc(ue));
+        await col.updateOne({ imsi: ue.imsi }, { $set: { registered: true, registeredAt: new Date().toISOString() } });
+        res.json({ ok: true, message: `${ue.imsi} registered in Open5GS` });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // DELETE /ue/:imsi/register — remove subscriber from Open5GS MongoDB
+    app.delete('/ue/:imsi/register', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const col = db.collection('testbed_ues');
+        const ue = await col.findOne({ imsi: req.params.imsi });
+        if (!ue) return res.status(404).json({ error: 'UE not found' });
+        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        await db.collection('subscribers').deleteOne({ imsi: ue.imsi });
+        await col.updateOne({ imsi: ue.imsi }, { $set: { registered: false, registeredAt: null } });
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // POST /ue/:imsi/provision — create K8s Deployment + ConfigMap
+    app.post('/ue/:imsi/provision', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const col = db.collection('testbed_ues');
+        const ue = await col.findOne({ imsi: req.params.imsi });
+        if (!ue) return res.status(404).json({ error: 'UE not found in store' });
+        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        const depName = `ue-${ue.imsi}`, cmName = `ue-config-${ue.imsi}`;
+        const configMap = {
+          apiVersion: 'v1', kind: 'ConfigMap',
+          metadata: { name: cmName, namespace: ns, labels: { app: 'ueransim-ue', imsi: ue.imsi } },
+          data: { 'ue.yaml': buildUeYaml(ue) }
+        };
+        const deployment = {
+          apiVersion: 'apps/v1', kind: 'Deployment',
+          metadata: { name: depName, namespace: ns, labels: { app: 'ueransim-ue', imsi: ue.imsi } },
+          spec: {
+            replicas: 1,
+            selector: { matchLabels: { app: 'ueransim-ue', imsi: ue.imsi } },
+            template: {
+              metadata: { labels: { app: 'ueransim-ue', imsi: ue.imsi } },
+              spec: {
+                containers: [{
+                  name: 'ue', image: 'gradiant/ueransim:3.2.6',
+                  command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml'],
+                  securityContext: { capabilities: { add: ['NET_ADMIN'] } },
+                  volumeMounts: [{ name: 'config', mountPath: '/etc/ueransim', readOnly: true }],
+                  resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '200m', memory: '256Mi' } }
+                }],
+                volumes: [{ name: 'config', configMap: { name: cmName, items: [{ key: 'ue.yaml', path: 'ue.yaml' }] } }]
+              }
+            }
+          }
+        };
+        await k8sApi.createNamespacedConfigMap(ns, configMap);
+        await appsApi.createNamespacedDeployment(ns, deployment);
+        await col.updateOne({ imsi: ue.imsi }, { $set: { provisioned: true, provisionedAt: new Date().toISOString() } });
+        res.json({ ok: true, containerName: depName });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // DELETE /ue/:imsi/deprovision — delete K8s Deployment + ConfigMap
+    app.delete('/ue/:imsi/deprovision', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const col = db.collection('testbed_ues');
+        const ue = await col.findOne({ imsi: req.params.imsi });
+        if (!ue) return res.status(404).json({ error: 'UE not found' });
+        if (req.user.role !== 'admin' && ue.owner !== req.user.id) return res.status(403).json({ error: 'Access denied' });
+        try { await appsApi.deleteNamespacedDeployment(`ue-${ue.imsi}`, ns); } catch (_) {}
+        try { await k8sApi.deleteNamespacedConfigMap(`ue-config-${ue.imsi}`, ns); } catch (_) {}
+        await col.updateOne({ imsi: ue.imsi }, { $set: { provisioned: false, provisionedAt: null } });
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // GET /ue/:imsi/status — pod phase + tunnel IP + inMongo
+    app.get('/ue/:imsi/status', authenticateToken, async (req, res) => {
+      try {
         const { imsi } = req.params;
-        const subscribers = db.collection('subscribers');
-        const sub = await subscribers.findOne({ imsi });
-
-        if (!sub) return res.status(404).json({ error: 'Subscriber not found' });
-
-        res.json({
-          status: 'ok',
-          subscriber: sub
-        });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
+        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
+        const pod = pods.body.items[0];
+        if (!pod) return res.json({ imsi, containerName: null, containerRunning: false, tunIp: null, hasPduSession: false, inMongo: false });
+        const podRunning = pod.status?.phase === 'Running' &&
+          pod.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True';
+        const tunIp = podRunning ? await getUeTunIp(pod.metadata.name, pod.spec.containers[0].name) : null;
+        const inMongo = !!(db && await db.collection('subscribers').findOne({ imsi }, { projection: { imsi: 1 } }));
+        res.json({ imsi, containerName: pod.metadata.name, containerState: pod.status?.phase || 'Unknown',
+          containerRunning: podRunning, tunIp, hasPduSession: !!tunIp, inMongo });
+      } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // PUT /subscriber/:imsi - Update subscriber profile
-    app.put('/subscriber/:imsi', async (req, res) => {
+    // GET /ue/:imsi/sessions — list PDU sessions via nr-cli
+    app.get('/ue/:imsi/sessions', authenticateToken, async (req, res) => {
       try {
-        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const pod = await getUePod(req.params.imsi);
+        const output = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `nr-cli imsi-${req.params.imsi} --exec 'ps-list' 2>&1 || true`);
+        res.json({ ok: true, output, sessions: parsePsList(output) });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-        const { imsi } = req.params;
-        const updates = req.body;
+    // POST /ue/:imsi/sessions — establish PDU session
+    app.post('/ue/:imsi/sessions', authenticateToken, async (req, res) => {
+      try {
+        const { type = 'IPv4', dnn, sst, sd } = req.body || {};
+        const pod = await getUePod(req.params.imsi);
+        let cmd = `ps-establish ${type}`;
+        if (sst) cmd += ` --sst ${Number(sst)}`;
+        if (sd)  cmd += ` --sd ${sd.replace(/^0x/i, '')}`;
+        if (dnn) cmd += ` --dnn ${dnn}`;
+        const output = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `nr-cli imsi-${req.params.imsi} --exec '${cmd}' 2>&1 || true`);
+        res.json({ ok: true, output, cmd });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-        const subscribers = db.collection('subscribers');
-        const result = await subscribers.updateOne({ imsi }, { $set: updates });
+    // DELETE /ue/:imsi/sessions — release all PDU sessions
+    app.delete('/ue/:imsi/sessions', authenticateToken, async (req, res) => {
+      try {
+        const pod = await getUePod(req.params.imsi);
+        const output = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `nr-cli imsi-${req.params.imsi} --exec 'ps-release-all' 2>&1 || true`);
+        res.json({ ok: true, output });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-        if (result.matchedCount === 0) {
-          return res.status(404).json({ error: 'Subscriber not found' });
-        }
+    // DELETE /ue/:imsi/sessions/:psi — release specific PDU session
+    app.delete('/ue/:imsi/sessions/:psi', authenticateToken, async (req, res) => {
+      try {
+        const { imsi, psi } = req.params;
+        const pod = await getUePod(imsi);
+        const output = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `nr-cli imsi-${imsi} --exec 'ps-release ${psi}' 2>&1 || true`);
+        res.json({ ok: true, output });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-        const updated = await subscribers.findOne({ imsi });
-        res.json({
-          status: 'ok',
-          message: `Subscriber ${imsi} updated`,
-          subscriber: updated
-        });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
+    // GET /ue/:imsi/nas-status — NAS state via nr-cli status
+    app.get('/ue/:imsi/nas-status', authenticateToken, async (req, res) => {
+      try {
+        const pod = await getUePod(req.params.imsi);
+        const output = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `nr-cli imsi-${req.params.imsi} --exec 'status' 2>&1 || true`);
+        res.json({ ok: true, output, parsed: parseNasStatus(output) });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // POST /ue/:imsi/nas-deregister — NAS de-registration via nr-cli
+    app.post('/ue/:imsi/nas-deregister', authenticateToken, async (req, res) => {
+      try {
+        const type = ['normal', 'switch-off', 'disable-5g'].includes(req.body?.type) ? req.body.type : 'normal';
+        const pod = await getUePod(req.params.imsi);
+        const output = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `nr-cli imsi-${req.params.imsi} --exec 'deregister ${type}' 2>&1 || true`);
+        res.json({ ok: true, output, type });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // POST /ue/:imsi/ping — ICMP ping via PDU session tunnel
+    app.post('/ue/:imsi/ping', authenticateToken, async (req, res) => {
+      try {
+        const { target = '8.8.8.8', count = 4 } = req.body || {};
+        const pod = await getUePod(req.params.imsi);
+        const tunIp = await getUeTunIp(pod.metadata.name, pod.spec.containers[0].name);
+        if (!tunIp) return res.status(400).json({ error: 'No PDU session tunnel active' });
+        const out = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `ping -c ${Math.min(Number(count), 10)} -W 2 -I ${tunIp} ${target} 2>&1`);
+        res.json({ ok: true, output: out, tunIp, target });
+      } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
     // GET /subscribers - List all subscribers with pagination/search
@@ -591,266 +837,7 @@ data:
       }
     });
 
-    // ============================================
-    // UE MANAGEMENT (UERANSIM Pods)
-    // ============================================
-
-    // Helper: Run command in UE pod via kubectl exec
-    async function execInUePod(podName, cmd) {
-      return new Promise((resolve, reject) => {
-        const proc = spawn('kubectl', [
-          'exec', podName,
-          '-n', ns,
-          '--', 'sh', '-c', cmd
-        ]);
-        let stdout = '', stderr = '';
-        proc.stdout.on('data', data => stdout += data);
-        proc.stderr.on('data', data => stderr += data);
-        proc.on('error', (e) => reject(new Error(`exec failed: ${e.message}`)));
-        proc.on('close', code => {
-          if (code === 0) resolve(stdout.trim());
-          else reject(new Error(`Command failed: ${stderr || stdout}`));
-        });
-      });
-    }
-
-    // GET /ue-management - List all running UE pods
-    app.get('/ue-management', authenticateToken, async (req, res) => {
-      try {
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, 'app=ueransim-ue');
-        const ueList = await Promise.all(pods.body.items.map(async (pod) => {
-          const imsi = pod.metadata.labels?.imsi || 'unknown';
-          const podName = pod.metadata.name;
-          let sessions = [], nasStatus = { cm_state: 'unknown', mm_state: 'unknown', rm_state: 'unknown' };
-
-          try {
-            const sessionsOut = await execInUePod(podName, 'nr-cli ps-list 2>/dev/null || echo "[]"');
-            sessions = JSON.parse(sessionsOut.replace(/^.*\[/, '[').replace(/\].*$/, ']') || []);
-          } catch (e) {}
-
-          try {
-            const statusOut = await execInUePod(podName, 'nr-cli status 2>/dev/null || echo ""');
-            const match = statusOut.match(/CM-State\s*:\s*(\w+)/i);
-            if (match) nasStatus.cm_state = match[1];
-          } catch (e) {}
-
-          return {
-            imsi,
-            podName,
-            status: pod.status?.phase || 'Unknown',
-            createdAt: pod.metadata.creationTimestamp,
-            ready: pod.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True',
-            sessions: sessions.length,
-            nasState: nasStatus.cm_state
-          };
-        }));
-
-        res.json({ status: 'ok', ues: ueList });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // POST /ue-management - Create new UE pod
-    app.post('/ue-management', authenticateToken, async (req, res) => {
-      try {
-        const { imsi, k, opc } = req.body;
-        if (!imsi) return res.status(400).json({ error: 'IMSI required' });
-
-        // Generate UE YAML config — matches working ue.yaml in ueransim-config
-        const { amf: amfVal = '8000', imei: imeiVal = '356938035643803', imeiSv: imeiSvVal = '4370816125816151', sst = 1, sd } = req.body;
-        const ueYaml = [
-          `supi: 'imsi-${imsi}'`,
-          "mcc: '001'",
-          "mnc: '01'",
-          `key: '${k || 'fec86ba6eb707ed08ce33ae45b4a0fba'}'`,
-          `op: '${opc || 'c42449363464e2e4fa8adca3063168ca'}'`,
-          "opType: 'OPC'",
-          `amf: '${amfVal}'`,
-          `imei: '${imeiVal}'`,
-          `imeiSv: '${imeiSvVal}'`,
-          "gnbSearchList:",
-          "- ueransim-gnb.5g-testbed.svc.cluster.local",
-          "uacAic:",
-          "  mps: false",
-          "  mcs: false",
-          "uacAcc:",
-          "  normalClass: 0",
-          "  class11: false",
-          "  class12: false",
-          "  class13: false",
-          "  class14: false",
-          "  class15: false",
-          "sessions:",
-          "- type: 'IPv4'",
-          "  apn: 'internet'",
-          "  slice:",
-          `    sst: ${sst}`,
-          ...(sd ? [`    sd: '${sd}'`] : []),
-          "configured-nssai:",
-          `- sst: ${sst}`,
-          ...(sd ? [`  sd: '${sd}'`] : []),
-          "default-nssai:",
-          `- sst: ${sst}`,
-          ...(sd ? [`  sd: '${sd}'`] : []),
-          "integrity:",
-          "  IA1: true",
-          "  IA2: true",
-          "  IA3: true",
-          "ciphering:",
-          "  EA0: true",
-          "  EA1: true",
-          "  EA2: true",
-          "  EA3: true",
-          "integrityMaxRate:",
-          "  uplink: 'full'",
-          "  downlink: 'full'",
-        ].join('\n');
-
-        // Create pod manifest
-        const podName = `ueransim-ue-${imsi.slice(-4)}-${Math.random().toString(36).substr(2, 5)}`;
-        const deployment = {
-          apiVersion: 'apps/v1',
-          kind: 'Deployment',
-          metadata: { name: `ue-${imsi.slice(-4)}`, namespace: ns, labels: { app: 'ueransim-ue', imsi } },
-          spec: {
-            replicas: 1,
-            selector: { matchLabels: { app: 'ueransim-ue', imsi } },
-            template: {
-              metadata: { labels: { app: 'ueransim-ue', imsi }, annotations: { imsi } },
-              spec: {
-                containers: [{
-                  name: 'ue',
-                  image: 'gradiant/ueransim:3.2.6',
-                  command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml'],
-                  securityContext: { capabilities: { add: ['NET_ADMIN'] } },
-                  volumeMounts: [{ name: 'config', mountPath: '/etc/ueransim', readOnly: true }],
-                  resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '200m', memory: '256Mi' } }
-                }],
-                volumes: [{
-                  name: 'config',
-                  configMap: { name: `ue-config-${imsi.slice(-4)}`, items: [{ key: 'ue.yaml', path: 'ue.yaml' }] }
-                }]
-              }
-            }
-          }
-        };
-
-        // Create ConfigMap for UE config
-        const configMap = {
-          apiVersion: 'v1',
-          kind: 'ConfigMap',
-          metadata: { name: `ue-config-${imsi.slice(-4)}`, namespace: ns },
-          data: { 'ue.yaml': ueYaml }
-        };
-
-        // Apply both
-        await k8sApi.createNamespacedConfigMap(ns, configMap);
-        await appsApi.createNamespacedDeployment(ns, deployment);
-
-        res.json({ status: 'ok', message: `UE ${imsi} created`, deployment: deployment.metadata.name });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // DELETE /ue-management/:imsi - Delete UE pod
-    app.delete('/ue-management/:imsi', authenticateToken, async (req, res) => {
-      try {
-        const { imsi } = req.params;
-        await appsApi.deleteNamespacedDeployment(`ue-${imsi.slice(-4)}`, ns);
-        await k8sApi.deleteNamespacedConfigMap(`ue-config-${imsi.slice(-4)}`, ns);
-        res.json({ status: 'ok', message: `UE ${imsi} deleted` });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // GET /ue-management/:imsi/sessions - List PDU sessions
-    app.get('/ue-management/:imsi/sessions', async (req, res) => {
-      try {
-        const { imsi } = req.params;
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
-        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
-
-        const podName = pods.body.items[0].metadata.name;
-        const output = await execInUePod(podName, 'nr-cli ps-list 2>/dev/null || echo "[]"');
-        const sessions = JSON.parse(output.replace(/^.*\[/, '[').replace(/\].*$/, ']') || []);
-
-        res.json({ status: 'ok', imsi, sessions });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // POST /ue-management/:imsi/sessions - Establish PDU session
-    app.post('/ue-management/:imsi/sessions', async (req, res) => {
-      try {
-        const { imsi } = req.params;
-        const { dnn = 'internet', sst = 1, sd = '000000' } = req.body;
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
-        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
-
-        const podName = pods.body.items[0].metadata.name;
-        const cmd = `nr-cli ps-establish --dnn ${dnn} --sst ${sst} --sd ${sd}`;
-        const output = await execInUePod(podName, cmd);
-
-        res.json({ status: 'ok', message: 'PDU session established', output });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // DELETE /ue-management/:imsi/sessions/:psi - Release specific session
-    app.delete('/ue-management/:imsi/sessions/:psi', async (req, res) => {
-      try {
-        const { imsi, psi } = req.params;
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
-        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
-
-        const podName = pods.body.items[0].metadata.name;
-        const cmd = `nr-cli ps-release --psi ${psi}`;
-        const output = await execInUePod(podName, cmd);
-
-        res.json({ status: 'ok', message: 'PDU session released', output });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // GET /ue-management/:imsi/nas-status - Check NAS status
-    app.get('/ue-management/:imsi/nas-status', async (req, res) => {
-      try {
-        const { imsi } = req.params;
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
-        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
-
-        const podName = pods.body.items[0].metadata.name;
-        const output = await execInUePod(podName, 'nr-cli status 2>/dev/null || echo ""');
-
-        res.json({ status: 'ok', imsi, nasStatus: output });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
-
-    // POST /ue-management/:imsi/nas-deregister - Deregister UE
-    app.post('/ue-management/:imsi/nas-deregister', async (req, res) => {
-      try {
-        const { imsi } = req.params;
-        const { method = 'normal' } = req.body; // normal, switch-off, disable-5g
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, `app=ueransim-ue,imsi=${imsi}`);
-        if (pods.body.items.length === 0) return res.status(404).json({ error: 'UE pod not found' });
-
-        const podName = pods.body.items[0].metadata.name;
-        const cmd = `nr-cli --dump /tmp/ue.yaml imsi-deregister --method ${method}`;
-        const output = await execInUePod(podName, cmd);
-
-        res.json({ status: 'ok', message: `UE deregistered (${method})`, output });
-      } catch (e) {
-        res.status(500).json({ error: e.message });
-      }
-    });
+    // UE routes above handle provisioning and operations
 
     // ============================================
     // PCAP TRACING (Traffic Capture)
