@@ -919,18 +919,157 @@ body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradi
   </div>
 
   <div id="pg-tracing" style="display:none">
-    <div class="card"><div class="card-body">
-      <div class="grid-3 mb-3">
-        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" checked style="margin-right:6px"/> N2 (NGAP/SCTP)</label>
-        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" checked style="margin-right:6px"/> N3 (GTP-U)</label>
-        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" style="margin-right:6px"/> N4 (PFCP)</label>
-        <label style="font-size:11px;color:var(--text2)"><input type="checkbox" style="margin-right:6px"/> SBI (HTTP/2)</label>
-      </div>
-      <div class="flex gap-2">
-        <button class="btn btn-primary">&#9654; Start Capture</button>
-        <button class="btn btn-ghost" disabled>&#9632; Stop</button>
-        <button class="btn btn-ghost" disabled>&#8595; Download PCAP</button>
-      </div>
+    <!-- Tab buttons -->
+    <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:16px">
+      <button onclick="tracingTab('interface')" id="tab-interface" style="flex:1;padding:12px;background:rgba(0,200,255,0.1);border-bottom:3px solid var(--accent);color:var(--accent);cursor:pointer;fontWeight:600;fontSize:14px;border:none;marginBottom:-2px;transition:all .2s">🌐 Interface Capture</button>
+      <button onclick="tracingTab('pod')" id="tab-pod" style="flex:1;padding:12px;background:transparent;borderBottom:none;color:var(--text2);cursor:pointer;fontWeight:600;fontSize:14px;border:none;marginBottom:-2px;transition:all .2s">🖥️ Pod Capture</button>
+    </div>
+
+    <!-- Interface Capture Tab -->
+    <div id="interface-mode" style="display:block">
+      <div class="card"><div class="card-body">
+        <div style="fontSize:12px;color:var(--text2);textTransform:uppercase;marginBottom:16px;fontWeight:600">SELECT 5G INTERFACES TO CAPTURE</div>
+
+        <div style="display:grid;gridTemplateColumns:'repeat(auto-fit, minmax(300px, 1fr))';gap:12px;marginBottom:20px">
+          <label style="padding:16px;background:rgba(0,150,255,0.1);border:2px solid #0096ff;borderRadius:8px;cursor:pointer">
+            <input type="checkbox" checked style="marginRight:8px"/>
+            <strong style="color:var(--text)">● NGAP (N2)</strong><br/>
+            <span style="fontSize:10px;color:var(--text2)">SCTP:38412 · AMF</span><br/>
+            <span style="fontSize:9px;color:var(--text3)">sctp port 38412</span>
+          </label>
+          <label style="padding:16px;background:rgba(0,200,100,0.1);border:2px solid #00c864;borderRadius:8px;cursor:pointer">
+            <input type="checkbox" checked style="marginRight:8px"/>
+            <strong style="color:var(--text)">● GTP-U (N3)</strong><br/>
+            <span style="fontSize:10px;color:var(--text2)">UDP:2152 · UPF</span><br/>
+            <span style="fontSize:9px;color:var(--text3)">udp port 2152</span>
+          </label>
+          <label style="padding:16px;background:rgba(255,150,0,0.1);border:2px solid #ff9600;borderRadius:8px;cursor:pointer">
+            <input type="checkbox" checked style="marginRight:8px"/>
+            <strong style="color:var(--text)">● PFCP (N4)</strong><br/>
+            <span style="fontSize:10px;color:var(--text2)">UDP:8805 · SMF-UPF</span><br/>
+            <span style="fontSize:9px;color:var(--text3)">udp port 8805</span>
+          </label>
+          <label style="padding:16px;background:rgba(150,100,255,0.1);border:2px solid #9664ff;borderRadius:8px;cursor:pointer">
+            <input type="checkbox" checked style="marginRight:8px"/>
+            <strong style="color:var(--text)">● SBI (NS-NB)</strong><br/>
+            <span style="fontSize:10px;color:var(--text2)">TCP:7777 · NRF</span><br/>
+            <span style="fontSize:9px;color:var(--text3)">tcp port 7777</span>
+          </label>
+        </div>
+
+        <div style="display:grid;gridTemplateColumns:'100px 100px 1fr';gap:12px;marginBottom:16px">
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">Duration (sec)</label>
+            <input type="number" value="60" style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text);fontFamily:var(--font-mono)"/>
+          </div>
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">Max File Size (MB)</label>
+            <input type="number" value="50" style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text);fontFamily:var(--font-mono)"/>
+          </div>
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">Combined BPF Filter (auto-built)</label>
+            <div style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--accent);fontFamily:var(--font-mono);fontSize:11px;wordBreak:break-all;lineHeight:1.3">
+              sctp port 38412 or udp port 2152 or udp port 8805 or tcp port 7777
+            </div>
+          </div>
+        </div>
+
+        <div style="fontSize:11px;color:var(--text2);marginBottom:16px;padding:8px 0">
+          Captures on eth0 of every selected NF pod simultaneously
+        </div>
+
+        <button class="btn btn-primary">▶ Start Capture</button>
+      </div></div>
+    </div>
+
+    <!-- Pod Capture Tab -->
+    <div id="pod-mode" style="display:none">
+      <div class="card"><div class="card-body">
+        <div style="display:grid;gridTemplateColumns:'1fr 1fr 1fr';gap:12px;marginBottom:16px">
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">Target Pod</label>
+            <select style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text);fontSize:12px">
+              <option>AMF — amf-7d9f8c (10.244.1.27)</option>
+              <option>SMF — smf-4a2b9e (10.244.1.28)</option>
+              <option>UPF — upf-5c7e8a (10.244.1.29)</option>
+            </select>
+          </div>
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">Interface</label>
+            <input type="text" value="any" placeholder="any, eth0, eth1..." style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text)"/>
+          </div>
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">Duration (sec)</label>
+            <input type="number" value="60" style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text);fontFamily:var(--font-mono)"/>
+          </div>
+        </div>
+
+        <div style="display:grid;gridTemplateColumns:'1fr 1fr';gap:12px;marginBottom:16px">
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">BPF Filter</label>
+            <input type="text" value="" placeholder="e.g. sctp port 38412" style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text);fontFamily:var(--font-mono);fontSize:11px"/>
+          </div>
+          <div>
+            <label style="fontSize:11px;color:var(--text2);display:block;marginBottom:4px">Max File Size (MB)</label>
+            <input type="number" value="50" style="width:100%;padding:8px;borderRadius:4px;border:1px solid var(--border);background:var(--bg3);color:var(--text);fontFamily:var(--font-mono)"/>
+          </div>
+        </div>
+
+        <div style="marginBottom:16px;padding:12px;background:var(--bg3);borderRadius:6px">
+          <div style="fontSize:11px;fontWeight:600;color:var(--text2);marginBottom:8px">Quick-pick BPF presets</div>
+          <div style="display:flex;gap:8px;flexWrap:wrap">
+            <button style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);borderRadius:4px;cursor:pointer;color:var(--text2);fontSize:11px;fontFamily:var(--font-mono)">sctp port 38412</button>
+            <button style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);borderRadius:4px;cursor:pointer;color:var(--text2);fontSize:11px;fontFamily:var(--font-mono)">udp port 2152</button>
+            <button style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);borderRadius:4px;cursor:pointer;color:var(--text2);fontSize:11px;fontFamily:var(--font-mono)">udp port 8805</button>
+            <button style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);borderRadius:4px;cursor:pointer;color:var(--text2);fontSize:11px;fontFamily:var(--font-mono)">tcp port 7777</button>
+            <button style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);borderRadius:4px;cursor:pointer;color:var(--text2);fontSize:11px;fontFamily:var(--font-mono)">net 10.45.0.0/16</button>
+            <button style="padding:6px 10px;background:var(--bg2);border:1px solid var(--border);borderRadius:4px;cursor:pointer;color:var(--text2);fontSize:11px;fontFamily:var(--font-mono)">sctp (all)</button>
+          </div>
+        </div>
+
+        <button class="btn btn-primary">▶ Start Capture</button>
+      </div></div>
+    </div>
+
+    <!-- Capture Sessions Table -->
+    <div class="card" style="marginTop:16px"><div class="card-body">
+      <div style="fontSize:12px;fontWeight:600;color:var(--text);marginBottom:12px">Capture Sessions (2 sessions — 1 running)</div>
+      <table style="width:100%;borderCollapse:collapse;fontSize:11px">
+        <thead>
+          <tr style="color:var(--text2);borderBottom:1px solid var(--border)">
+            <th style="textAlign:left;padding:8px;fontWeight:600">Type</th>
+            <th style="textAlign:left;padding:8px;fontWeight:600">Target</th>
+            <th style="textAlign:left;padding:8px;fontWeight:600">Interface(s)</th>
+            <th style="textAlign:left;padding:8px;fontWeight:600">BPF Filter</th>
+            <th style="textAlign:left;padding:8px;fontWeight:600">Started</th>
+            <th style="textAlign:left;padding:8px;fontWeight:600">Duration</th>
+            <th style="textAlign:left;padding:8px;fontWeight:600">Status</th>
+            <th style="textAlign:right;padding:8px;fontWeight:600">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="borderBottom:1px solid var(--border2);hover:{background:rgba(0,200,255,0.05)}">
+            <td style="padding:8px"><span style="fontSize:9px;fontWeight:600;padding:3px 6px;background:rgba(0,200,255,0.2);borderRadius:3px;color:var(--accent)">Interface</span></td>
+            <td style="padding:8px;fontSize:10px">N2 (NGAP)</td>
+            <td style="padding:8px;fontSize:10px">amf · eth0</td>
+            <td style="padding:8px;fontFamily:var(--font-mono);fontSize:9px;color:var(--text2)">sctp port 38412</td>
+            <td style="padding:8px;fontSize:10px;color:var(--text3)">14:23:01</td>
+            <td style="padding:8px;fontSize:10px">60s</td>
+            <td style="padding:8px"><span style="fontSize:9px;fontWeight:600;padding:3px 6px;background:rgba(255,59,92,0.2);borderRadius:3px;color:var(--danger)">running</span></td>
+            <td style="padding:8px;textAlign:right"><button style="padding:4px 8px;fontSize:9px;background:var(--danger);color:white;border:none;borderRadius:3px;cursor:pointer;marginRight:4px">Stop</button><button style="padding:4px 8px;fontSize:9px;background:var(--muted);color:white;border:none;borderRadius:3px;cursor:pointer">Del</button></td>
+          </tr>
+          <tr style="borderBottom:1px solid var(--border2)">
+            <td style="padding:8px"><span style="fontSize:9px;fontWeight:600;padding:3px 6px;background:rgba(150,150,150,0.2);borderRadius:3px;color:var(--text2)">Pod</span></td>
+            <td style="padding:8px;fontSize:10px">upf-5c7e8a</td>
+            <td style="padding:8px;fontSize:10px">ogstun</td>
+            <td style="padding:8px;fontFamily:var(--font-mono);fontSize:9px;color:var(--text2)">udp port 2152</td>
+            <td style="padding:8px;fontSize:10px;color:var(--text3)">14:18:45</td>
+            <td style="padding:8px;fontSize:10px">120s</td>
+            <td style="padding:8px"><span style="fontSize:9px;fontWeight:600;padding:3px 6px;background:rgba(0,230,118,0.2);borderRadius:3px;color:var(--success)">stopped</span></td>
+            <td style="padding:8px;textAlign:right"><button style="padding:4px 8px;fontSize:9px;background:var(--accent);color:var(--bg);border:none;borderRadius:3px;cursor:pointer;marginRight:4px">📥 PCAP</button><button style="padding:4px 8px;fontSize:9px;background:var(--danger);color:white;border:none;borderRadius:3px;cursor:pointer">Del</button></td>
+          </tr>
+        </tbody>
+      </table>
     </div></div>
   </div>
 
@@ -1051,6 +1190,33 @@ function ueTab(tab) {
 function toggleModal() {
   const m = document.getElementById('sub-modal');
   m.style.display = m.style.display === 'none' ? 'flex' : 'none';
+}
+
+function tracingTab(tab) {
+  const interfaceDiv = document.getElementById('interface-mode');
+  const podDiv = document.getElementById('pod-mode');
+  const interfaceBtn = document.getElementById('tab-interface');
+  const podBtn = document.getElementById('tab-pod');
+
+  if (tab === 'interface') {
+    interfaceDiv.style.display = 'block';
+    podDiv.style.display = 'none';
+    interfaceBtn.style.background = 'rgba(0,200,255,0.1)';
+    interfaceBtn.style.borderBottom = '3px solid var(--accent)';
+    interfaceBtn.style.color = 'var(--accent)';
+    podBtn.style.background = 'transparent';
+    podBtn.style.borderBottom = 'none';
+    podBtn.style.color = 'var(--text2)';
+  } else {
+    interfaceDiv.style.display = 'none';
+    podDiv.style.display = 'block';
+    interfaceBtn.style.background = 'transparent';
+    interfaceBtn.style.borderBottom = 'none';
+    interfaceBtn.style.color = 'var(--text2)';
+    podBtn.style.background = 'rgba(0,200,255,0.1)';
+    podBtn.style.borderBottom = '3px solid var(--accent)';
+    podBtn.style.color = 'var(--accent)';
+  }
 }
 
 function ddosPlane(plane) {
