@@ -313,36 +313,130 @@ data:
           );
         }
 
-        // UE Management section
-        function UESection({ status }) {
-          const [newUE, setNewUE] = useState({ imsi: '', k: '', opc: '' });
-          const ues = status?.ues || [];
+        // Full Subscriber Management Section
+        function SubscriberManagement() {
+          const [subscribers, setSubscribers] = useState([]);
+          const [search, setSearch] = useState('');
+          const [page, setPage] = useState(1);
+          const [totalPages, setTotalPages] = useState(1);
+          const [loading, setLoading] = useState(false);
+          const [showModal, setShowModal] = useState(false);
+          const [editingSubscriber, setEditingSubscriber] = useState(null);
+          const [formData, setFormData] = useState({});
+          const [importJson, setImportJson] = useState('');
 
-          const handleAddUE = async () => {
-            if (!newUE.imsi) {
-              alert('IMSI required');
-              return;
-            }
+          // Fetch subscribers list
+          const fetchSubscribers = async (searchTerm = search, pageNum = 1) => {
+            setLoading(true);
             try {
-              const res = await fetch('/api/ue/add', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(newUE)
-              });
-              if (!res.ok) throw new Error('Failed to add UE');
-              setNewUE({ imsi: '', k: '', opc: '' });
-              alert('UE added successfully');
+              const query = new URLSearchParams({ search: searchTerm, page: pageNum, limit: 25 });
+              const res = await fetch(`/api/subscribers?${query}`);
+              if (!res.ok) throw new Error('Failed to fetch');
+              const data = await res.json();
+              setSubscribers(data.data);
+              setTotalPages(data.pages);
+            } catch (e) {
+              alert('Error: ' + e.message);
+            } finally {
+              setLoading(false);
+            }
+          };
+
+          React.useEffect(() => {
+            fetchSubscribers();
+          }, []);
+
+          const handleSearch = (e) => {
+            setSearch(e.target.value);
+            setPage(1);
+            fetchSubscribers(e.target.value, 1);
+          };
+
+          const handleAdd = () => {
+            setEditingSubscriber(null);
+            setFormData({
+              imsi: '',
+              security: { k: 'fec86ba6eb707ed08ce33ae45b4a0fba', opc: 'c42449363464e2e4fa8adca3063168ca', amf: 'c3d4' },
+              pdn: [{ type: 0, apn: 'internet', slice: [{ sst: 1, sd: '000000' }] }],
+              slice: [{ sst: 1, sd: '000000' }],
+              ambr: { uplink: 1000000, downlink: 1000000 },
+              subscribed_rau_tau_timer: 12,
+              plmn: { mcc: '001', mnc: '01' }
+            });
+            setShowModal(true);
+          };
+
+          const handleEdit = async (imsi) => {
+            try {
+              const res = await fetch(`/api/subscriber/${imsi}`);
+              if (!res.ok) throw new Error('Failed to fetch');
+              const data = await res.json();
+              setEditingSubscriber(imsi);
+              setFormData(data.subscriber);
+              setShowModal(true);
             } catch (e) {
               alert('Error: ' + e.message);
             }
           };
 
-          const handleDeleteUE = async (imsi) => {
-            if (!confirm('Delete UE ' + imsi + '?')) return;
+          const handleSave = async () => {
+            if (!formData.imsi) { alert('IMSI required'); return; }
             try {
-              const res = await fetch('/api/ue/delete?imsi=' + imsi, {method: 'DELETE'});
-              if (!res.ok) throw new Error('Failed to delete UE');
-              alert('UE deleted');
+              const method = editingSubscriber ? 'PUT' : 'POST';
+              const url = editingSubscriber ? `/api/subscriber/${editingSubscriber}` : '/api/ue/add';
+              const res = await fetch(url, {
+                method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(formData)
+              });
+              if (!res.ok) throw new Error('Failed to save');
+              setShowModal(false);
+              fetchSubscribers(search, page);
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleDelete = async (imsi) => {
+            if (!confirm(`Delete ${imsi}?`)) return;
+            try {
+              const res = await fetch(`/api/ue/delete?imsi=${imsi}`, {method: 'DELETE'});
+              if (!res.ok) throw new Error('Failed to delete');
+              fetchSubscribers(search, page);
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleExport = async () => {
+            try {
+              const res = await fetch('/api/subscribers/export');
+              if (!res.ok) throw new Error('Failed to export');
+              const blob = await res.blob();
+              const url = window.URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'subscribers.json';
+              a.click();
+            } catch (e) {
+              alert('Error: ' + e.message);
+            }
+          };
+
+          const handleImport = async () => {
+            if (!importJson.trim()) { alert('JSON required'); return; }
+            try {
+              const subscribers = JSON.parse(importJson);
+              const res = await fetch('/api/subscribers/import', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ subscribers: Array.isArray(subscribers) ? subscribers : [subscribers] })
+              });
+              if (!res.ok) throw new Error('Failed to import');
+              const result = await res.json();
+              alert(`Imported: ${result.imported}, Skipped: ${result.skipped}, Failed: ${result.failed}`);
+              setImportJson('');
+              fetchSubscribers(search, page);
             } catch (e) {
               alert('Error: ' + e.message);
             }
@@ -352,97 +446,147 @@ data:
             <div>
               <div className="stat-grid">
                 <div className="stat-card">
-                  <div className="stat-label">Total UEs</div>
-                  <div className="stat-value">{ues.length}</div>
-                  <div className="stat-sub">Registered subscribers</div>
+                  <div className="stat-label">Total Subscribers</div>
+                  <div className="stat-value">{subscribers.length > 0 ? subscribers[0]._id ? 'Loading...' : subscribers.length : 0}</div>
+                  <div className="stat-sub">Registered in MongoDB</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-label">Active Sessions</div>
-                  <div className="stat-value" style={{color: 'var(--success)'}}>{ues.filter(u => u.registered).length}</div>
-                  <div className="stat-sub">Connected</div>
+                  <div className="stat-label">Slices</div>
+                  <div className="stat-value">1</div>
+                  <div className="stat-sub">SST=1, SD=000000</div>
                 </div>
                 <div className="stat-card">
-                  <div className="stat-label">Default IMSI</div>
-                  <div className="stat-value" style={{fontSize: 14}}>001010000000001</div>
-                  <div className="stat-sub">Pre-configured</div>
+                  <div className="stat-label">PLMN</div>
+                  <div className="stat-value" style={{fontSize: 14}}>001-01</div>
+                  <div className="stat-sub">MCC-MNC</div>
                 </div>
               </div>
 
               <div className="info-box">
-                <Icon name="users" /> <strong>UE Management:</strong> Manage subscribers in MongoDB. Add/remove UEs to test network scaling and load.
+                <Icon name="database" /> <strong>Subscriber Management:</strong> Full Open5GS subscriber provisioning. Add, edit, delete, bulk import/export.
               </div>
 
-              <div className="grid-2">
-                <div className="panel">
-                  <h3><Icon name="users" /> Add New UE</h3>
-                  <div className="form-group">
-                    <label>IMSI (e.g., 001010000000002)</label>
-                    <input
-                      type="text"
-                      value={newUE.imsi}
-                      onChange={e => setNewUE({...newUE, imsi: e.target.value})}
-                      placeholder="001010000000002"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>K (Authentication Key)</label>
-                    <input
-                      type="text"
-                      value={newUE.k}
-                      onChange={e => setNewUE({...newUE, k: e.target.value})}
-                      placeholder="fec86ba6eb707ed08ce33ae45b4a0fba"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label>OPc (Operator Key)</label>
-                    <input
-                      type="text"
-                      value={newUE.opc}
-                      onChange={e => setNewUE({...newUE, opc: e.target.value})}
-                      placeholder="c42449363464e2e4fa8adca3063168ca"
-                    />
-                  </div>
-                  <button className="button" onClick={handleAddUE} style={{width: '100%'}}>
-                    <Icon name="check" /> Add UE
-                  </button>
+              <div className="panel">
+                <h3><Icon name="users" /> Subscribers</h3>
+                <div style={{marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap'}}>
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={handleSearch}
+                    placeholder="Search by IMSI..."
+                    style={{flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg3)', color: 'var(--text)', fontFamily: 'var(--font-main)'}}
+                  />
+                  <button className="button" onClick={handleAdd}><Icon name="check" /> Add Subscriber</button>
+                  <button className="button" onClick={handleExport} style={{background: 'var(--accent2)'}}>Export</button>
                 </div>
 
-                <div className="panel">
-                  <h3><Icon name="users" /> Registered UEs</h3>
-                  {ues.length === 0 ? (
-                    <div style={{fontSize: 12, color: 'var(--text2)'}}>No UEs. Use form on left to add.</div>
-                  ) : (
-                    <div style={{maxHeight: 300, overflowY: 'auto'}}>
+                {loading ? (
+                  <div className="loading">Loading subscribers...</div>
+                ) : subscribers.length === 0 ? (
+                  <div style={{fontSize: 12, color: 'var(--text2)', padding: '16px', textAlign: 'center'}}>No subscribers found. Add one to get started.</div>
+                ) : (
+                  <>
+                    <div style={{overflowX: 'auto'}}>
                       <table className="table">
                         <thead>
                           <tr>
                             <th>IMSI</th>
-                            <th>Status</th>
-                            <th></th>
+                            <th>K (Auth Key)</th>
+                            <th>OPc</th>
+                            <th>Slices</th>
+                            <th>AMBR (Mbps)</th>
+                            <th style={{textAlign: 'right'}}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {ues.map(ue => (
-                            <tr key={ue.imsi}>
-                              <td>{ue.imsi}</td>
-                              <td>
-                                <span className={`badge ${ue.registered ? 'success' : 'info'}`}>
-                                  {ue.registered ? 'Active' : 'Provisioned'}
-                                </span>
-                              </td>
-                              <td>
-                                <button className="button small danger" onClick={() => handleDeleteUE(ue.imsi)}>
-                                  Delete
-                                </button>
+                          {subscribers.map(sub => (
+                            <tr key={sub.imsi}>
+                              <td><strong>{sub.imsi}</strong></td>
+                              <td style={{fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text2)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis'}}>{sub.security?.k}</td>
+                              <td style={{fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text2)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis'}}>{sub.security?.opc}</td>
+                              <td>{sub.slice?.map(s => `SST=${s.sst} SD=${s.sd}`).join(', ')}</td>
+                              <td>{sub.ambr ? `${sub.ambr.uplink / 1000 / 1000}/${sub.ambr.downlink / 1000 / 1000}` : 'N/A'}</td>
+                              <td style={{textAlign: 'right'}}>
+                                <button className="button small" onClick={() => handleEdit(sub.imsi)}>Edit</button>
+                                <button className="button small danger" onClick={() => handleDelete(sub.imsi)} style={{marginLeft: 4}}>Delete</button>
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                  )}
+                    <div style={{marginTop: 12, display: 'flex', justifyContent: 'center', gap: 8}}>
+                      <button className="button small" disabled={page === 1} onClick={() => { setPage(p => p - 1); fetchSubscribers(search, page - 1); }}>← Prev</button>
+                      <span style={{padding: '4px 12px', alignSelf: 'center', fontSize: 12}}>Page {page} of {totalPages}</span>
+                      <button className="button small" disabled={page >= totalPages} onClick={() => { setPage(p => p + 1); fetchSubscribers(search, page + 1); }}>Next →</button>
+                    </div>
+                  </>
+                )}
+
+                <div style={{marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border)'}}>
+                  <h3 style={{marginBottom: 12}}><Icon name="database" /> Bulk Import</h3>
+                  <textarea
+                    value={importJson}
+                    onChange={e => setImportJson(e.target.value)}
+                    placeholder='Paste JSON array: [{"imsi":"001010000000002","k":"...","opc":"..."}]'
+                    style={{width: '100%', height: 120, padding: '8px', background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: '4px', fontFamily: 'var(--font-mono)', fontSize: 11}}
+                  />
+                  <button className="button" onClick={handleImport} style={{marginTop: 8}}>Import Subscribers</button>
                 </div>
               </div>
+
+              {showModal && (
+                <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}}>
+                  <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 600, width: '90%', maxHeight: '80vh', overflowY: 'auto'}}>
+                    <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>{editingSubscriber ? 'Edit Subscriber' : 'Add Subscriber'}</h2>
+
+                    <div className="form-group">
+                      <label>IMSI</label>
+                      <input type="text" value={formData.imsi || ''} onChange={e => setFormData({...formData, imsi: e.target.value})} placeholder="001010000000002" disabled={!!editingSubscriber} />
+                    </div>
+
+                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                      <div className="form-group">
+                        <label>K (Auth Key)</label>
+                        <input type="text" value={formData.security?.k || ''} onChange={e => setFormData({...formData, security: {...formData.security, k: e.target.value}})} />
+                      </div>
+                      <div className="form-group">
+                        <label>OPc</label>
+                        <input type="text" value={formData.security?.opc || ''} onChange={e => setFormData({...formData, security: {...formData.security, opc: e.target.value}})} />
+                      </div>
+                      <div className="form-group">
+                        <label>AMF</label>
+                        <input type="text" value={formData.security?.amf || ''} onChange={e => setFormData({...formData, security: {...formData.security, amf: e.target.value}})} />
+                      </div>
+                      <div className="form-group">
+                        <label>Timer (RAU/TAU)</label>
+                        <input type="number" value={formData.subscribed_rau_tau_timer || 12} onChange={e => setFormData({...formData, subscribed_rau_tau_timer: parseInt(e.target.value)})} />
+                      </div>
+                    </div>
+
+                    <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
+                      <div className="form-group">
+                        <label>UL AMBR (Mbps)</label>
+                        <input type="number" value={(formData.ambr?.uplink || 0) / 1000 / 1000} onChange={e => setFormData({...formData, ambr: {...formData.ambr, uplink: parseInt(e.target.value) * 1000 * 1000}})} />
+                      </div>
+                      <div className="form-group">
+                        <label>DL AMBR (Mbps)</label>
+                        <input type="number" value={(formData.ambr?.downlink || 0) / 1000 / 1000} onChange={e => setFormData({...formData, ambr: {...formData.ambr, downlink: parseInt(e.target.value) * 1000 * 1000}})} />
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>APN</label>
+                      <input type="text" value={formData.pdn?.[0]?.apn || 'internet'} onChange={e => { const pdn = [...(formData.pdn || [])]; pdn[0] = {...pdn[0], apn: e.target.value}; setFormData({...formData, pdn}); }} />
+                    </div>
+
+                    <div style={{display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20}}>
+                      <button className="button" onClick={() => setShowModal(false)} style={{background: 'var(--muted)'}}>Cancel</button>
+                      <button className="button" onClick={handleSave}><Icon name="check" /> Save</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         }
@@ -589,8 +733,8 @@ data:
                     <div className={`tab ${page === 'ran' ? 'active' : ''}`} onClick={() => setPage('ran')} style={{cursor: 'pointer'}}>
                       <Icon name="antenna" /> RAN
                     </div>
-                    <div className={`tab ${page === 'ue' ? 'active' : ''}`} onClick={() => setPage('ue')} style={{cursor: 'pointer'}}>
-                      <Icon name="users" /> UE Management
+                    <div className={`tab ${page === 'subscribers' ? 'active' : ''}`} onClick={() => setPage('subscribers')} style={{cursor: 'pointer'}}>
+                      <Icon name="database" /> Subscribers
                     </div>
                     <div className={`tab ${page === 'monitoring' ? 'active' : ''}`} onClick={() => setPage('monitoring')} style={{cursor: 'pointer'}}>
                       <Icon name="chart" /> Monitoring
@@ -611,8 +755,8 @@ data:
                     <div className={`section ${page === 'ran' ? 'active' : ''}`}>
                       <RanSection status={status} />
                     </div>
-                    <div className={`section ${page === 'ue' ? 'active' : ''}`}>
-                      <UESection status={status} />
+                    <div className={`section ${page === 'subscribers' ? 'active' : ''}`}>
+                      <SubscriberManagement />
                     </div>
                     <div className={`section ${page === 'monitoring' ? 'active' : ''}`}>
                       <MonitoringSection status={status} />

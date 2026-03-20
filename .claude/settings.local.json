@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v \"^.*//.*IMSI\")",
+      "Bash(node --check /c/Users/nares/claude/5gTestbed/5g-testbed/api/server.js)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(k3s --version)",
+      "Bash(wsl --list -v)",
+      "Bash(docker --version)",
+      "Bash(git push:*)",
+      "Bash(cat:*)"
+    ]
+  }
+}

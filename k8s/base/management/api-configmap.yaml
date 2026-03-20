@@ -301,6 +301,166 @@ data:
       }
     });
 
+    // GET /subscriber/:imsi - Get full subscriber profile
+    app.get('/subscriber/:imsi', async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
+        const { imsi } = req.params;
+        const subscribers = db.collection('subscribers');
+        const sub = await subscribers.findOne({ imsi });
+
+        if (!sub) return res.status(404).json({ error: 'Subscriber not found' });
+
+        res.json({
+          status: 'ok',
+          subscriber: sub
+        });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // PUT /subscriber/:imsi - Update subscriber profile
+    app.put('/subscriber/:imsi', async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
+        const { imsi } = req.params;
+        const updates = req.body;
+
+        const subscribers = db.collection('subscribers');
+        const result = await subscribers.updateOne({ imsi }, { $set: updates });
+
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ error: 'Subscriber not found' });
+        }
+
+        const updated = await subscribers.findOne({ imsi });
+        res.json({
+          status: 'ok',
+          message: `Subscriber ${imsi} updated`,
+          subscriber: updated
+        });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /subscribers - List all subscribers with pagination/search
+    app.get('/subscribers', async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
+        const { search = '', page = 1, limit = 50 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        const subscribers = db.collection('subscribers');
+
+        // Build query for search
+        const query = search ? { imsi: { $regex: search, $options: 'i' } } : {};
+
+        const data = await subscribers
+          .find(query)
+          .skip(skip)
+          .limit(parseInt(limit))
+          .toArray();
+
+        const total = await subscribers.countDocuments(query);
+
+        res.json({
+          status: 'ok',
+          total,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: Math.ceil(total / parseInt(limit)),
+          data: data.map(s => ({
+            imsi: s.imsi,
+            plmn: s.plmn || { mcc: '001', mnc: '01' },
+            subscribed_rau_tau_timer: s.subscribed_rau_tau_timer || 12,
+            slice: s.slice || [],
+            ambr: s.ambr || { uplink: 1000000, downlink: 1000000 },
+            security: s.security ? { k: s.security.k, opc: s.security.opc, amf: s.security.amf } : {},
+            pdn: s.pdn || []
+          }))
+        });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /subscribers/export - Export subscribers as JSON
+    app.get('/subscribers/export', async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
+        const subscribers = db.collection('subscribers');
+        const data = await subscribers.find({}).toArray();
+
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', 'attachment; filename=subscribers.json');
+        res.json(data);
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /subscribers/import - Bulk import subscribers
+    app.post('/subscribers/import', async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+
+        const { subscribers: subs } = req.body;
+        if (!Array.isArray(subs)) {
+          return res.status(400).json({ error: 'subscribers must be an array' });
+        }
+
+        const subscribers = db.collection('subscribers');
+        const results = [];
+
+        for (const sub of subs) {
+          try {
+            if (!sub.imsi) throw new Error('IMSI required');
+
+            // Ensure proper schema
+            const docToInsert = {
+              imsi: sub.imsi,
+              pdn: sub.pdn || [{ type: 0, apn: 'internet', slice: [{ sst: 1, sd: '000000' }] }],
+              slice: sub.slice || [{ sst: 1, sd: '000000' }],
+              security: {
+                k: sub.security?.k || sub.k || 'fec86ba6eb707ed08ce33ae45b4a0fba',
+                opc: sub.security?.opc || sub.opc || 'c42449363464e2e4fa8adca3063168ca',
+                amf: sub.security?.amf || sub.amf || 'c3d4'
+              },
+              ambr: sub.ambr || { uplink: 1000000, downlink: 1000000 },
+              subscribed_rau_tau_timer: sub.subscribed_rau_tau_timer || 12,
+              plmn: sub.plmn || { mcc: '001', mnc: '01' }
+            };
+
+            const existing = await subscribers.findOne({ imsi: sub.imsi });
+            if (existing) {
+              results.push({ imsi: sub.imsi, status: 'skipped', reason: 'already exists' });
+            } else {
+              await subscribers.insertOne(docToInsert);
+              results.push({ imsi: sub.imsi, status: 'success' });
+            }
+          } catch (err) {
+            results.push({ imsi: sub.imsi, status: 'failed', reason: err.message });
+          }
+        }
+
+        res.json({
+          status: 'ok',
+          imported: results.filter(r => r.status === 'success').length,
+          skipped: results.filter(r => r.status === 'skipped').length,
+          failed: results.filter(r => r.status === 'failed').length,
+          results
+        });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
     // Health check
     app.get('/health', (req, res) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
