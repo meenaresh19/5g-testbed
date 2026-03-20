@@ -895,7 +895,7 @@ data:
           );
 
           // Ops panel — PDU/ping/deregister controls
-          const OpsPanel = ({ imsi }) => (
+          const OpsPanel = ({ imsi, hostNetwork }) => (
             <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,padding:14,marginTop:10}}>
               <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
                 <span style={{fontFamily:'var(--font-mono)',fontSize:12,fontWeight:600,color:'var(--accent)'}}>{imsi}</span>
@@ -948,8 +948,8 @@ data:
                   <button className="button small danger" onClick={()=>handleNasDeregister(imsi)}>Deregister</button>
                 </div>
               </div>
-              {/* SOCKS Proxy */}
-              <div style={{background:'var(--bg)',borderRadius:6,padding:10,marginTop:8}}>
+              {/* SOCKS Proxy — only shown when hostNetwork=true */}
+              {hostNetwork !== false && <div style={{background:'var(--bg)',borderRadius:6,padding:10,marginTop:8}}>
                 <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
                   <div>
                     <span style={{fontSize:11,fontWeight:600,color:'var(--text2)'}}>SOCKS5 Proxy</span>
@@ -1003,7 +1003,7 @@ data:
                     </div>
                   );
                 })()}
-              </div>
+              </div>}
             </div>
           );
 
@@ -1036,7 +1036,7 @@ data:
               {/* Admin: hostNetwork toggle */}
               {isAdmin && adminCfg && (
                 <div style={{background:'var(--panel)',border:'1px solid var(--border)',borderRadius:8,padding:'10px 16px',marginBottom:12,display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-                  <span style={{fontSize:12,fontWeight:600,color:'var(--text2)',flex:1}}>UE Pod Network Mode</span>
+                  <span style={{fontSize:12,fontWeight:600,color:'var(--text2)',flex:1}}>Default Network Mode (new UEs)</span>
                   <div style={{display:'flex',gap:6}}>
                     {[{val:true,label:'hostNetwork',desc:'TUN interfaces on host — run nr-binder directly'},
                       {val:false,label:'Pod network',desc:'SOCKS port-forward required'}].map(opt => (
@@ -1094,7 +1094,23 @@ data:
                         <div style={{fontSize:12,fontWeight:700,color:b.podRunning?'var(--accent)':'var(--text3)'}}>{b.podPhase||'none'}</div>
                       </div>
                     </div>
-                    <div style={{display:'flex',gap:5}}>
+                    <div style={{display:'flex',gap:5,alignItems:'center'}}>
+                      {[{val:true,label:'hostNet'},{val:false,label:'podNet'}].map(opt => {
+                        const active = b.hostNetwork === opt.val;
+                        return (
+                          <button key={String(opt.val)} title={opt.val ? 'hostNetwork: TUN interfaces on host' : 'Pod network: port-forward for SOCKS'}
+                            onClick={async () => {
+                              const r = await apiFetch('/api/ue/config', { method: 'PUT', body: JSON.stringify({ username: b.username, hostNetwork: opt.val }) });
+                              if (r.ok) fetchBlock();
+                            }}
+                            style={{padding:'3px 8px',borderRadius:5,fontSize:10,fontWeight:600,cursor:'pointer',
+                              border:'1px solid ' + (active ? 'var(--accent)' : 'var(--border)'),
+                              background: active ? 'rgba(0,200,150,0.15)' : 'transparent',
+                              color: active ? 'var(--accent)' : 'var(--text2)'}}>
+                            {opt.label}
+                          </button>
+                        );
+                      })}
                       <button className="button small" disabled={busy[`reg-${b.username}`]}
                         style={{background:b.ueRegistered?'rgba(255,150,0,0.8)':'var(--success)'}}
                         onClick={()=>doRegister(b.username, b.ueRegistered)}>
@@ -1116,7 +1132,7 @@ data:
                     </div>
                     {/* Panel below grid — only for IMSIs in this block */}
                     {activeImsi && (b.imsis||[]).some(i => i.imsi === activeImsi) && (
-                      activePanel === 'view' ? <ViewPanel imsi={activeImsi} /> : <OpsPanel imsi={activeImsi} />
+                      activePanel === 'view' ? <ViewPanel imsi={activeImsi} /> : <OpsPanel imsi={activeImsi} hostNetwork={b.hostNetwork} />
                     )}
                   </div>
                 </div>
@@ -1591,7 +1607,7 @@ data:
         function App() {
           const [page, setPage] = useState('core');
           const [token, setToken] = useState(() => localStorage.getItem('token'));
-          const [currentUser, setCurrentUser] = useState(() => { try { return JSON.parse(localStorage.getItem('currentUser')); } catch { return null; } });
+          const [currentUser, setCurrentUser] = useState(() => { try { const u = JSON.parse(localStorage.getItem('currentUser')); window.__currentUser = u; return u; } catch { return null; } });
           const [showProfileMenu, setShowProfileMenu] = useState(false);
           const [showChangePw, setShowChangePw] = useState(false);
           const isAdmin = currentUser?.role === 'admin';
@@ -1601,6 +1617,7 @@ data:
             localStorage.setItem('currentUser', JSON.stringify(data.user));
             setToken(data.token);
             setCurrentUser(data.user);
+            window.__currentUser = data.user;
           };
 
           const handleLogout = () => {

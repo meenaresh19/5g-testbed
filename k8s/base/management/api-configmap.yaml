@@ -346,6 +346,14 @@ data:
       } catch { return defaults; }
     }
 
+    // Resolve hostNetwork for a username: user-level setting falls back to global default
+    async function resolveUeHostNetwork(username) {
+      const user = await db.collection('testbed_users').findOne({ username });
+      if (user && user.hostNetwork !== undefined) return user.hostNetwork;
+      const cfg = await getImsiConfig();
+      return cfg.hostNetwork === true;
+    }
+
     // Seed default IMSI config if not present
     async function seedImsiConfig() {
       try {
@@ -532,6 +540,17 @@ data:
       }));
     }
 
+    // PUT /ue/config — set per-user pod config (hostNetwork); admin can pass username in body
+    app.put('/ue/config', authenticateToken, async (req, res) => {
+      try {
+        const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
+        const { hostNetwork } = req.body || {};
+        if (hostNetwork !== undefined)
+          await db.collection('testbed_users').updateOne({ username }, { $set: { hostNetwork: Boolean(hostNetwork) } });
+        res.json({ hostNetwork: await resolveUeHostNetwork(username) });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // GET /ue — user's IMSI block (admin: all users; user: own block)
     app.get('/ue', authenticateToken, async (req, res) => {
       try {
@@ -557,11 +576,13 @@ data:
           const tunIp = podRunning ? await getUeTunIp(pod.metadata.name, pod.spec.containers[0].name) : null;
           const imsis = u.imsiStart ? userImsiList(u) : [];
           const registeredCount = imsis.filter(i => mongoImsis.has(i.imsi)).length;
+          const globalCfg = await getImsiConfig();
+          const hostNetwork = u.hostNetwork !== undefined ? u.hostNetwork : globalCfg.hostNetwork === true;
           return {
             username: u.username, imsiStart: u.imsiStart, imsiCount: u.imsiCount || 0,
             ueRegistered: u.ueRegistered || false, ueProvisioned: u.ueProvisioned || false,
             registeredCount, podName: pod?.metadata?.name || null,
-            podPhase, podRunning, tunIp, hasPduSession: !!tunIp,
+            podPhase, podRunning, tunIp, hasPduSession: !!tunIp, hostNetwork,
             imsis: imsis.map(i => ({ ...i, inMongo: mongoImsis.has(i.imsi) })),
           };
         }));
@@ -612,7 +633,7 @@ data:
         const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
         const user = await db.collection('testbed_users').findOne({ username });
         if (!user || !user.imsiStart) return res.status(400).json({ error: 'No IMSI block assigned' });
-        const cfg = await getImsiConfig();
+        const useHostNet = await resolveUeHostNetwork(username);
         const depName = `ue-${username}`, cmName = `ue-config-${username}`;
         const baseUe = { imsi: user.imsiStart, k: 'fec86ba6eb707ed08ce33ae45b4a0fba',
           opc: 'c42449363464e2e4fa8adca3063168ca', amf: '8000', dnn: 'internet', sst: 1 };
@@ -630,8 +651,8 @@ data:
             template: {
               metadata: { labels: { app: 'ueransim-ue', username } },
               spec: {
-                hostNetwork: cfg.hostNetwork === true,
-                dnsPolicy: cfg.hostNetwork === true ? 'ClusterFirstWithHostNet' : 'ClusterFirst',
+                hostNetwork: useHostNet,
+                dnsPolicy: useHostNet ? 'ClusterFirstWithHostNet' : 'ClusterFirst',
                 containers: [{
                   name: 'ue', image: 'gradiant/ueransim:3.2.6',
                   command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml', '-n', String(user.imsiCount || 1)],
@@ -792,9 +813,10 @@ data:
         const tunIpOut = await execPodCmd(podName, container,
           'ip addr show ' + tun + ' 2>/dev/null | grep "inet " | awk \'{print $2}\' | cut -d/ -f1');
         const tunIp = tunIpOut.trim() || null;
-        const cfg2 = await getImsiConfig();
+        const owner = await getUserForImsi(req.params.imsi);
+        const ueHostNet = await resolveUeHostNetwork(owner.username);
         res.json({ ok: running, podName, tun, tunIp, port: p,
-          hostNetwork: cfg2.hostNetwork === true,
+          hostNetwork: ueHostNet,
           portForwardCmd: `kubectl port-forward -n 5g-testbed pod/${podName} ${p}:${p}`,
           hostCmd: `nr-binder ${tunIp} curl -s ifconfig.me  # replace curl with your app` });
       } catch (e) { res.status(500).json({ error: e.message }); }
