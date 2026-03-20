@@ -631,11 +631,17 @@ data:
                 containers: [{
                   name: 'ue', image: 'gradiant/ueransim:3.2.6',
                   command: ['nr-ue', '-c', '/etc/ueransim/ue.yaml', '-n', String(user.imsiCount || 1)],
-                  securityContext: { capabilities: { add: ['NET_ADMIN'] } },
-                  volumeMounts: [{ name: 'config', mountPath: '/etc/ueransim', readOnly: true }],
+                  securityContext: { privileged: true, capabilities: { add: ['NET_ADMIN', 'NET_RAW'] } },
+                  volumeMounts: [
+                    { name: 'config', mountPath: '/etc/ueransim', readOnly: true },
+                    { name: 'dev-net-tun', mountPath: '/dev/net/tun' }
+                  ],
                   resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '500m', memory: '512Mi' } }
                 }],
-                volumes: [{ name: 'config', configMap: { name: cmName, items: [{ key: 'ue.yaml', path: 'ue.yaml' }] } }]
+                volumes: [
+                  { name: 'config', configMap: { name: cmName, items: [{ key: 'ue.yaml', path: 'ue.yaml' }] } },
+                  { name: 'dev-net-tun', hostPath: { path: '/dev/net/tun' } }
+                ]
               }
             }
           }
@@ -738,6 +744,75 @@ data:
         const out = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
           `ping -c ${Math.min(Number(count), 10)} -W 2 -I ${tunIp} ${target} 2>&1`);
         res.json({ ok: true, output: out, tunIp, target });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Helper: tun interface index for a given IMSI within its owner's block
+    async function getTunIface(imsi) {
+      const owner = await getUserForImsi(imsi);
+      if (!owner) throw new Error(`No user owns IMSI ${imsi}`);
+      const idx = parseInt(imsi) - parseInt(owner.imsiStart);
+      return `uesimtun${idx}`;
+    }
+
+    // POST /ue/:imsi/socks/start — start microsocks bound to uesimtunX inside the pod
+    app.post('/ue/:imsi/socks/start', authenticateToken, async (req, res) => {
+      try {
+        const { port = 1080 } = req.body || {};
+        const p = Math.min(Math.max(parseInt(port) || 1080, 1024), 65535);
+        const pod = await getUePod(req.params.imsi);
+        const podName = pod.metadata.name;
+        const container = pod.spec.containers[0].name;
+        const tun = await getTunIface(req.params.imsi);
+        // Install microsocks if missing, get TUN IP, start via bash nr-binder (no exec bit)
+        // Use setsid + nohup to survive exec session close; join with \n to avoid & && syntax error
+        const cmd = [
+          'which microsocks >/dev/null 2>&1 || apt-get install -y -qq microsocks',
+          'pkill -f microsocks 2>/dev/null || true',
+          'TUN_IP=$(ip addr show ' + tun + ' 2>/dev/null | grep "inet " | awk \'{print $2}\' | cut -d/ -f1)',
+          '[ -z "$TUN_IP" ] && echo "no-tun" && exit 1',
+          'cd /usr/local/bin',
+          'setsid nohup bash nr-binder "$TUN_IP" microsocks -p ' + p + ' > /tmp/socks-' + p + '.log 2>&1 < /dev/null &',
+          'sleep 0.8',
+          'pgrep -a microsocks >/dev/null 2>&1 && echo "started:$TUN_IP" || cat /tmp/socks-' + p + '.log',
+        ].join('\n');
+        await execPodCmd(podName, container, cmd);
+        // Verify via separate check (output capture can be empty for background cmds)
+        const checkOut = await execPodCmd(podName, container,
+          'pgrep -a microsocks 2>/dev/null || echo "not running"');
+        const running = checkOut.includes('microsocks') && !checkOut.includes('not running');
+        // Get tun IP separately if needed
+        const tunIpOut = await execPodCmd(podName, container,
+          'ip addr show ' + tun + ' 2>/dev/null | grep "inet " | awk \'{print $2}\' | cut -d/ -f1');
+        const tunIp = tunIpOut.trim() || null;
+        res.json({ ok: running, podName, tun, tunIp, port: p,
+          portForwardCmd: `kubectl port-forward -n 5g-testbed pod/${podName} ${p}:${p}`,
+          proxyConfig: `SOCKS5  localhost  ${p}` });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // GET /ue/:imsi/socks/status — check if microsocks is running in the pod
+    app.get('/ue/:imsi/socks/status', authenticateToken, async (req, res) => {
+      try {
+        const { port = 1080 } = req.query;
+        const p = parseInt(port) || 1080;
+        const pod = await getUePod(req.params.imsi);
+        const out = await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          `pgrep -a microsocks 2>/dev/null || echo "not running"`);
+        const running = out.includes('microsocks') && !out.includes('not running');
+        const tun = await getTunIface(req.params.imsi);
+        res.json({ ok: true, running, output: out.trim(), tun, port: p,
+          podName: pod.metadata.name });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // DELETE /ue/:imsi/socks/stop — kill microsocks in the pod
+    app.delete('/ue/:imsi/socks/stop', authenticateToken, async (req, res) => {
+      try {
+        const pod = await getUePod(req.params.imsi);
+        await execPodCmd(pod.metadata.name, pod.spec.containers[0].name,
+          'pkill -f microsocks 2>/dev/null || true');
+        res.json({ ok: true });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 

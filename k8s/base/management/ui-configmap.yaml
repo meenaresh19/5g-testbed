@@ -688,6 +688,7 @@ data:
           const [pingForm, setPingForm] = useState({ target: '8.8.8.8', count: 4 });
           const [pingOut, setPingOut] = useState({});
           const [nasDeregType, setNasDeregType] = useState('switch-off');
+          const [socksState, setSocksState] = useState({}); // {imsi: {running, podName, port, portForwardCmd}}
           const isAdmin = window.__currentUser?.role === 'admin';
 
           const flash = (text, ok=true) => { setMsg({text,ok}); setTimeout(()=>setMsg({text:'',ok:true}),5000); };
@@ -788,6 +789,28 @@ data:
           const totalPods = blocks.filter(b => b.ueProvisioned).length;
 
           const sel = (css) => ({ padding:'4px 8px', background:'var(--bg)', border:'1px solid var(--border)', color:'var(--text)', borderRadius:3, fontSize:11, ...css });
+
+          const handleSocksStart = async (imsi) => {
+            const port = (socksState[imsi]?.port) || 1080;
+            setSocksState(s => ({ ...s, [imsi]: { ...s[imsi], busy: true } }));
+            const r = await apiFetch(`/api/ue/${imsi}/socks/start`, { method: 'POST', body: JSON.stringify({ port }) });
+            const d = await r.json();
+            if (d.ok) {
+              setSocksState(s => ({ ...s, [imsi]: { running: true, busy: false, podName: d.podName, port: d.port, portForwardCmd: d.portForwardCmd, proxyConfig: d.proxyConfig, tun: d.tun } }));
+              flash(`SOCKS proxy started on ${d.tun} port ${d.port}`, true);
+            } else {
+              setSocksState(s => ({ ...s, [imsi]: { ...s[imsi], busy: false } }));
+              flash(d.error || 'Failed to start SOCKS proxy', false);
+            }
+          };
+
+          const handleSocksStop = async (imsi) => {
+            setSocksState(s => ({ ...s, [imsi]: { ...s[imsi], busy: true } }));
+            const r = await apiFetch(`/api/ue/${imsi}/socks/stop`, { method: 'DELETE' });
+            const d = await r.json();
+            setSocksState(s => ({ ...s, [imsi]: { running: false, busy: false, port: s[imsi]?.port || 1080 } }));
+            flash(d.ok ? 'SOCKS proxy stopped' : (d.error || 'Failed'), d.ok);
+          };
 
           // Per-IMSI card: 5 per row grid, color-coded by NAS state > mongo state
           const ImsiCard = ({ imsi, inMongo, provisioned }) => {
@@ -919,6 +942,47 @@ data:
                   </select>
                   <button className="button small danger" onClick={()=>handleNasDeregister(imsi)}>Deregister</button>
                 </div>
+              </div>
+              {/* SOCKS Proxy */}
+              <div style={{background:'var(--bg)',borderRadius:6,padding:10,marginTop:8}}>
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                  <div>
+                    <span style={{fontSize:11,fontWeight:600,color:'var(--text2)'}}>SOCKS5 Proxy</span>
+                    {socksState[imsi]?.running && (
+                      <span style={{marginLeft:8,fontSize:10,padding:'1px 6px',borderRadius:10,
+                        background:'rgba(0,200,100,0.15)',color:'var(--success)'}}>
+                        running · {socksState[imsi].tun} · :{socksState[imsi].port}
+                      </span>
+                    )}
+                  </div>
+                  {socksState[imsi]?.running
+                    ? <button className="button small danger" disabled={socksState[imsi]?.busy} onClick={()=>handleSocksStop(imsi)}>
+                        {socksState[imsi]?.busy ? '…' : 'Stop'}
+                      </button>
+                    : <button className="button small" disabled={socksState[imsi]?.busy} onClick={()=>handleSocksStart(imsi)}>
+                        {socksState[imsi]?.busy ? 'Starting…' : 'Start SOCKS'}
+                      </button>
+                  }
+                </div>
+                {socksState[imsi]?.running && (
+                  <div style={{fontSize:10,color:'var(--text2)',lineHeight:1.7}}>
+                    <div style={{marginBottom:4}}>
+                      <span style={{color:'var(--text3)'}}>1. Port-forward (run on your machine):</span>
+                      <pre style={{margin:'2px 0',padding:'4px 8px',background:'var(--bg3)',borderRadius:4,
+                        fontFamily:'var(--font-mono)',fontSize:10,color:'var(--accent)',userSelect:'all',cursor:'text',
+                        overflowX:'auto',whiteSpace:'nowrap'}}>
+                        {socksState[imsi].portForwardCmd}
+                      </pre>
+                    </div>
+                    <div>
+                      <span style={{color:'var(--text3)'}}>2. Firefox: Settings → Network → Manual proxy → SOCKS5</span>
+                      <pre style={{margin:'2px 0',padding:'4px 8px',background:'var(--bg3)',borderRadius:4,
+                        fontFamily:'var(--font-mono)',fontSize:10,color:'var(--accent)',userSelect:'all',cursor:'text'}}>
+                        Host: localhost   Port: {socksState[imsi].port}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
