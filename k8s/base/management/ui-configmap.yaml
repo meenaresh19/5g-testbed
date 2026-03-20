@@ -690,6 +690,10 @@ data:
           const [pingOut, setPingOut] = useState({});
           const [nasDeregType, setNasDeregType] = useState('switch-off');
           const [socksState, setSocksState] = useState({}); // {imsi: {running, podName, port, ...}}
+          const [podCfg, setPodCfg] = useState({}); // {username: {k, opc, amf, dnn, sst, sd}}
+          const [podCfgOpen, setPodCfgOpen] = useState({}); // {username: bool}
+          const [podCfgEdit, setPodCfgEdit] = useState({}); // {username: bool}
+          const [podCfgForm, setPodCfgForm] = useState({}); // {username: {k, opc, amf, dnn, sst, sd}}
           const isAdmin = window.__currentUser?.role === 'admin';
 
           const flash = (text, ok=true) => { setMsg({text,ok}); setTimeout(()=>setMsg({text:'',ok:true}),5000); };
@@ -781,6 +785,35 @@ data:
             const d = await r.json();
             flash(d.ok ? `Ping to ${pingForm.target} done` : (d.error || 'Failed'), d.ok);
             setPingOut(o => ({ ...o, [imsi]: d.output || d.error || '' }));
+          };
+
+          const fetchPodCfg = async (username) => {
+            const r = await apiFetch('/api/ue/pod-config?username=' + username);
+            const d = await r.json();
+            if (d.ok) {
+              setPodCfg(c => ({ ...c, [username]: d }));
+              setPodCfgForm(c => ({ ...c, [username]: { k: d.k, opc: d.opc, amf: d.amf, dnn: d.dnn, sst: d.sst, sd: d.sd || '' } }));
+            }
+            return d;
+          };
+
+          const togglePodCfg = async (username) => {
+            const open = !podCfgOpen[username];
+            setPodCfgOpen(c => ({ ...c, [username]: open }));
+            setPodCfgEdit(c => ({ ...c, [username]: false }));
+            if (open && !podCfg[username]) await fetchPodCfg(username);
+          };
+
+          const savePodCfg = async (username) => {
+            const form = podCfgForm[username] || {};
+            const r = await apiFetch('/api/ue/pod-config', { method: 'PUT',
+              body: JSON.stringify({ username, ...form, sst: parseInt(form.sst) || 1 }) });
+            const d = await r.json();
+            if (d.ok) {
+              setPodCfg(c => ({ ...c, [username]: d }));
+              setPodCfgEdit(c => ({ ...c, [username]: false }));
+              flash('Config saved — pod restarting', true);
+            } else { flash(d.error || 'Save failed', false); }
           };
 
           // Normalize to array for rendering
@@ -1091,8 +1124,72 @@ data:
                         onClick={()=>doProvision(b.username, b.ueProvisioned)}>
                         {busy[`prov-${b.username}`] ? '…' : b.ueProvisioned ? 'Deprovision' : 'Provision Pod'}
                       </button>
+                      {b.ueProvisioned && (
+                        <button className="button small"
+                          style={{background: podCfgOpen[b.username] ? 'rgba(0,200,255,0.3)' : 'rgba(0,200,255,0.1)',
+                            border:'1px solid var(--accent)', color:'var(--accent)'}}
+                          onClick={()=>togglePodCfg(b.username)}>
+                          🔧 Config
+                        </button>
+                      )}
                     </div>
                   </div>
+                  {/* Pod Config Panel */}
+                  {podCfgOpen[b.username] && (() => {
+                    const cfg = podCfg[b.username];
+                    const form = podCfgForm[b.username] || {};
+                    const editing = podCfgEdit[b.username];
+                    const fi = sel({ width: 200, fontSize: 12 });
+                    const setF = (k, v) => setPodCfgForm(c => ({ ...c, [b.username]: { ...c[b.username], [k]: v } }));
+                    return (
+                      <div style={{borderTop:'1px solid var(--border)',padding:'12px 16px',background:'var(--bg3)'}}>
+                        {!cfg
+                          ? <div className="loading">Loading config…</div>
+                          : cfg.error
+                          ? <div style={{color:'var(--danger)',fontSize:12}}>{cfg.error}</div>
+                          : (
+                          <div>
+                            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+                              <span style={{fontSize:12,fontWeight:700,color:'var(--text2)'}}>UE Pod Config</span>
+                              <span style={{fontSize:11,color:'var(--text3)'}}>ue-config-{b.username} / ue.yaml</span>
+                              <div style={{marginLeft:'auto',display:'flex',gap:6}}>
+                                {editing
+                                  ? <>
+                                      <button className="button small" onClick={()=>savePodCfg(b.username)}>Save &amp; Restart</button>
+                                      <button className="button small danger" onClick={()=>setPodCfgEdit(c=>({...c,[b.username]:false}))}>Cancel</button>
+                                    </>
+                                  : <button className="button small" onClick={()=>{ setPodCfgEdit(c=>({...c,[b.username]:true})); }}>Edit</button>
+                                }
+                              </div>
+                            </div>
+                            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:8}}>
+                              {[
+                                { label:'Key (K)', key:'k', mono:true },
+                                { label:'OPC', key:'opc', mono:true },
+                                { label:'AMF', key:'amf', mono:true },
+                                { label:'DNN / APN', key:'dnn' },
+                                { label:'SST', key:'sst', type:'number' },
+                                { label:'SD (optional)', key:'sd' },
+                              ].map(({ label, key, mono, type }) => (
+                                <div key={key} style={{background:'var(--bg)',borderRadius:5,padding:'8px 10px'}}>
+                                  <div style={{fontSize:10,color:'var(--text3)',marginBottom:3}}>{label}</div>
+                                  {editing
+                                    ? <input type={type||'text'} value={form[key]||''} onChange={e=>setF(key,e.target.value)}
+                                        style={{...fi, fontFamily: mono ? 'var(--font-mono)' : undefined}} />
+                                    : <div style={{fontSize:12,fontFamily:mono?'var(--font-mono)':undefined,
+                                        color:'var(--accent)',wordBreak:'break-all'}}>
+                                        {cfg[key]||<span style={{color:'var(--text3)'}}>—</span>}
+                                      </div>
+                                  }
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* IMSI grid: 5 per row */}
                   <div style={{padding:'12px 16px'}}>
                     <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8}}>

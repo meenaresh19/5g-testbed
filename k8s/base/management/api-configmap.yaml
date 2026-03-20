@@ -540,6 +540,62 @@ data:
       }));
     }
 
+    // Helper: parse editable fields from ue.yaml text
+    function parseUeYaml(yaml) {
+      const get = (re) => { const m = yaml.match(re); return m ? m[1] : null; };
+      return {
+        k:   get(/^key: '(.+)'/m)   || '',
+        opc: get(/^op: '(.+)'/m)    || '',
+        amf: get(/^amf: '(.+)'/m)   || '8000',
+        dnn: get(/apn: '(.+)'/m)    || 'internet',
+        sst: parseInt(get(/sst: (\d+)/m) || '1'),
+        sd:  get(/^  sd: '(.+)'/m)  || '',
+      };
+    }
+
+    // GET /ue/pod-config — read UE YAML config fields for user's pod
+    app.get('/ue/pod-config', authenticateToken, async (req, res) => {
+      try {
+        const username = (req.user.role === 'admin' && req.query.username) ? req.query.username : req.user.username;
+        const cmName = `ue-config-${username}`;
+        const cm = await k8sApi.readNamespacedConfigMap(cmName, ns);
+        const yaml = cm.body.data?.['ue.yaml'] || '';
+        res.json({ ok: true, username, ...parseUeYaml(yaml) });
+      } catch (e) {
+        if (e.statusCode === 404) return res.json({ ok: false, error: 'Pod not provisioned' });
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // PUT /ue/pod-config — update UE YAML config and rollout restart the pod
+    app.put('/ue/pod-config', authenticateToken, async (req, res) => {
+      try {
+        const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
+        const { k, opc, amf, dnn, sst, sd } = req.body || {};
+        const user = await db.collection('testbed_users').findOne({ username });
+        if (!user || !user.imsiStart) return res.status(400).json({ error: 'No IMSI block' });
+        const baseUe = {
+          imsi: user.imsiStart,
+          k:   k   || 'fec86ba6eb707ed08ce33ae45b4a0fba',
+          opc: opc || 'c42449363464e2e4fa8adca3063168ca',
+          amf: amf || '8000',
+          dnn: dnn || 'internet',
+          sst: parseInt(sst) || 1,
+          sd:  sd  || undefined,
+        };
+        const cmName = `ue-config-${username}`;
+        await k8sApi.patchNamespacedConfigMap(cmName, ns,
+          { data: { 'ue.yaml': buildUeYaml(baseUe) } },
+          undefined, undefined, undefined, undefined,
+          { headers: { 'Content-Type': 'application/merge-patch+json' } });
+        // Rollout restart so pod picks up new ConfigMap
+        const depName = `ue-${username}`;
+        const patch = { spec: { template: { metadata: { annotations: { 'kubectl.kubernetes.io/restartedAt': new Date().toISOString() } } } } };
+        try { await appsApi.patchNamespacedDeployment(depName, ns, patch, undefined, undefined, undefined, undefined, { headers: { 'Content-Type': 'application/merge-patch+json' } }); } catch (_) {}
+        res.json({ ok: true, ...parseUeYaml(buildUeYaml(baseUe)) });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // PUT /ue/config — set per-user pod config (hostNetwork); admin can pass username in body
     app.put('/ue/config', authenticateToken, async (req, res) => {
       try {
