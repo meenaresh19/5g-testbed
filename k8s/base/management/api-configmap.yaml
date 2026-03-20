@@ -21,6 +21,7 @@ data:
     const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
     const appsApi = kc.makeApiClient(k8s.AppsV1Api);
     const metricsApi = new k8s.Metrics(kc);
+    const execApi = new k8s.Exec(kc);
 
     const NAMESPACE = 'default';  // Override with env var
     const ns = process.env.K8S_NAMESPACE || '5g-testbed';
@@ -476,6 +477,7 @@ data:
         let stdout = '', stderr = '';
         proc.stdout.on('data', data => stdout += data);
         proc.stderr.on('data', data => stderr += data);
+        proc.on('error', (e) => reject(new Error(`exec failed: ${e.message}`)));
         proc.on('close', code => {
           if (code === 0) resolve(stdout.trim());
           else reject(new Error(`Command failed: ${stderr || stdout}`));
@@ -689,11 +691,10 @@ data:
     // ============================================
 
     const PCAP_DIR = '/tmp/pcaps';
-    let captureSession = null;  // Simple single session for now
+    let captureSession = null;  // Single active session
 
-    // Ensure PCAP directory exists
-    const { execSync } = require('child_process');
-    try { execSync(`mkdir -p ${PCAP_DIR}`); } catch (e) {}
+    const { mkdirSync, createWriteStream, existsSync, unlinkSync } = require('fs');
+    try { mkdirSync(PCAP_DIR, { recursive: true }); } catch (e) {}
 
     // GET /pcap/pods - List pods available for capture
     app.get('/pcap/pods', async (req, res) => {
@@ -717,17 +718,18 @@ data:
     // GET /pcap/sessions - List active capture sessions
     app.get('/pcap/sessions', (req, res) => {
       if (!captureSession) return res.json({ sessions: [] });
-      res.json({ sessions: [captureSession] });
+      const { ws, timeout, ...safe } = captureSession;
+      res.json({ sessions: [safe] });
     });
 
-    // POST /pcap/start - Start packet capture
+    // POST /pcap/start - Start packet capture using K8s Exec API (no kubectl binary needed)
     app.post('/pcap/start', async (req, res) => {
       try {
-        const { pod, container, interface: iface = 'any', filter = '' } = req.body;
+        const { pod, container, interface: iface = 'any', filter = '', duration = 60 } = req.body;
         if (!pod) return res.status(400).json({ error: 'pod required' });
 
         if (captureSession && captureSession.status === 'running') {
-          return res.status(400).json({ error: 'Capture already running' });
+          return res.status(400).json({ error: 'Capture already running. Stop the current session first.' });
         }
 
         const sessionId = Math.random().toString(36).substr(2, 9);
@@ -736,45 +738,52 @@ data:
         captureSession = {
           id: sessionId,
           pod,
-          container: container || pod,
+          container: container || '',
           interface: iface,
           filter,
           startTime: new Date().toISOString(),
           status: 'running',
           filePath,
-          packets: 0
         };
 
-        // Start tcpdump in background (simplified - writes to file)
-        const cmd = `kubectl exec ${pod} -n ${ns} -c ${container || pod} -- tcpdump -i ${iface} -w /tmp/capture.pcap ${filter} &`;
+        const fileStream = createWriteStream(filePath);
 
-        // Actually capture using kubectl exec and stream to file
-        const { spawn } = require('child_process');
-        const proc = spawn('kubectl', [
-          'exec', pod,
-          '-n', ns,
-          '-c', container || pod,
-          '--',
-          'tcpdump', '-i', iface,
-          '-w', '/tmp/capture.pcap',
-          ...(filter ? [filter] : [])
-        ]);
+        // tcpdump -w - writes raw pcap to stdout; -U flushes each packet immediately
+        const cmd = ['tcpdump', '-i', iface, '-w', '-', '-U'];
+        if (filter) cmd.push(...filter.trim().split(/\s+/).filter(Boolean));
 
-        // Copy file every 2 seconds
-        const copyInterval = setInterval(() => {
-          try {
-            execSync(`kubectl cp ${ns}/${pod}:/tmp/capture.pcap ${filePath} -c ${container || pod} 2>/dev/null`);
-          } catch (e) {}
-        }, 2000);
-
-        captureSession.copyInterval = copyInterval;
-        captureSession.proc = proc;
-
-        res.json({
-          id: sessionId,
-          status: 'started',
-          message: `Capture started on pod ${pod}`
+        // Use K8s Exec API — streams tcpdump stdout directly into a local file
+        execApi.exec(
+          ns, pod, container || undefined, cmd,
+          fileStream,  // stdout → local file
+          null,        // stderr (suppress)
+          null,        // stdin
+          false,       // no tty
+          (status) => {
+            fileStream.end();
+            if (captureSession && captureSession.id === sessionId) {
+              captureSession.status = (status.status === 'Success') ? 'stopped' : 'error';
+              captureSession.stopTime = new Date().toISOString();
+              if (status.message) captureSession.error = status.message;
+            }
+          }
+        ).then(ws => {
+          if (captureSession && captureSession.id === sessionId) {
+            captureSession.ws = ws;
+            // Auto-stop after duration
+            captureSession.timeout = setTimeout(() => {
+              if (captureSession && captureSession.ws) captureSession.ws.close();
+            }, duration * 1000);
+          }
+        }).catch(e => {
+          fileStream.end();
+          if (captureSession && captureSession.id === sessionId) {
+            captureSession.status = 'error';
+            captureSession.error = e.message;
+          }
         });
+
+        res.json({ id: sessionId, status: 'started', message: `Capture started on pod ${pod}` });
       } catch (e) {
         if (captureSession) captureSession.status = 'error';
         res.status(500).json({ error: e.message });
@@ -786,20 +795,13 @@ data:
       if (!captureSession || captureSession.id !== req.params.id) {
         return res.status(404).json({ error: 'Session not found' });
       }
-
       try {
-        if (captureSession.proc) captureSession.proc.kill();
-        if (captureSession.copyInterval) clearInterval(captureSession.copyInterval);
-
-        // Final copy
-        try {
-          execSync(`kubectl cp ${captureSession.pod}:/tmp/capture.pcap ${captureSession.filePath} 2>/dev/null`);
-        } catch (e) {}
-
+        if (captureSession.timeout) clearTimeout(captureSession.timeout);
+        if (captureSession.ws) captureSession.ws.close();
         captureSession.status = 'stopped';
         captureSession.stopTime = new Date().toISOString();
-
-        res.json({ success: true, session: captureSession });
+        const { ws, timeout, ...safe } = captureSession;
+        res.json({ success: true, session: safe });
       } catch (e) {
         res.status(500).json({ error: e.message });
       }
@@ -810,12 +812,9 @@ data:
       if (!captureSession || captureSession.id !== req.params.id) {
         return res.status(404).json({ error: 'Session not found' });
       }
-
-      const { existsSync } = require('fs');
       if (!existsSync(captureSession.filePath)) {
-        return res.status(404).json({ error: 'PCAP file not found' });
+        return res.status(404).json({ error: 'PCAP file not found — capture may have failed' });
       }
-
       res.download(captureSession.filePath, `capture-${captureSession.id}.pcap`);
     });
 
@@ -824,12 +823,10 @@ data:
       if (!captureSession || captureSession.id !== req.params.id) {
         return res.status(404).json({ error: 'Session not found' });
       }
-
       try {
-        const { unlinkSync } = require('fs');
-        if (require('fs').existsSync(captureSession.filePath)) {
-          unlinkSync(captureSession.filePath);
-        }
+        if (captureSession.timeout) clearTimeout(captureSession.timeout);
+        if (captureSession.ws) captureSession.ws.close();
+        if (existsSync(captureSession.filePath)) unlinkSync(captureSession.filePath);
         captureSession = null;
         res.json({ success: true });
       } catch (e) {
