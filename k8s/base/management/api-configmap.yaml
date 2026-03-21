@@ -113,21 +113,11 @@ data:
         const { lines = 100 } = req.query;
         const pod = await getPodByNf(id);
 
-        // Use kubectl exec to get logs (k8s client doesn't expose log endpoint easily)
-        const logs = await new Promise((resolve, reject) => {
-          const proc = spawn('kubectl', [
-            'logs',
-            pod.metadata.name,
-            `-n`, ns,
-            `--tail=${lines}`
-          ]);
-          let stdout = '';
-          proc.stdout.on('data', data => stdout += data);
-          proc.on('close', code => {
-            if (code === 0) resolve(stdout);
-            else reject(new Error(`kubectl logs failed with code ${code}`));
-          });
-        });
+        const logsRes = await k8sApi.readNamespacedPodLog(
+          pod.metadata.name, ns,
+          pod.spec.containers[0]?.name, undefined, undefined, undefined,
+          undefined, undefined, undefined, parseInt(lines));
+        const logs = logsRes.body;
 
         res.json({ nf: id, logs: logs });
       } catch (e) {
@@ -407,6 +397,22 @@ data:
     // UE BLOCK — per-user IMSI allocation, register, provision
     // ═══════════════════════════════════════════════════════════
 
+    // Helper: rollout restart a deployment (patches restartedAt annotation)
+    async function rolloutRestart(depName) {
+      const dep = await appsApi.readNamespacedDeployment(depName, ns);
+      if (!dep.body.spec.template.metadata) dep.body.spec.template.metadata = {};
+      if (!dep.body.spec.template.metadata.annotations) dep.body.spec.template.metadata.annotations = {};
+      dep.body.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
+      await appsApi.replaceNamespacedDeployment(depName, ns, dep.body);
+    }
+
+    // Helper: scale a deployment to N replicas
+    async function scaleDeployment(depName, replicas) {
+      const dep = await appsApi.readNamespacedDeployment(depName, ns);
+      dep.body.spec.replicas = replicas;
+      await appsApi.replaceNamespacedDeployment(depName, ns, dep.body);
+    }
+
     // Helper: exec command in a pod via K8s Exec API, return stdout as string
     const { PassThrough } = require('stream');
     async function execPodCmd(podName, containerName, cmd) {
@@ -602,16 +608,11 @@ data:
             ? sessions : [{ apn: 'internet', sst: 1, sd: '' }],
         };
         const cmName = `ue-config-${username}`;
-        // Use replace (PUT) instead of patch — avoids Content-Type 415 issue with k8s client
         const existing = await k8sApi.readNamespacedConfigMap(cmName, ns);
         existing.body.data['ue.yaml'] = buildUeYaml(baseUe);
         await k8sApi.replaceNamespacedConfigMap(cmName, ns, existing.body);
-        // Rollout restart via kubectl so pod picks up new ConfigMap
         const depName = `ue-${username}`;
-        const { exec } = require('child_process');
-        await new Promise(resolve => exec(
-          'kubectl rollout restart deployment/' + depName + ' -n ' + ns,
-          resolve));
+        await rolloutRestart(depName);
 
         res.json({ ok: true, ...parseUeYaml(buildUeYaml(baseUe)) });
       } catch (e) { res.status(500).json({ error: e.message }); }
@@ -840,10 +841,7 @@ data:
     app.post('/ue/restart-pod', authenticateToken, async (req, res) => {
       try {
         const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
-        const { exec } = require('child_process');
-        await new Promise((resolve, reject) =>
-          exec(`kubectl rollout restart deployment/ue-${username} -n 5g-testbed`,
-            (err, stdout, stderr) => err ? reject(new Error(stderr || err.message)) : resolve()));
+        await rolloutRestart(`ue-${username}`);
         res.json({ ok: true });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -887,10 +885,7 @@ data:
         yaml = yaml.replace(/^slices:\n[\s\S]*?(?=^\S)/m, `slices:\n${sliceLines}\n`);
         cm.body.data['gnb.yaml'] = yaml;
         await k8sApi.replaceNamespacedConfigMap('ueransim-config', ns, cm.body);
-        const { exec } = require('child_process');
-        await new Promise((resolve, reject) =>
-          exec(`kubectl rollout restart deployment/ueransim-gnb -n ${ns}`,
-            (err, stdout, stderr) => err ? reject(new Error(stderr || err.message)) : resolve()));
+        await rolloutRestart('ueransim-gnb');
         res.json({ ok: true });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -925,10 +920,7 @@ data:
       try {
         const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
         const replicas = req.body?.replicas === 0 ? 0 : 1;
-        const { exec } = require('child_process');
-        await new Promise((resolve, reject) =>
-          exec(`kubectl scale deployment/ue-${username} --replicas=${replicas} -n 5g-testbed`,
-            (err, stdout, stderr) => err ? reject(new Error(stderr || err.message)) : resolve()));
+        await scaleDeployment(`ue-${username}`, replicas);
         res.json({ ok: true, replicas });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
