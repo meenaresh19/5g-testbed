@@ -1155,16 +1155,23 @@ data:
     // GET /pcap/pods - List pods available for capture
     app.get('/pcap/pods', authenticateToken, async (req, res) => {
       try {
-        const pods = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined);
-        const result = pods.body.items
+        const EXCLUDED = new Set(['grafana', 'prometheus', 'mongodb', 'open5gs-bsf',
+          'testbed-api', 'testbed-ui', 'testbed-proxy']);
+        const pods = await k8sApi.listNamespacedPod(ns);
+        let result = pods.body.items
           .filter(p => p.status?.phase === 'Running')
+          .filter(p => !EXCLUDED.has(p.metadata?.labels?.app))
           .map(p => ({
             name: p.metadata?.name,
             app: p.metadata?.labels?.app,
+            username: p.metadata?.labels?.username || null,
             namespace: p.metadata?.namespace,
             podIP: p.status?.podIP,
             containers: p.spec?.containers?.map(c => c.name) || []
           }));
+        // Non-admin: only show their own UE pod
+        if (req.user.role !== 'admin')
+          result = result.filter(p => p.app === 'ueransim-ue' && p.username === req.user.username);
         res.json(result);
       } catch (e) {
         res.status(500).json({ error: e.message });

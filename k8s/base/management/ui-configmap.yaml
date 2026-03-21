@@ -1780,7 +1780,7 @@ data:
                   <div style={{marginBottom: 16, padding: 10, background: 'var(--bg3)', borderRadius: 6}}>
                     <div style={{fontSize: 10, fontWeight: 600, color: 'var(--text2)', marginBottom: 6}}>Quick BPF presets</div>
                     <div style={{display: 'flex', gap: 6, flexWrap: 'wrap'}}>
-                      {[['sctp port 38412','NGAP N2'],['udp port 2152','GTP-U N3'],['udp port 8805','PFCP N4'],['tcp port 7777','SBI'],['net 10.45.0.0/16','UE Subnet']].map(([f,l]) => (
+                      {[['sctp port 38412','NGAP N2'],['udp port 2152','GTP-U N3'],['udp port 8805','PFCP N4'],['tcp port 7777','SBI (HTTP/2)'],['tcp port 80','HTTP'],['tcp port 443','HTTPS'],['net 10.45.0.0/16','UE Subnet']].map(([f,l]) => (
                         <button key={f} onClick={() => setPodForm(p => ({...p, filter: f}))} style={{padding: '4px 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text2)', fontSize: 10, fontFamily: 'var(--font-mono)'}} onMouseEnter={e=>{e.target.style.borderColor='var(--accent)';e.target.style.color='var(--accent)'}} onMouseLeave={e=>{e.target.style.borderColor='var(--border)';e.target.style.color='var(--text2)'}}>{f}</button>
                       ))}
                     </div>
