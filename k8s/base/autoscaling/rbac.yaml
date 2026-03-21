@@ -1,0 +1,44 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: autoscaler
+  namespace: 5g-testbed
+  labels:
+    app: autoscaler
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: 5g-autoscaler
+  labels:
+    app: autoscaler
+rules:
+# Read deployments and scale them
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments/scale"]
+  verbs: ["get", "patch", "update"]
+# Read pods (for status checks)
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: 5g-autoscaler
+  labels:
+    app: autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: 5g-autoscaler
+subjects:
+- kind: ServiceAccount
+  name: autoscaler
+  namespace: 5g-testbed

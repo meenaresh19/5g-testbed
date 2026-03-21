@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoscaler-policies
+  namespace: 5g-testbed
+  labels:
+    app: autoscaler
+data:
+  policies.json: |
+    {
+      "evaluationInterval": 30,
+      "cooldownSeconds": 120,
+      "policies": [
+        {
+          "name": "amf",
+          "deployment": "open5gs-amf",
+          "description": "Scale AMF based on registered UE count",
+          "prometheusQuery": "sum(fivegs_amf_registered_ue_nbr) or vector(0)",
+          "scaleUpThreshold": 50,
+          "scaleDownThreshold": 10,
+          "scaleUpStep": 1,
+          "scaleDownStep": 1,
+          "minReplicas": 1,
+          "maxReplicas": 5,
+          "cooldownSeconds": 120
+        },
+        {
+          "name": "smf",
+          "deployment": "open5gs-smf",
+          "description": "Scale SMF based on active PDU session count",
+          "prometheusQuery": "sum(fivegs_smf_session_nbr) or vector(0)",
+          "scaleUpThreshold": 30,
+          "scaleDownThreshold": 5,
+          "scaleUpStep": 1,
+          "scaleDownStep": 1,
+          "minReplicas": 1,
+          "maxReplicas": 5,
+          "cooldownSeconds": 120
+        },
+        {
+          "name": "upf",
+          "deployment": "open5gs-upf",
+          "description": "Scale UPF based on CPU utilisation (data plane load)",
+          "prometheusQuery": "avg(rate(container_cpu_usage_seconds_total{namespace=\"5g-testbed\",container=\"upf\"}[2m])) * 100 or vector(0)",
+          "scaleUpThreshold": 70,
+          "scaleDownThreshold": 20,
+          "scaleUpStep": 1,
+          "scaleDownStep": 1,
+          "minReplicas": 1,
+          "maxReplicas": 3,
+          "cooldownSeconds": 180
+        }
+      ]
+    }

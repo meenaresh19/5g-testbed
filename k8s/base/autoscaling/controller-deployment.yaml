@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoscaler
+  namespace: 5g-testbed
+  labels:
+    app: autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: autoscaler
+  template:
+    metadata:
+      labels:
+        app: autoscaler
+      annotations:
+        prometheus.io/scrape: "false"
+    spec:
+      serviceAccountName: autoscaler
+
+      initContainers:
+      - name: wait-prometheus
+        image: busybox:1.28
+        command: ['sh', '-c', 'until nc -z prometheus.5g-testbed.svc.cluster.local 9090; do echo waiting for prometheus; sleep 3; done']
+
+      containers:
+      - name: autoscaler
+        image: node:18-alpine
+        imagePullPolicy: IfNotPresent
+
+        command: ["node", "/app/controller.js"]
+
+        ports:
+        - containerPort: 8080
+          name: health
+          protocol: TCP
+
+        volumeMounts:
+        - name: controller
+          mountPath: /app/controller.js
+          subPath: controller.js
+          readOnly: true
+        - name: policies
+          mountPath: /etc/autoscaler/policies.json
+          subPath: policies.json
+          readOnly: true
+
+        env:
+        - name: NAMESPACE
+          value: 5g-testbed
+        - name: PROMETHEUS_URL
+          value: http://prometheus.5g-testbed.svc.cluster.local:9090
+        - name: POLICIES_FILE
+          value: /etc/autoscaler/policies.json
+
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 2
+
+      volumes:
+      - name: controller
+        configMap:
+          name: autoscaler-controller
+      - name: policies
+        configMap:
+          name: autoscaler-policies
+
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always

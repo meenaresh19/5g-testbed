@@ -54,11 +54,11 @@ resources:
   # - ids/scapy-deployment.yaml
   # - ids/pvc.yaml
 
-  # Auto-scaling
-  # - autoscaling/policies.yaml
-  # - autoscaling/hpa.yaml
-  # - autoscaling/controller-deployment.yaml
-  # - autoscaling/rbac.yaml
+  # Auto-scaling (Phase 3) ✅ ENABLED
+  - autoscaling/rbac.yaml
+  - autoscaling/policies.yaml
+  - autoscaling/controller-configmap.yaml
+  - autoscaling/controller-deployment.yaml
 
 images:
   - name: mongo

@@ -1,0 +1,215 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoscaler-controller
+  namespace: 5g-testbed
+  labels:
+    app: autoscaler
+data:
+  controller.js: |
+    'use strict';
+    // 5G Testbed Autoscaler — pure Node.js, no external dependencies
+    // Polls Prometheus for 5G NF metrics and scales deployments via K8s API.
+
+    const http  = require('http');
+    const https = require('https');
+    const fs    = require('fs');
+
+    // ── Config ────────────────────────────────────────────────────────────────
+    const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus.5g-testbed.svc.cluster.local:9090';
+    const NAMESPACE      = process.env.NAMESPACE      || '5g-testbed';
+    const POLICIES_FILE  = process.env.POLICIES_FILE  || '/etc/autoscaler/policies.json';
+
+    // K8s in-cluster auth
+    const SA_TOKEN = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();
+    const CA_CERT  = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
+    const K8S_HOST = process.env.KUBERNETES_SERVICE_HOST || 'kubernetes.default.svc';
+    const K8S_PORT = parseInt(process.env.KUBERNETES_SERVICE_PORT || '443');
+
+    // ── Load policies ─────────────────────────────────────────────────────────
+    let cfg;
+    try {
+      cfg = JSON.parse(fs.readFileSync(POLICIES_FILE, 'utf8'));
+    } catch (e) {
+      console.error('Cannot load policies:', e.message);
+      process.exit(1);
+    }
+
+    // Cooldown state: { [policyName]: lastScaleMs }
+    const lastScale = {};
+
+    // ── HTTP helpers ──────────────────────────────────────────────────────────
+    function httpGet(url) {
+      return new Promise((resolve, reject) => {
+        const lib = url.startsWith('https') ? https : http;
+        lib.get(url, res => {
+          let raw = '';
+          res.on('data', c => raw += c);
+          res.on('end', () => {
+            try { resolve(JSON.parse(raw)); }
+            catch (e) { reject(new Error('JSON parse: ' + e.message)); }
+          });
+        }).on('error', reject);
+      });
+    }
+
+    function k8sPatch(path, body) {
+      return new Promise((resolve, reject) => {
+        const payload = JSON.stringify(body);
+        const opts = {
+          hostname: K8S_HOST, port: K8S_PORT, path,
+          method: 'PATCH',
+          headers: {
+            'Authorization': 'Bearer ' + SA_TOKEN,
+            'Content-Type':  'application/merge-patch+json',
+            'Accept':        'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+          },
+          ca: CA_CERT
+        };
+        const req = https.request(opts, res => {
+          let raw = '';
+          res.on('data', c => raw += c);
+          res.on('end', () => {
+            try { resolve(JSON.parse(raw)); }
+            catch (e) { reject(new Error('JSON parse: ' + e.message)); }
+          });
+        });
+        req.on('error', reject);
+        req.write(payload);
+        req.end();
+      });
+    }
+
+    function k8sGet(path) {
+      return new Promise((resolve, reject) => {
+        const opts = {
+          hostname: K8S_HOST, port: K8S_PORT, path,
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer ' + SA_TOKEN, 'Accept': 'application/json' },
+          ca: CA_CERT
+        };
+        https.request(opts, res => {
+          let raw = '';
+          res.on('data', c => raw += c);
+          res.on('end', () => {
+            try { resolve(JSON.parse(raw)); }
+            catch (e) { reject(new Error('JSON parse: ' + e.message)); }
+          });
+        }).on('error', reject).end();
+      });
+    }
+
+    // ── Prometheus query → scalar ─────────────────────────────────────────────
+    async function queryMetric(query) {
+      const url = PROMETHEUS_URL + '/api/v1/query?query=' + encodeURIComponent(query);
+      const res = await httpGet(url);
+      if (res.status !== 'success') throw new Error('Prometheus: ' + (res.error || 'unknown'));
+      if (!res.data.result || res.data.result.length === 0) return null;
+      const v = parseFloat(res.data.result[0].value[1]);
+      return isNaN(v) ? null : v;
+    }
+
+    // ── Get current replica count ─────────────────────────────────────────────
+    async function getReplicas(deployment) {
+      const dep = await k8sGet(`/apis/apps/v1/namespaces/${NAMESPACE}/deployments/${deployment}/scale`);
+      return dep.spec ? (dep.spec.replicas || 1) : 1;
+    }
+
+    // ── Scale a deployment ────────────────────────────────────────────────────
+    async function setReplicas(deployment, replicas) {
+      await k8sPatch(
+        `/apis/apps/v1/namespaces/${NAMESPACE}/deployments/${deployment}/scale`,
+        { spec: { replicas } }
+      );
+    }
+
+    // ── Evaluate one policy ───────────────────────────────────────────────────
+    async function evalPolicy(policy) {
+      const metricValue = await queryMetric(policy.prometheusQuery);
+      if (metricValue === null) {
+        console.log(`[${policy.name}] no metric data — skipping`);
+        return;
+      }
+
+      const current    = await getReplicas(policy.deployment);
+      const cooldownMs = (policy.cooldownSeconds ?? cfg.cooldownSeconds ?? 120) * 1000;
+      const sinceLast  = Date.now() - (lastScale[policy.name] || 0);
+      const inCooldown = sinceLast < cooldownMs;
+
+      console.log(
+        `[${policy.name}] metric=${metricValue.toFixed(2)}` +
+        ` replicas=${current}` +
+        ` per_replica=${(metricValue / current).toFixed(2)}` +
+        (inCooldown ? ` cooldown=${Math.ceil((cooldownMs - sinceLast) / 1000)}s` : '')
+      );
+
+      if (inCooldown) return;
+
+      const perReplica = metricValue / current;
+      let desired = current;
+
+      if (perReplica > policy.scaleUpThreshold && current < policy.maxReplicas) {
+        desired = Math.min(current + (policy.scaleUpStep || 1), policy.maxReplicas);
+        console.log(`[${policy.name}] SCALE UP  ${current} → ${desired}  (${perReplica.toFixed(2)} > ${policy.scaleUpThreshold})`);
+      } else if (perReplica < policy.scaleDownThreshold && current > policy.minReplicas) {
+        desired = Math.max(current - (policy.scaleDownStep || 1), policy.minReplicas);
+        console.log(`[${policy.name}] SCALE DOWN ${current} → ${desired}  (${perReplica.toFixed(2)} < ${policy.scaleDownThreshold})`);
+      }
+
+      if (desired !== current) {
+        await setReplicas(policy.deployment, desired);
+        lastScale[policy.name] = Date.now();
+      }
+    }
+
+    // ── Evaluation loop ───────────────────────────────────────────────────────
+    async function evaluate() {
+      for (const policy of (cfg.policies || [])) {
+        try {
+          await evalPolicy(policy);
+        } catch (e) {
+          console.error(`[${policy.name}] ERROR: ${e.message}`);
+        }
+      }
+    }
+
+    // ── Health / status endpoint ──────────────────────────────────────────────
+    http.createServer((req, res) => {
+      const body = JSON.stringify({
+        status:             'ok',
+        uptime:             Math.floor(process.uptime()),
+        evaluationInterval: cfg.evaluationInterval,
+        cooldownSeconds:    cfg.cooldownSeconds,
+        policies: (cfg.policies || []).map(p => ({
+          name:       p.name,
+          deployment: p.deployment,
+          min:        p.minReplicas,
+          max:        p.maxReplicas,
+          lastScale:  lastScale[p.name] ? new Date(lastScale[p.name]).toISOString() : null
+        }))
+      }, null, 2);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(body);
+    }).listen(8080, () => console.log('Health: http://0.0.0.0:8080'));
+
+    // ── Startup ───────────────────────────────────────────────────────────────
+    async function main() {
+      console.log('═══════════════════════════════════════');
+      console.log('  5G Testbed Autoscaler');
+      console.log('═══════════════════════════════════════');
+      console.log('Namespace  :', NAMESPACE);
+      console.log('Prometheus :', PROMETHEUS_URL);
+      console.log('Interval   :', cfg.evaluationInterval + 's');
+      console.log('Cooldown   :', cfg.cooldownSeconds + 's');
+      console.log('Policies   :', (cfg.policies || []).map(p => p.name).join(', '));
+      console.log('───────────────────────────────────────');
+
+      // First evaluation immediately
+      await evaluate();
+
+      // Then on interval
+      setInterval(evaluate, (cfg.evaluationInterval || 30) * 1000);
+    }
+
+    main().catch(e => { console.error('Fatal:', e.message); process.exit(1); });

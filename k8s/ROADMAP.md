@@ -1,6 +1,6 @@
 # 5G Testbed K8s Migration - Roadmap
 
-## Current Status: Phase 1 + 2 Complete ✅
+## Current Status: Phase 1 + 2 + 3 Complete ✅
 
 ### What You Have Now
 - ✅ Open5GS Core (13 NFs)
@@ -230,11 +230,13 @@ testbed-proxy: Nginx reverse proxy
 RBAC:          ServiceAccount + ClusterRole
 ```
 
-### Phase 3 ⏳ NOT STARTED
+### Phase 3 ✅ COMPLETE
 ```
-HPA:           Needs metric collection (Phase 4 first)
-Autoscaler:    Custom controller (optional)
-Policies:      ConfigMap with thresholds
+Autoscaler:    Custom Node.js controller (no external dependencies)
+Policies:      ConfigMap with per-NF thresholds (editable without redeploy)
+Metrics:       AMF (registered UEs), SMF (PDU sessions), UPF (CPU %)
+Cooldown:      Per-policy, prevents thrashing
+Health:        HTTP endpoint on :8080
 ```
 
 ### Phase 4 ⏳ NOT STARTED
