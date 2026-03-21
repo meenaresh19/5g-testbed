@@ -263,14 +263,43 @@ data:
           const nfs = status?.nfs || [];
           const gnbDep = nfs.find(n => n.id === 'ueransim-gnb');
           const [gnb, setGnb] = useState(null);
-          const [loading, setLoading] = useState(false);
+          const [cfgOpen, setCfgOpen] = useState(false);
+          const [cfg, setCfg] = useState(null);
+          const [cfgForm, setCfgForm] = useState(null);
+          const [cfgBusy, setCfgBusy] = useState(false);
+          const [cfgMsg, setCfgMsg] = useState(null);
+          const isAdmin = window.__currentUser?.role === 'admin';
 
           const fetchGnb = async () => {
-            setLoading(true);
             try {
               const r = await apiFetch('/api/gnb/status');
               if (r.ok) setGnb(await r.json());
-            } finally { setLoading(false); }
+            } catch {}
+          };
+
+          const fetchCfg = async () => {
+            const r = await apiFetch('/api/gnb/config');
+            if (r.ok) {
+              const d = await r.json();
+              setCfg(d);
+              setCfgForm({ mcc: d.mcc, mnc: d.mnc, tac: d.tac,
+                slices: d.slices.map(s => ({ ...s })) });
+            }
+          };
+
+          const saveCfg = async () => {
+            setCfgBusy(true); setCfgMsg(null);
+            const r = await apiFetch('/api/gnb/config', { method: 'PUT',
+              body: JSON.stringify(cfgForm) });
+            const d = await r.json();
+            if (d.ok) {
+              setCfgMsg({ ok: true, text: 'Config saved — gNodeB restarting (~30s). All UEs will re-register automatically.' });
+              setCfgOpen(false);
+              setTimeout(fetchGnb, 5000);
+            } else {
+              setCfgMsg({ ok: false, text: d.error || 'Save failed' });
+            }
+            setCfgBusy(false);
           };
 
           React.useEffect(() => {
@@ -287,11 +316,14 @@ data:
             </pre>
           );
 
+          const fi = { padding:'6px 8px', background:'var(--bg)', border:'1px solid var(--border)',
+            color:'var(--text)', borderRadius:4, fontSize:13, width:'100%' };
+
           return (
             <div>
               <div className="stat-grid">
                 <div className="stat-card">
-                  <div className="stat-label">gNodeB Pod</div>
+                  <div className="stat-label" style={{textTransform:'none',fontWeight:600}}>gNodeB Pod</div>
                   <div className="stat-value" style={{fontSize:22,color:gnbDep?.status==='Running'?'var(--success)':'var(--warn)'}}>
                     {gnbDep?.status || 'Unknown'}
                   </div>
@@ -311,13 +343,27 @@ data:
                 </div>
               </div>
 
-              <div className="grid-2" style={{marginTop:20}}>
+              {cfgMsg && (
+                <div style={{margin:'12px 0',padding:'10px 14px',borderRadius:6,fontSize:13,
+                  background: cfgMsg.ok ? 'rgba(0,200,100,0.1)' : 'rgba(255,60,60,0.1)',
+                  border: `1px solid ${cfgMsg.ok ? 'var(--success)' : 'var(--danger)'}`,
+                  color: cfgMsg.ok ? 'var(--success)' : 'var(--danger)'}}>
+                  {cfgMsg.text}
+                </div>
+              )}
+
+              <div className="grid-2" style={{marginTop:12}}>
                 <div className="panel">
                   <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
                     <h3 style={{margin:0}}><Icon name="antenna" /> gNB Info</h3>
-                    <button className="button small" onClick={fetchGnb} disabled={loading}>
-                      {loading ? '…' : '↺ Refresh'}
-                    </button>
+                    {isAdmin && (
+                      <button className="button small"
+                        style={{background: cfgOpen ? 'rgba(0,200,255,0.3)' : 'rgba(0,200,255,0.1)',
+                          border:'1px solid var(--accent)', color:'var(--accent)'}}
+                        onClick={() => { setCfgOpen(o => !o); if (!cfg) fetchCfg(); }}>
+                        🔧 Config
+                      </button>
+                    )}
                   </div>
                   {gnb?.error
                     ? <div style={{color:'var(--warn)',fontSize:13}}>{gnb.error}</div>
@@ -334,6 +380,89 @@ data:
                   {pre(gnb?.ok ? (gnb.ueList || 'No UEs connected') : '')}
                 </div>
               </div>
+
+              {/* gNB Config Panel */}
+              {cfgOpen && cfgForm && (
+                <div className="panel" style={{marginTop:16,border:'1px solid var(--accent)'}}>
+                  <h3 style={{marginBottom:14}}><Icon name="antenna" /> gNodeB Configuration</h3>
+
+                  {/* Impact warning */}
+                  <div style={{padding:'12px 14px',marginBottom:16,background:'rgba(255,180,0,0.08)',
+                    border:'1px solid rgba(255,180,0,0.4)',borderRadius:8,fontSize:13,lineHeight:1.6}}>
+                    <div style={{fontWeight:700,color:'var(--warn)',marginBottom:6}}>⚠ What happens when you save?</div>
+                    <div style={{color:'var(--text2)'}}>
+                      Saving restarts the <strong style={{color:'var(--text)'}}>gNodeB pod</strong>. Here is the full impact on UEs:
+                    </div>
+                    <ul style={{marginTop:6,paddingLeft:18,color:'var(--text2)'}}>
+                      <li>The <strong style={{color:'var(--text)'}}>N2 (NGAP) link</strong> to the AMF drops immediately — all UE contexts are released from the core.</li>
+                      <li><strong style={{color:'var(--text)'}}>All PDU sessions</strong> (data tunnels, TUN interfaces) are torn down.</li>
+                      <li>UEs enter <strong style={{color:'var(--text)'}}>RM-DEREGISTERED</strong> state temporarily.</li>
+                      <li>Once the gNodeB is back (~30s), <strong style={{color:'var(--success)'}}>UERANSIM UE pods reconnect and re-register automatically</strong> — no manual action needed.</li>
+                      <li>Subscriber data in MongoDB is <strong style={{color:'var(--success)'}}>not affected</strong>.</li>
+                    </ul>
+                  </div>
+
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:16}}>
+                    <div>
+                      <label style={{fontSize:12,color:'var(--text2)',display:'block',marginBottom:4}}>MCC</label>
+                      <input style={fi} value={cfgForm.mcc}
+                        onChange={e => setCfgForm(f => ({...f, mcc: e.target.value}))} placeholder="001" />
+                    </div>
+                    <div>
+                      <label style={{fontSize:12,color:'var(--text2)',display:'block',marginBottom:4}}>MNC</label>
+                      <input style={fi} value={cfgForm.mnc}
+                        onChange={e => setCfgForm(f => ({...f, mnc: e.target.value}))} placeholder="01" />
+                    </div>
+                    <div>
+                      <label style={{fontSize:12,color:'var(--text2)',display:'block',marginBottom:4}}>TAC</label>
+                      <input style={fi} type="number" min="1" value={cfgForm.tac}
+                        onChange={e => setCfgForm(f => ({...f, tac: parseInt(e.target.value)||1}))} />
+                    </div>
+                  </div>
+
+                  <div style={{marginBottom:16}}>
+                    <div style={{fontSize:12,color:'var(--text2)',marginBottom:8,fontWeight:600}}>
+                      Network Slices (SST / SD)
+                    </div>
+                    {cfgForm.slices.map((s, i) => (
+                      <div key={i} style={{display:'flex',gap:8,alignItems:'center',marginBottom:6}}>
+                        <div style={{flex:1}}>
+                          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:2}}>SST</label>
+                          <input style={{...fi,width:'100%'}} type="number" min="1" max="255" value={s.sst}
+                            onChange={e => setCfgForm(f => { const sl=[...f.slices]; sl[i]={...sl[i],sst:parseInt(e.target.value)||1}; return {...f,slices:sl}; })} />
+                        </div>
+                        <div style={{flex:2}}>
+                          <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:2}}>SD (optional)</label>
+                          <input style={{...fi,width:'100%'}} value={s.sd}
+                            placeholder="e.g. 000001 (leave blank for none)"
+                            onChange={e => setCfgForm(f => { const sl=[...f.slices]; sl[i]={...sl[i],sd:e.target.value}; return {...f,slices:sl}; })} />
+                        </div>
+                        <button onClick={() => setCfgForm(f => ({...f, slices: f.slices.filter((_,j)=>j!==i)}))}
+                          style={{marginTop:16,padding:'4px 8px',background:'rgba(255,60,60,0.15)',
+                            border:'1px solid var(--danger)',color:'var(--danger)',borderRadius:4,cursor:'pointer',fontSize:12}}>
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                    <button onClick={() => setCfgForm(f => ({...f, slices: [...f.slices, {sst:1,sd:''}]}))}
+                      style={{padding:'4px 12px',background:'rgba(0,200,100,0.1)',border:'1px solid var(--success)',
+                        color:'var(--success)',borderRadius:4,cursor:'pointer',fontSize:12,marginTop:4}}>
+                      + Add Slice
+                    </button>
+                  </div>
+
+                  <div style={{display:'flex',gap:8}}>
+                    <button className="button" disabled={cfgBusy} onClick={saveCfg}
+                      style={{background:'var(--danger)',flex:1}}>
+                      {cfgBusy ? 'Saving…' : '💾 Save & Restart gNodeB'}
+                    </button>
+                    <button className="button small" onClick={() => { setCfgOpen(false); setCfgMsg(null); }}
+                      style={{background:'transparent',border:'1px solid var(--border)',color:'var(--text2)'}}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           );
         }

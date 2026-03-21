@@ -848,6 +848,53 @@ data:
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // GET /gnb/config — read gNB ConfigMap editable fields (admin only)
+    app.get('/gnb/config', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const cm = await k8sApi.readNamespacedConfigMap('ueransim-config', ns);
+        const yaml = cm.body.data?.['gnb.yaml'] || '';
+        const get = (re) => { const m = yaml.match(re); return m ? m[1] : null; };
+        const mcc = get(/^mcc: '(.+)'/m) || '001';
+        const mnc = get(/^mnc: '(.+)'/m) || '01';
+        const tac = parseInt(get(/^tac: (\d+)/m) || '1');
+        // Parse slices block — each entry is "- sst: N" optionally followed by "  sd: 'X'"
+        const slices = [];
+        const sliceBlock = yaml.match(/^slices:\n([\s\S]*?)(?=^\S)/m);
+        if (sliceBlock) {
+          const entries = sliceBlock[1].split(/(?=^- sst:)/m).filter(e => e.trim());
+          for (const e of entries) {
+            const sst = parseInt((e.match(/sst: (\d+)/) || [])[1] || '1');
+            const sd = (e.match(/sd: '(.+)'/) || [])[1] || '';
+            slices.push({ sst, sd });
+          }
+        }
+        res.json({ ok: true, mcc, mnc, tac, slices: slices.length ? slices : [{ sst: 1, sd: '' }] });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // PUT /gnb/config — update gNB ConfigMap and rollout restart (admin only)
+    app.put('/gnb/config', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { mcc, mnc, tac, slices } = req.body || {};
+        const cm = await k8sApi.readNamespacedConfigMap('ueransim-config', ns);
+        let yaml = cm.body.data?.['gnb.yaml'] || '';
+        yaml = yaml.replace(/^mcc: '.+'/m,  `mcc: '${mcc  || '001'}'`);
+        yaml = yaml.replace(/^mnc: '.+'/m,  `mnc: '${mnc  || '01'}'`);
+        yaml = yaml.replace(/^tac: \d+/m,   `tac: ${parseInt(tac) || 1}`);
+        const sliceLines = (Array.isArray(slices) && slices.length ? slices : [{ sst: 1 }])
+          .map(s => `- sst: ${parseInt(s.sst) || 1}${s.sd ? `\n  sd: '${s.sd}'` : ''}`)
+          .join('\n');
+        yaml = yaml.replace(/^slices:\n[\s\S]*?(?=^\S)/m, `slices:\n${sliceLines}\n`);
+        cm.body.data['gnb.yaml'] = yaml;
+        await k8sApi.replaceNamespacedConfigMap('ueransim-config', ns, cm.body);
+        const { exec } = require('child_process');
+        await new Promise((resolve, reject) =>
+          exec(`kubectl rollout restart deployment/ueransim-gnb -n ${ns}`,
+            (err, stdout, stderr) => err ? reject(new Error(stderr || err.message)) : resolve()));
+        res.json({ ok: true });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // GET /gnb/status — live gNB status via nr-cli (info, status, amf-info, ue-list, ue-count)
     app.get('/gnb/status', authenticateToken, async (req, res) => {
       try {
