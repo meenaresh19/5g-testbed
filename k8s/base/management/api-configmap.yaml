@@ -1263,6 +1263,100 @@ data:
     // UE routes above handle provisioning and operations
 
     // ============================================
+    // AUTOSCALER (Phase 3)
+    // ============================================
+
+    const AUTOSCALER_URL = process.env.AUTOSCALER_URL || 'http://autoscaler.5g-testbed.svc.cluster.local:8080';
+    const PROMETHEUS_URL_AS = process.env.PROMETHEUS_URL || 'http://prometheus.5g-testbed.svc.cluster.local:9090';
+
+    async function prometheusScalar(query) {
+      try {
+        const r = await fetch(`${PROMETHEUS_URL_AS}/api/v1/query?query=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(5000) });
+        const d = await r.json();
+        if (d.status === 'success' && d.data.result.length > 0) return parseFloat(d.data.result[0].value[1]);
+      } catch (_) {}
+      return null;
+    }
+
+    // GET /autoscaler/status — autoscaler health + live per-NF metrics + replica counts
+    app.get('/autoscaler/status', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        // Fetch autoscaler pod health
+        let autoscalerHealth = null;
+        try {
+          const r = await fetch(`${AUTOSCALER_URL}/`, { signal: AbortSignal.timeout(3000) });
+          autoscalerHealth = await r.json();
+        } catch (_) {}
+
+        // Read policies from ConfigMap
+        let policies = [];
+        try {
+          const cm = await k8sApi.readNamespacedConfigMap('autoscaler-policies', ns);
+          policies = JSON.parse(cm.body.data['policies.json']).policies || [];
+        } catch (_) {}
+
+        // Enrich each policy with live metric value + current replicas
+        const enriched = await Promise.all(policies.map(async p => {
+          const [metricValue, depInfo] = await Promise.all([
+            prometheusScalar(p.prometheusQuery),
+            appsApi.readNamespacedDeployment(p.deployment, ns).then(d => ({
+              replicas: d.body.spec.replicas || 1,
+              readyReplicas: d.body.status.readyReplicas || 0
+            })).catch(() => ({ replicas: 1, readyReplicas: 0 }))
+          ]);
+          return {
+            ...p,
+            currentReplicas: depInfo.replicas,
+            readyReplicas: depInfo.readyReplicas,
+            metricValue,
+            lastScale: autoscalerHealth?.policies?.find(ap => ap.name === p.name)?.lastScale || null
+          };
+        }));
+
+        res.json({
+          status: 'ok',
+          autoscalerOnline: autoscalerHealth !== null,
+          uptime: autoscalerHealth?.uptime || null,
+          evaluationInterval: autoscalerHealth?.evaluationInterval || null,
+          cooldownSeconds: autoscalerHealth?.cooldownSeconds || null,
+          policies: enriched
+        });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /autoscaler/policies — return the full policies.json from ConfigMap
+    app.get('/autoscaler/policies', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const cm = await k8sApi.readNamespacedConfigMap('autoscaler-policies', ns);
+        const cfg = JSON.parse(cm.body.data['policies.json']);
+        res.json({ status: 'ok', policies: cfg });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // PUT /autoscaler/policies — update policies ConfigMap + restart autoscaler
+    app.put('/autoscaler/policies', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const cfg = req.body; // full policies object
+        if (!cfg || !Array.isArray(cfg.policies)) return res.status(400).json({ error: 'policies array required' });
+
+        const cm = await k8sApi.readNamespacedConfigMap('autoscaler-policies', ns);
+        cm.body.data['policies.json'] = JSON.stringify(cfg, null, 2);
+        await k8sApi.replaceNamespacedConfigMap('autoscaler-policies', ns, cm.body);
+
+        // Restart autoscaler to pick up new config
+        await rolloutRestart('autoscaler');
+
+        res.json({ status: 'ok', message: 'Policies updated — autoscaler restarting' });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // ============================================
     // PCAP TRACING (Traffic Capture)
     // ============================================
 

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: autoscaler
+  namespace: 5g-testbed
+  labels:
+    app: autoscaler
+spec:
+  selector:
+    app: autoscaler
+  ports:
+  - name: health
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP

@@ -203,7 +203,7 @@ data:
             server: '⚙️', database: '💾', network: '🌐', users: '👥',
             antenna: '🗼', chart: '📊', alert: '⚠️', check: '✓',
             power: '⚡', cpu: '💻', memory: '🔋', play: '▶️', stop: '⏹️',
-            phone: '📱', topology: '🕸️'
+            phone: '📱', topology: '🕸️', scale: '⚖️'
           };
           return <span>{icons[name] || '•'}</span>;
         };
@@ -2094,6 +2094,257 @@ data:
           );
         }
 
+        // ── CLA — Cluster Load & Autoscaling ─────────────────────────────────
+        function ClaSection() {
+          const [status, setStatus]     = useState(null);
+          const [policies, setPolicies] = useState(null);
+          const [editing, setEditing]   = useState(false);
+          const [draft, setDraft]       = useState(null);
+          const [saving, setSaving]     = useState(false);
+          const [msg, setMsg]           = useState(null);
+
+          const fetchStatus = async () => {
+            try {
+              const r = await apiFetch('/api/autoscaler/status');
+              if (r.ok) setStatus(await r.json());
+            } catch (_) {}
+          };
+
+          const fetchPolicies = async () => {
+            try {
+              const r = await apiFetch('/api/autoscaler/policies');
+              if (r.ok) { const d = await r.json(); setPolicies(d.policies); }
+            } catch (_) {}
+          };
+
+          React.useEffect(() => {
+            fetchStatus();
+            fetchPolicies();
+            const t = setInterval(fetchStatus, 15000);
+            return () => clearInterval(t);
+          }, []);
+
+          const startEdit = () => {
+            setDraft(JSON.parse(JSON.stringify(policies)));
+            setEditing(true);
+            setMsg(null);
+          };
+
+          const cancelEdit = () => { setEditing(false); setDraft(null); };
+
+          const savePolicies = async () => {
+            setSaving(true); setMsg(null);
+            try {
+              const r = await apiFetch('/api/autoscaler/policies', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(draft)
+              });
+              const d = await r.json();
+              if (!r.ok) throw new Error(d.error || 'Save failed');
+              setPolicies(draft);
+              setEditing(false); setDraft(null);
+              setMsg({ type: 'ok', text: d.message });
+              setTimeout(fetchStatus, 3000);
+            } catch (e) {
+              setMsg({ type: 'err', text: e.message });
+            } finally { setSaving(false); }
+          };
+
+          const updateDraftField = (idx, field, value) => {
+            const next = draft.policies.map((p, i) => i === idx ? { ...p, [field]: field === 'description' || field === 'name' || field === 'deployment' || field === 'prometheusQuery' ? value : Number(value) } : p);
+            setDraft({ ...draft, policies: next });
+          };
+
+          const metricLabel = (p) => {
+            if (!p) return '—';
+            if (p.metricValue === null || p.metricValue === undefined) return <span style={{color:'var(--text3)'}}>no data</span>;
+            return <strong style={{color:'var(--accent)'}}>{p.metricValue.toFixed(1)}</strong>;
+          };
+
+          const replicaBar = (p) => {
+            const pct = p ? ((p.currentReplicas - p.minReplicas) / Math.max(p.maxReplicas - p.minReplicas, 1)) * 100 : 0;
+            return (
+              <div style={{marginTop:4}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--text3)',marginBottom:2}}>
+                  <span>{p?.minReplicas} min</span>
+                  <span style={{color:'var(--text)',fontWeight:600}}>{p?.currentReplicas} / {p?.readyReplicas} ready</span>
+                  <span>{p?.maxReplicas} max</span>
+                </div>
+                <div style={{height:4,background:'var(--bg3)',borderRadius:2,overflow:'hidden'}}>
+                  <div style={{width:pct+'%',height:'100%',background:'var(--accent)',borderRadius:2,transition:'width 0.5s'}} />
+                </div>
+              </div>
+            );
+          };
+
+          const cfg  = policies || status;
+          const rows = status?.policies || [];
+
+          return (
+            <div>
+              {/* Header */}
+              <div className="stats-grid" style={{gridTemplateColumns:'repeat(4,1fr)',marginBottom:16}}>
+                <div className="stat-card">
+                  <div className="stat-label">Autoscaler</div>
+                  <div className="stat-value" style={{fontSize:20,color: status?.autoscalerOnline ? 'var(--success)' : 'var(--danger)'}}>
+                    {status === null ? '…' : status.autoscalerOnline ? 'Online' : 'Offline'}
+                  </div>
+                  <div className="stat-sub">{status?.uptime != null ? `Up ${Math.floor(status.uptime/60)}m` : '—'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Eval Interval</div>
+                  <div className="stat-value" style={{fontSize:22}}>{status?.evaluationInterval ?? '—'}<span style={{fontSize:12,color:'var(--text3)'}}>s</span></div>
+                  <div className="stat-sub">polling cadence</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Cooldown</div>
+                  <div className="stat-value" style={{fontSize:22}}>{status?.cooldownSeconds ?? '—'}<span style={{fontSize:12,color:'var(--text3)'}}>s</span></div>
+                  <div className="stat-sub">scale guard</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Policies</div>
+                  <div className="stat-value" style={{fontSize:22}}>{rows.length}</div>
+                  <div className="stat-sub">NFs managed</div>
+                </div>
+              </div>
+
+              {/* Per-NF live cards */}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:12,marginBottom:20}}>
+                {rows.map(p => (
+                  <div key={p.name} className="panel" style={{padding:16}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                      <strong style={{fontSize:14,textTransform:'uppercase',letterSpacing:1}}>{p.name}</strong>
+                      <span style={{fontSize:11,color:'var(--text3)',fontFamily:'var(--font-mono)'}}>{p.deployment}</span>
+                    </div>
+                    <div style={{fontSize:12,color:'var(--text2)',marginBottom:6}}>{p.description}</div>
+
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+                      <div style={{background:'var(--bg3)',borderRadius:4,padding:'6px 10px'}}>
+                        <div style={{fontSize:10,color:'var(--text3)',marginBottom:2}}>Live Metric</div>
+                        <div style={{fontSize:18}}>{metricLabel(p)}</div>
+                        <div style={{fontSize:9,color:'var(--text3)'}}>per replica: {p.metricValue != null ? (p.metricValue/p.currentReplicas).toFixed(1) : '—'}</div>
+                      </div>
+                      <div style={{background:'var(--bg3)',borderRadius:4,padding:'6px 10px'}}>
+                        <div style={{fontSize:10,color:'var(--text3)',marginBottom:2}}>Thresholds</div>
+                        <div style={{fontSize:11}}>
+                          <span style={{color:'var(--danger)'}}>↑ {p.scaleUpThreshold}</span>
+                          <span style={{color:'var(--text3)',margin:'0 6px'}}>·</span>
+                          <span style={{color:'var(--success)'}}>↓ {p.scaleDownThreshold}</span>
+                        </div>
+                        <div style={{fontSize:9,color:'var(--text3)'}}>up · down</div>
+                      </div>
+                    </div>
+
+                    {replicaBar(p)}
+
+                    {p.lastScale && (
+                      <div style={{marginTop:6,fontSize:10,color:'var(--text3)'}}>
+                        Last scaled: {new Date(p.lastScale).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Policy editor */}
+              <div className="panel">
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                  <h3 style={{margin:0}}><Icon name="scale" /> Scaling Policies</h3>
+                  {!editing
+                    ? <button className="button small" onClick={startEdit} disabled={!policies}>Edit Policies</button>
+                    : <div style={{display:'flex',gap:8}}>
+                        <button className="button small danger" onClick={cancelEdit}>Cancel</button>
+                        <button className="button small" onClick={savePolicies} disabled={saving} style={{background:'var(--accent)'}}>{saving ? 'Saving…' : '💾 Save & Restart'}</button>
+                      </div>
+                  }
+                </div>
+
+                {msg && (
+                  <div style={{padding:'8px 12px',borderRadius:4,marginBottom:12,background: msg.type==='ok' ? 'rgba(0,200,150,0.1)' : 'rgba(255,80,80,0.1)', border:`1px solid ${msg.type==='ok'?'var(--success)':'var(--danger)'}`, color: msg.type==='ok'?'var(--success)':'var(--danger)',fontSize:12}}>
+                    {msg.type==='ok'?'✓ ':'⚠ '}{msg.text}
+                  </div>
+                )}
+
+                {!editing && policies ? (
+                  /* Read-only table */
+                  <div style={{overflowX:'auto'}}>
+                    <table className="table">
+                      <thead><tr>
+                        <th>NF</th><th>Deployment</th><th>Metric Query</th>
+                        <th>↑ Scale Up</th><th>↓ Scale Down</th>
+                        <th>Min</th><th>Max</th><th>Cooldown (s)</th>
+                      </tr></thead>
+                      <tbody>
+                        {policies.policies.map(p => (
+                          <tr key={p.name}>
+                            <td><strong>{p.name}</strong></td>
+                            <td style={{fontFamily:'var(--font-mono)',fontSize:11}}>{p.deployment}</td>
+                            <td style={{fontFamily:'var(--font-mono)',fontSize:10,maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={p.prometheusQuery}>{p.prometheusQuery}</td>
+                            <td style={{color:'var(--danger)'}}>{p.scaleUpThreshold}</td>
+                            <td style={{color:'var(--success)'}}>{p.scaleDownThreshold}</td>
+                            <td>{p.minReplicas}</td>
+                            <td>{p.maxReplicas}</td>
+                            <td>{p.cooldownSeconds}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : editing && draft ? (
+                  /* Editable form */
+                  <div>
+                    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+                      <div className="form-group" style={{margin:0}}>
+                        <label>Evaluation Interval (s)</label>
+                        <input type="number" value={draft.evaluationInterval} onChange={e => setDraft({...draft, evaluationInterval: Number(e.target.value)})} min="10" max="300" />
+                      </div>
+                      <div className="form-group" style={{margin:0}}>
+                        <label>Default Cooldown (s)</label>
+                        <input type="number" value={draft.cooldownSeconds} onChange={e => setDraft({...draft, cooldownSeconds: Number(e.target.value)})} min="30" max="600" />
+                      </div>
+                    </div>
+
+                    {draft.policies.map((p, idx) => (
+                      <div key={p.name} style={{background:'var(--bg3)',borderRadius:6,padding:14,marginBottom:10,border:'1px solid var(--border)'}}>
+                        <div style={{fontWeight:700,fontSize:13,textTransform:'uppercase',letterSpacing:1,marginBottom:10,color:'var(--accent)'}}>{p.name}</div>
+                        <div className="form-group">
+                          <label style={{fontSize:11}}>Prometheus Query</label>
+                          <input type="text" value={p.prometheusQuery} onChange={e => updateDraftField(idx,'prometheusQuery',e.target.value)} style={{fontFamily:'var(--font-mono)',fontSize:11}} />
+                        </div>
+                        <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8}}>
+                          <div className="form-group" style={{margin:0}}>
+                            <label style={{fontSize:10}}>↑ Scale Up</label>
+                            <input type="number" value={p.scaleUpThreshold} onChange={e => updateDraftField(idx,'scaleUpThreshold',e.target.value)} />
+                          </div>
+                          <div className="form-group" style={{margin:0}}>
+                            <label style={{fontSize:10}}>↓ Scale Down</label>
+                            <input type="number" value={p.scaleDownThreshold} onChange={e => updateDraftField(idx,'scaleDownThreshold',e.target.value)} />
+                          </div>
+                          <div className="form-group" style={{margin:0}}>
+                            <label style={{fontSize:10}}>Min Replicas</label>
+                            <input type="number" value={p.minReplicas} onChange={e => updateDraftField(idx,'minReplicas',e.target.value)} min="1" />
+                          </div>
+                          <div className="form-group" style={{margin:0}}>
+                            <label style={{fontSize:10}}>Max Replicas</label>
+                            <input type="number" value={p.maxReplicas} onChange={e => updateDraftField(idx,'maxReplicas',e.target.value)} min="1" />
+                          </div>
+                          <div className="form-group" style={{margin:0}}>
+                            <label style={{fontSize:10}}>Cooldown (s)</label>
+                            <input type="number" value={p.cooldownSeconds} onChange={e => updateDraftField(idx,'cooldownSeconds',e.target.value)} min="30" />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{color:'var(--text3)',fontSize:12,padding:16,textAlign:'center'}}>Loading policies…</div>
+                )}
+              </div>
+            </div>
+          );
+        }
+
         // Main App
         function App() {
           const [page, setPage] = useState('topology');
@@ -2198,6 +2449,9 @@ data:
                     <div className={`tab ${page === 'monitoring' ? 'active' : ''}`} onClick={() => setPage('monitoring')} style={{cursor: 'pointer'}}>
                       <Icon name="chart" /> Monitoring
                     </div>
+                    {isAdmin && <div className={`tab ${page === 'cla' ? 'active' : ''}`} onClick={() => setPage('cla')} style={{cursor: 'pointer'}}>
+                      <Icon name="scale" /> CLA
+                    </div>}
                     {isAdmin && <div className={`tab ${page === 'users' ? 'active' : ''}`} onClick={() => setPage('users')} style={{cursor: 'pointer'}}>
                       <Icon name="users" /> Users
                     </div>}
@@ -2232,6 +2486,7 @@ data:
                     <div className={`section ${page === 'monitoring' ? 'active' : ''}`}>
                       <MonitoringSection status={status} />
                     </div>
+                    {page === 'cla' && isAdmin && <div className="section active"><ClaSection /></div>}
                     {page === 'users' && isAdmin && <UsersPage />}
                   </>
                 ) : null}

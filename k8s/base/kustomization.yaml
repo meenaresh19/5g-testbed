@@ -59,6 +59,7 @@ resources:
   - autoscaling/policies.yaml
   - autoscaling/controller-configmap.yaml
   - autoscaling/controller-deployment.yaml
+  - autoscaling/service.yaml
 
 images:
   - name: mongo
