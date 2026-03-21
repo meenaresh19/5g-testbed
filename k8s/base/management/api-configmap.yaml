@@ -602,14 +602,17 @@ data:
             ? sessions : [{ apn: 'internet', sst: 1, sd: '' }],
         };
         const cmName = `ue-config-${username}`;
-        await k8sApi.patchNamespacedConfigMap(cmName, ns,
-          { data: { 'ue.yaml': buildUeYaml(baseUe) } },
-          undefined, undefined, undefined, undefined,
-          { headers: { 'Content-Type': 'application/merge-patch+json' } });
-        // Rollout restart so pod picks up new ConfigMap
+        // Use replace (PUT) instead of patch — avoids Content-Type 415 issue with k8s client
+        const existing = await k8sApi.readNamespacedConfigMap(cmName, ns);
+        existing.body.data['ue.yaml'] = buildUeYaml(baseUe);
+        await k8sApi.replaceNamespacedConfigMap(cmName, ns, existing.body);
+        // Rollout restart via kubectl so pod picks up new ConfigMap
         const depName = `ue-${username}`;
-        const patch = { spec: { template: { metadata: { annotations: { 'kubectl.kubernetes.io/restartedAt': new Date().toISOString() } } } } };
-        try { await appsApi.patchNamespacedDeployment(depName, ns, patch, undefined, undefined, undefined, undefined, { headers: { 'Content-Type': 'application/merge-patch+json' } }); } catch (_) {}
+        const { exec } = require('child_process');
+        await new Promise(resolve => exec(
+          'kubectl rollout restart deployment/' + depName + ' -n ' + ns,
+          resolve));
+
         res.json({ ok: true, ...parseUeYaml(buildUeYaml(baseUe)) });
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
