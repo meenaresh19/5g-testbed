@@ -792,7 +792,8 @@ data:
             const d = await r.json();
             if (d.ok) {
               setPodCfg(c => ({ ...c, [username]: d }));
-              setPodCfgForm(c => ({ ...c, [username]: { k: d.k, opc: d.opc, amf: d.amf, dnn: d.dnn, sst: d.sst, sd: d.sd || '' } }));
+              setPodCfgForm(c => ({ ...c, [username]: { k: d.k, opc: d.opc, amf: d.amf,
+                sessions: d.sessions || [{ apn: 'internet', sst: 1, sd: '' }] } }));
             }
             return d;
           };
@@ -807,7 +808,7 @@ data:
           const savePodCfg = async (username) => {
             const form = podCfgForm[username] || {};
             const r = await apiFetch('/api/ue/pod-config', { method: 'PUT',
-              body: JSON.stringify({ username, ...form, sst: parseInt(form.sst) || 1 }) });
+              body: JSON.stringify({ username, k: form.k, opc: form.opc, amf: form.amf, sessions: form.sessions }) });
             const d = await r.json();
             if (d.ok) {
               setPodCfg(c => ({ ...c, [username]: d }));
@@ -1162,25 +1163,53 @@ data:
                                 }
                               </div>
                             </div>
-                            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',gap:8}}>
-                              {[
-                                { label:'Key (K)', key:'k', mono:true },
-                                { label:'OPC', key:'opc', mono:true },
-                                { label:'AMF', key:'amf', mono:true },
-                                { label:'DNN / APN', key:'dnn' },
-                                { label:'SST', key:'sst', type:'number' },
-                                { label:'SD (optional)', key:'sd' },
-                              ].map(({ label, key, mono, type }) => (
+                            {/* K / OPC / AMF */}
+                            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8,marginBottom:10}}>
+                              {[{label:'Key (K)',key:'k',mono:true},{label:'OPC',key:'opc',mono:true},{label:'AMF',key:'amf',mono:false}].map(({label,key,mono}) => (
                                 <div key={key} style={{background:'var(--bg)',borderRadius:5,padding:'8px 10px'}}>
                                   <div style={{fontSize:10,color:'var(--text3)',marginBottom:3}}>{label}</div>
                                   {editing
-                                    ? <input type={type||'text'} value={form[key]||''} onChange={e=>setF(key,e.target.value)}
-                                        style={{...fi, fontFamily: mono ? 'var(--font-mono)' : undefined}} />
-                                    : <div style={{fontSize:12,fontFamily:mono?'var(--font-mono)':undefined,
-                                        color:'var(--accent)',wordBreak:'break-all'}}>
-                                        {cfg[key]||<span style={{color:'var(--text3)'}}>—</span>}
-                                      </div>
+                                    ? <input value={form[key]||''} onChange={e=>setF(key,e.target.value)}
+                                        style={{...fi,width:'100%',fontFamily:mono?'var(--font-mono)':undefined}} />
+                                    : <div style={{fontSize:11,fontFamily:mono?'var(--font-mono)':undefined,color:'var(--accent)',wordBreak:'break-all'}}>{cfg[key]||'—'}</div>
                                   }
+                                </div>
+                              ))}
+                            </div>
+                            {/* Sessions */}
+                            <div style={{background:'var(--bg)',borderRadius:5,padding:'8px 10px'}}>
+                              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                                <span style={{fontSize:10,color:'var(--text3)'}}>Sessions (APN / SST / SD)</span>
+                                {editing && (
+                                  <button className="button small" style={{marginLeft:'auto',fontSize:10}}
+                                    onClick={()=>setF('sessions',[...(form.sessions||[]),{apn:'internet',sst:1,sd:''}])}>
+                                    + Add
+                                  </button>
+                                )}
+                              </div>
+                              {(editing ? form.sessions : cfg.sessions || []).map((s, idx) => (
+                                <div key={idx} style={{display:'flex',gap:6,alignItems:'center',
+                                  background:'var(--bg3)',borderRadius:4,padding:'6px 8px',marginBottom:4}}>
+                                  {editing ? (
+                                    <>
+                                      <input placeholder="APN/DNN" value={s.apn||''} style={{...fi,width:110}}
+                                        onChange={e=>{ const ss=[...form.sessions]; ss[idx]={...ss[idx],apn:e.target.value}; setF('sessions',ss); }} />
+                                      <input placeholder="SST" type="number" value={s.sst||1} style={{...fi,width:52}}
+                                        onChange={e=>{ const ss=[...form.sessions]; ss[idx]={...ss[idx],sst:parseInt(e.target.value)||1}; setF('sessions',ss); }} />
+                                      <input placeholder="SD" value={s.sd||''} style={{...fi,width:80}}
+                                        onChange={e=>{ const ss=[...form.sessions]; ss[idx]={...ss[idx],sd:e.target.value}; setF('sessions',ss); }} />
+                                      {form.sessions.length > 1 && (
+                                        <button className="button small danger" style={{padding:'2px 6px'}}
+                                          onClick={()=>{ const ss=form.sessions.filter((_,i)=>i!==idx); setF('sessions',ss); }}>×</button>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span style={{fontFamily:'var(--font-mono)',fontSize:12,color:'var(--accent)',minWidth:90}}>{s.apn}</span>
+                                      <span style={{fontSize:11,color:'var(--text2)'}}>SST: <b style={{color:'var(--text)'}}>{s.sst}</b></span>
+                                      {s.sd && <span style={{fontSize:11,color:'var(--text2)'}}>SD: <b style={{color:'var(--text)'}}>{s.sd}</b></span>}
+                                    </>
+                                  )}
                                 </div>
                               ))}
                             </div>

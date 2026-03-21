@@ -469,6 +469,19 @@ data:
 
     // Helper: build UERANSIM ue.yaml config
     function buildUeYaml(ue) {
+      // sessions: [{apn, sst, sd?}] — falls back to legacy dnn/sst/sd fields
+      const sessions = (ue.sessions && ue.sessions.length > 0)
+        ? ue.sessions
+        : [{ apn: ue.dnn || 'internet', sst: ue.sst || 1, sd: ue.sd }];
+      const sessionLines = sessions.flatMap(s => [
+        "- type: 'IPv4'", `  apn: '${s.apn || 'internet'}'`, "  slice:",
+        `    sst: ${parseInt(s.sst) || 1}`,
+        ...(s.sd ? [`    sd: '${s.sd}'`] : []),
+      ]);
+      const nssaiLines = sessions.flatMap(s => [
+        `- sst: ${parseInt(s.sst) || 1}`,
+        ...(s.sd ? [`  sd: '${s.sd}'`] : []),
+      ]);
       return [
         `supi: 'imsi-${ue.imsi}'`, "mcc: '001'", "mnc: '01'",
         `key: '${ue.k}'`, `op: '${ue.opc}'`, "opType: 'OPC'",
@@ -477,13 +490,9 @@ data:
         "uacAic:", "  mps: false", "  mcs: false",
         "uacAcc:", "  normalClass: 0", "  class11: false", "  class12: false",
         "  class13: false", "  class14: false", "  class15: false",
-        "sessions:", "- type: 'IPv4'", `  apn: '${ue.dnn || 'internet'}'`, "  slice:",
-        `    sst: ${ue.sst || 1}`,
-        ...(ue.sd ? [`    sd: '${ue.sd}'`] : []),
-        "configured-nssai:", `- sst: ${ue.sst || 1}`,
-        ...(ue.sd ? [`  sd: '${ue.sd}'`] : []),
-        "default-nssai:", `- sst: ${ue.sst || 1}`,
-        ...(ue.sd ? [`  sd: '${ue.sd}'`] : []),
+        "sessions:", ...sessionLines,
+        "configured-nssai:", ...nssaiLines,
+        "default-nssai:", ...nssaiLines,
         "integrity:", "  IA1: true", "  IA2: true", "  IA3: true",
         "ciphering:", "  EA0: true", "  EA1: true", "  EA2: true", "  EA3: true",
         "integrityMaxRate:", "  uplink: 'full'", "  downlink: 'full'",
@@ -543,13 +552,23 @@ data:
     // Helper: parse editable fields from ue.yaml text
     function parseUeYaml(yaml) {
       const get = (re) => { const m = yaml.match(re); return m ? m[1] : null; };
+      // Parse sessions block (between "sessions:" and "configured-nssai:")
+      const sessions = [];
+      const sessBlock = yaml.match(/^sessions:\n([\s\S]*?)(?=^configured-nssai:)/m);
+      if (sessBlock) {
+        const parts = sessBlock[1].split(/(?=^- type:)/m).filter(p => p.trim());
+        for (const p of parts) {
+          const apn = (p.match(/apn: '(.+)'/) || [])[1] || 'internet';
+          const sst = parseInt((p.match(/sst: (\d+)/) || [])[1] || '1');
+          const sd  = (p.match(/sd: '(.+)'/) || [])[1] || '';
+          sessions.push({ apn, sst, sd });
+        }
+      }
       return {
-        k:   get(/^key: '(.+)'/m)   || '',
-        opc: get(/^op: '(.+)'/m)    || '',
-        amf: get(/^amf: '(.+)'/m)   || '8000',
-        dnn: get(/apn: '(.+)'/m)    || 'internet',
-        sst: parseInt(get(/sst: (\d+)/m) || '1'),
-        sd:  get(/^  sd: '(.+)'/m)  || '',
+        k:   get(/^key: '(.+)'/m) || '',
+        opc: get(/^op: '(.+)'/m)  || '',
+        amf: get(/^amf: '(.+)'/m) || '8000',
+        sessions: sessions.length > 0 ? sessions : [{ apn: 'internet', sst: 1, sd: '' }],
       };
     }
 
@@ -571,7 +590,7 @@ data:
     app.put('/ue/pod-config', authenticateToken, async (req, res) => {
       try {
         const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
-        const { k, opc, amf, dnn, sst, sd } = req.body || {};
+        const { k, opc, amf, sessions } = req.body || {};
         const user = await db.collection('testbed_users').findOne({ username });
         if (!user || !user.imsiStart) return res.status(400).json({ error: 'No IMSI block' });
         const baseUe = {
@@ -579,9 +598,8 @@ data:
           k:   k   || 'fec86ba6eb707ed08ce33ae45b4a0fba',
           opc: opc || 'c42449363464e2e4fa8adca3063168ca',
           amf: amf || '8000',
-          dnn: dnn || 'internet',
-          sst: parseInt(sst) || 1,
-          sd:  sd  || undefined,
+          sessions: (Array.isArray(sessions) && sessions.length > 0)
+            ? sessions : [{ apn: 'internet', sst: 1, sd: '' }],
         };
         const cmName = `ue-config-${username}`;
         await k8sApi.patchNamespacedConfigMap(cmName, ns,
