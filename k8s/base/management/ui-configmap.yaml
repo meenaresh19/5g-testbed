@@ -707,7 +707,11 @@ data:
             } finally { setLoading(false); }
           };
 
-          React.useEffect(() => { fetchBlock(); }, []);
+          React.useEffect(() => {
+            fetchBlock();
+            const t = setInterval(fetchBlock, 5000);
+            return () => clearInterval(t);
+          }, []);
 
           const doRegister = async (username, isReg) => {
             setBusyK(`reg-${username}`, true);
@@ -732,6 +736,15 @@ data:
             r.ok ? flash(`${username}: pod ${isProv ? 'removed' : 'created'} (ue-${username})`) : flash(d.error || 'Failed', false);
             fetchBlock();
             setBusyK(`prov-${username}`, false);
+          };
+
+          const doScale = async (username, replicas) => {
+            setBusyK(`scale-${username}`, true);
+            const r = await apiFetch('/api/ue/scale', { method: 'PUT', body: JSON.stringify({ username, replicas }) });
+            const d = await r.json();
+            r.ok ? flash(`${username}: pod ${replicas === 0 ? 'suspended' : 'resumed'}`) : flash(d.error || 'Scale failed', false);
+            fetchBlock();
+            setBusyK(`scale-${username}`, false);
           };
 
           const fetchDetail = async (imsi) => {
@@ -814,6 +827,7 @@ data:
               setPodCfg(c => ({ ...c, [username]: d }));
               setPodCfgEdit(c => ({ ...c, [username]: false }));
               flash('Config saved — pod restarting', true);
+              fetchBlock();
             } else { flash(d.error || 'Save failed', false); }
           };
 
@@ -1090,8 +1104,8 @@ data:
                     </div>
                     <div style={{display:'flex',gap:6,alignItems:'center'}}>
                       <div style={{textAlign:'center',padding:'4px 10px',background:'rgba(0,200,100,0.1)',borderRadius:6}}>
-                        <div style={{fontSize:9,color:'var(--text2)'}}>Reg</div>
-                        <div style={{fontSize:15,fontWeight:700,color:b.ueRegistered?'var(--success)':'var(--text3)'}}>{b.registeredCount}/{b.imsiCount}</div>
+                        <div style={{fontSize:9,color:'var(--text2)'}}>Sub</div>
+                        <div style={{fontSize:15,fontWeight:700,color:b.registeredCount>0?'var(--success)':'var(--text3)'}}>{b.registeredCount}/{b.imsiCount}</div>
                       </div>
                       <div style={{textAlign:'center',padding:'4px 10px',background:'rgba(0,150,255,0.1)',borderRadius:6}}>
                         <div style={{fontSize:9,color:'var(--text2)'}}>Pod</div>
@@ -1125,6 +1139,20 @@ data:
                         onClick={()=>doProvision(b.username, b.ueProvisioned)}>
                         {busy[`prov-${b.username}`] ? '…' : b.ueProvisioned ? 'Deprovision' : 'Provision Pod'}
                       </button>
+                      {b.ueProvisioned && (b.podPhase
+                        ? <button className="button small" disabled={busy[`scale-${b.username}`]}
+                            title="Scale replicas to 0 — stops UE from re-registering"
+                            style={{background:'rgba(255,150,0,0.75)'}}
+                            onClick={()=>doScale(b.username, 0)}>
+                            {busy[`scale-${b.username}`] ? '…' : 'Suspend'}
+                          </button>
+                        : <button className="button small" disabled={busy[`scale-${b.username}`]}
+                            title="Scale replicas back to 1"
+                            style={{background:'var(--accent)'}}
+                            onClick={()=>doScale(b.username, 1)}>
+                            {busy[`scale-${b.username}`] ? '…' : 'Resume'}
+                          </button>
+                      )}
                       {b.ueProvisioned && (
                         <button className="button small"
                           style={{background: podCfgOpen[b.username] ? 'rgba(0,200,255,0.3)' : 'rgba(0,200,255,0.1)',

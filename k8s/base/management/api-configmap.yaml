@@ -836,6 +836,19 @@ data:
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // PUT /ue/scale — suspend (replicas=0) or resume (replicas=1) UE deployment
+    app.put('/ue/scale', authenticateToken, async (req, res) => {
+      try {
+        const username = (req.user.role === 'admin' && req.body?.username) ? req.body.username : req.user.username;
+        const replicas = req.body?.replicas === 0 ? 0 : 1;
+        const { exec } = require('child_process');
+        await new Promise((resolve, reject) =>
+          exec(`kubectl scale deployment/ue-${username} --replicas=${replicas} -n 5g-testbed`,
+            (err, stdout, stderr) => err ? reject(new Error(stderr || err.message)) : resolve()));
+        res.json({ ok: true, replicas });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // POST /ue/:imsi/ping — ICMP ping via PDU session tunnel
     app.post('/ue/:imsi/ping', authenticateToken, async (req, res) => {
       try {
