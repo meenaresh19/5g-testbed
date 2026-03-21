@@ -260,64 +260,78 @@ data:
 
         // RAN section
         function RanSection({ status }) {
-          const nfs = status?.nf || [];
-          const ranNfs = nfs.filter(n => n.id.includes('ueransim'));
-          const gnb = ranNfs.find(n => n.id.includes('gnb'));
-          const ues = ranNfs.filter(n => n.id.includes('ue'));
+          const nfs = status?.nfs || [];
+          const gnbDep = nfs.find(n => n.id === 'ueransim-gnb');
+          const [gnb, setGnb] = useState(null);
+          const [loading, setLoading] = useState(false);
+
+          const fetchGnb = async () => {
+            setLoading(true);
+            try {
+              const r = await apiFetch('/api/gnb/status');
+              if (r.ok) setGnb(await r.json());
+            } finally { setLoading(false); }
+          };
+
+          React.useEffect(() => {
+            fetchGnb();
+            const t = setInterval(fetchGnb, 10000);
+            return () => clearInterval(t);
+          }, []);
+
+          const pre = (txt) => (
+            <pre style={{margin:0,padding:'8px 10px',background:'var(--bg)',borderRadius:5,
+              fontFamily:'var(--font-mono)',fontSize:12,color:'var(--text2)',
+              overflowX:'auto',whiteSpace:'pre-wrap',wordBreak:'break-all',maxHeight:160,overflowY:'auto'}}>
+              {txt || <span style={{color:'var(--text3)'}}>—</span>}
+            </pre>
+          );
 
           return (
             <div>
               <div className="stat-grid">
                 <div className="stat-card">
-                  <div className="stat-label">gNodeB</div>
-                  <div className="stat-value">{gnb?.status === 'Running' ? '1' : '0'}</div>
-                  <div className="stat-sub">{gnb?.status}</div>
+                  <div className="stat-label">gNodeB Pod</div>
+                  <div className="stat-value" style={{fontSize:22,color:gnbDep?.status==='Running'?'var(--success)':'var(--warn)'}}>
+                    {gnbDep?.status || 'Unknown'}
+                  </div>
+                  <div className="stat-sub">{gnbDep ? `${gnbDep.ready}/${gnbDep.replicas} ready` : 'deployment not found'}</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">N2 Link (NGAP)</div>
+                  <div className="stat-value" style={{color: gnb?.ok && gnb.ngapUp ? 'var(--success)' : 'var(--danger)'}}>
+                    {gnb?.ok ? (gnb.ngapUp ? '✓ UP' : '✗ DOWN') : '—'}
+                  </div>
+                  <div className="stat-sub">{gnb?.gnbName || 'waiting for gNB'}</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">Connected UEs</div>
-                  <div className="stat-value">{ues.filter(u => u.status === 'Running').length}</div>
-                  <div className="stat-sub">Active sessions</div>
-                </div>
-                <div className="stat-card">
-                  <div className="stat-label">N2 Link</div>
-                  <div className="stat-value" style={{color: gnb?.status === 'Running' ? 'var(--success)' : 'var(--danger)'}}>
-                    {gnb?.status === 'Running' ? '✓' : '✗'}
-                  </div>
-                  <div className="stat-sub">gNB ↔ AMF</div>
+                  <div className="stat-value">{gnb?.ok ? gnb.ueCount : '—'}</div>
+                  <div className="stat-sub">nr-cli ue-count</div>
                 </div>
               </div>
 
-              <div className="info-box">
-                <Icon name="antenna" /> <strong>RAN Simulators:</strong> UERANSIM gNB + User Equipment. Simulates 5G radio access.
-              </div>
-
-              <div className="grid-2">
+              <div className="grid-2" style={{marginTop:20}}>
                 <div className="panel">
-                  <h3><Icon name="antenna" /> gNodeB (gNB)</h3>
-                  <div className="list">
-                    <div className={`list-item ${gnb?.status === 'Running' ? 'running' : 'pending'}`}>
-                      <div>
-                        <div style={{fontWeight: 600}}>ueransim-gnb</div>
-                        <div style={{fontSize: 11, color: 'var(--text3)', marginTop: 4}}>Band 78 (3.5 GHz) | 20 MHz BW</div>
-                      </div>
-                      <span className={`badge ${gnb?.status === 'Running' ? 'success' : 'warn'}`}>{gnb?.status}</span>
-                    </div>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                    <h3 style={{margin:0}}><Icon name="antenna" /> gNB Info</h3>
+                    <button className="button small" onClick={fetchGnb} disabled={loading}>
+                      {loading ? '…' : '↺ Refresh'}
+                    </button>
                   </div>
+                  {gnb?.error
+                    ? <div style={{color:'var(--warn)',fontSize:13}}>{gnb.error}</div>
+                    : pre(gnb?.info)}
                 </div>
 
                 <div className="panel">
-                  <h3><Icon name="users" /> User Equipment</h3>
-                  <div className="list">
-                    {ues.map(ue => (
-                      <div key={ue.id} className={`list-item ${ue.status.toLowerCase()}`}>
-                        <div>
-                          <div style={{fontWeight: 600}}>{ue.id.replace('ueransim-', '')}</div>
-                          <div style={{fontSize: 11, color: 'var(--text3)', marginTop: 4}}>IMSI: 001010000000{ue.id.endsWith('1') ? '001' : '002'}</div>
-                        </div>
-                        <span className={`badge ${ue.status === 'Running' ? 'success' : 'warn'}`}>{ue.status}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <h3><Icon name="network" /> AMF Connection (amf-info)</h3>
+                  {pre(gnb?.amfInfo)}
+                </div>
+
+                <div className="panel" style={{gridColumn:'1/-1'}}>
+                  <h3><Icon name="phone" /> Connected UEs (ue-list)</h3>
+                  {pre(gnb?.ok ? (gnb.ueList || 'No UEs connected') : '')}
                 </div>
               </div>
             </div>

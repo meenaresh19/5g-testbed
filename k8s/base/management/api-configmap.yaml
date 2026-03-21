@@ -848,6 +848,31 @@ data:
       } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // GET /gnb/status — live gNB status via nr-cli (info, status, amf-info, ue-list, ue-count)
+    app.get('/gnb/status', authenticateToken, async (req, res) => {
+      try {
+        const podsRes = await k8sApi.listNamespacedPod(ns, undefined, undefined, undefined, undefined, 'app=ueransim-gnb');
+        const pod = podsRes.body.items.find(p => p.status?.phase === 'Running');
+        if (!pod) return res.json({ ok: false, podRunning: false });
+        const podName = pod.metadata.name;
+        const container = pod.spec.containers[0].name;
+        // Find gNB node name via nr-cli --dump
+        const dump = await execPodCmd(podName, container, 'nr-cli --dump 2>&1 || true');
+        const gnbName = dump.split('\n').map(l => l.trim()).find(l => l.startsWith('UERANSIM-gnb'));
+        if (!gnbName) return res.json({ ok: false, podRunning: true, podName, dump, error: 'gNB node not ready yet' });
+        const cli = (cmd) => execPodCmd(podName, container, `nr-cli ${gnbName} --exec '${cmd}' 2>&1 || true`);
+        const [info, ngapStatus, amfList, ueList, ueCount] = await Promise.all([
+          cli('info'), cli('status'), cli('amf-list'), cli('ue-list'), cli('ue-count'),
+        ]);
+        // Get full amf-info for first AMF
+        const amfId = (amfList.match(/id:\s*(\d+)/) || [])[1];
+        const amfInfo = amfId ? await cli(`amf-info ${amfId}`) : '';
+        const ngapUp = ngapStatus.includes('is-ngap-up: true');
+        const connectedCount = parseInt(ueCount) || 0;
+        res.json({ ok: true, podRunning: true, podName, gnbName, info, ngapStatus, ngapUp, amfInfo, ueList, ueCount: connectedCount });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // PUT /ue/scale — suspend (replicas=0) or resume (replicas=1) UE deployment
     app.put('/ue/scale', authenticateToken, async (req, res) => {
       try {
