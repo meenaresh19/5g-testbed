@@ -84,7 +84,7 @@ data:
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-main); font-size: 15px; }
+        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-main); font-size: 16px; }
         #root { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 
         .app-container { display: flex; flex-direction: column; height: 100%; overflow: hidden; background: var(--bg); }
@@ -101,7 +101,7 @@ data:
         .tab {
           padding: 16px 28px;
           cursor: pointer;
-          font-size: 15px;
+          font-size: 16px;
           font-weight: 600;
           color: var(--text2);
           border-bottom: 3px solid transparent;
@@ -127,13 +127,13 @@ data:
         .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
         .stat-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
         .stat-card:hover { border-color: var(--accent); box-shadow: var(--glow); }
-        .stat-label { font-size: 12px; color: var(--text2); text-transform: uppercase; margin-bottom: 8px; }
-        .stat-value { font-size: 28px; font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
-        .stat-sub { font-size: 12px; color: var(--text3); margin-top: 4px; }
+        .stat-label { font-size: 13px; color: var(--text2); text-transform: uppercase; margin-bottom: 8px; }
+        .stat-value { font-size: 30px; font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+        .stat-sub { font-size: 13px; color: var(--text3); margin-top: 4px; }
 
         .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }
         .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-        .panel h3 { color: var(--accent); font-size: 15px; margin-bottom: 12px; }
+        .panel h3 { color: var(--accent); font-size: 16px; margin-bottom: 12px; }
 
         .list { display: flex; flex-direction: column; gap: 8px; }
         .list-item { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; display: flex; justify-content: space-between; align-items: center; }
@@ -141,16 +141,16 @@ data:
         .list-item.pending { border-left: 3px solid var(--warn); }
         .list-item.failed { border-left: 3px solid var(--danger); }
 
-        .badge { display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 3px; font-size: 13px; font-weight: 600; }
         .badge.success { background: rgba(0,230,118,0.2); color: var(--success); }
         .badge.warn { background: rgba(255,184,0,0.2); color: var(--warn); }
         .badge.danger { background: rgba(255,59,92,0.2); color: var(--danger); }
         .badge.info { background: rgba(0,200,255,0.2); color: var(--accent); }
 
-        .button { background: var(--accent); color: var(--bg); border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 13px; transition: all 0.3s ease; }
+        .button { background: var(--accent); color: var(--bg); border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 14px; transition: all 0.3s ease; }
         .button:hover { background: var(--accent3); }
         .button:disabled { background: var(--muted); cursor: not-allowed; opacity: 0.5; }
-        .button.small { padding: 4px 8px; font-size: 11px; }
+        .button.small { padding: 4px 8px; font-size: 12px; }
         .button.danger { background: var(--danger); }
         .button.danger:hover { background: #ff1a3a; }
 
@@ -203,7 +203,7 @@ data:
             server: '⚙️', database: '💾', network: '🌐', users: '👥',
             antenna: '📡', chart: '📊', alert: '⚠️', check: '✓',
             power: '⚡', cpu: '💻', memory: '🔋', play: '▶️', stop: '⏹️',
-            phone: '📱'
+            phone: '📱', topology: '🗺️'
           };
           return <span>{icons[name] || '•'}</span>;
         };
@@ -1930,7 +1930,7 @@ data:
 
         // Main App
         function App() {
-          const [page, setPage] = useState('core');
+          const [page, setPage] = useState('topology');
           const [token, setToken] = useState(() => localStorage.getItem('token'));
           const [currentUser, setCurrentUser] = useState(() => { try { const u = JSON.parse(localStorage.getItem('currentUser')); window.__currentUser = u; return u; } catch { return null; } });
           const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -2011,20 +2011,20 @@ data:
               <div className="tabs-wrapper">
                 <div className="tabs-inner">
                   <div className="tabs">
-                    <div className={`tab ${page === 'core' ? 'active' : ''}`} onClick={() => setPage('core')} style={{cursor: 'pointer'}}>
-                      <Icon name="server" /> Core Network
-                    </div>
                     <div className={`tab ${page === 'topology' ? 'active' : ''}`} onClick={() => setPage('topology')} style={{cursor: 'pointer'}}>
-                      <Icon name="network" /> Topology
+                      <Icon name="topology" /> Topology
                     </div>
                     <div className={`tab ${page === 'ran' ? 'active' : ''}`} onClick={() => setPage('ran')} style={{cursor: 'pointer'}}>
                       <Icon name="antenna" /> RAN
                     </div>
-                    <div className={`tab ${page === 'subscribers' ? 'active' : ''}`} onClick={() => setPage('subscribers')} style={{cursor: 'pointer'}}>
-                      <Icon name="database" /> Subscribers
-                    </div>
                     <div className={`tab ${page === 'ue-mgmt' ? 'active' : ''}`} onClick={() => setPage('ue-mgmt')} style={{cursor: 'pointer'}}>
                       <Icon name="phone" /> UE Management
+                    </div>
+                    <div className={`tab ${page === 'core' ? 'active' : ''}`} onClick={() => setPage('core')} style={{cursor: 'pointer'}}>
+                      <Icon name="server" /> Core Network
+                    </div>
+                    <div className={`tab ${page === 'subscribers' ? 'active' : ''}`} onClick={() => setPage('subscribers')} style={{cursor: 'pointer'}}>
+                      <Icon name="database" /> Subscribers
                     </div>
                     <div className={`tab ${page === 'tracing' ? 'active' : ''}`} onClick={() => setPage('tracing')} style={{cursor: 'pointer'}}>
                       <Icon name="network" /> Tracing
