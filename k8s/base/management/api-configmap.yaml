@@ -1023,8 +1023,26 @@ data:
 
         const subscribers = db.collection('subscribers');
 
-        // Build query for search
-        const query = search ? { imsi: { $regex: search, $options: 'i' } } : {};
+        // For non-admin users, restrict to their own IMSI block
+        let scopeFilter = {};
+        if (req.user.role !== 'admin') {
+          const user = await db.collection('testbed_users').findOne({ username: req.user.username });
+          if (user && user.imsiStart && user.imsiCount) {
+            const imsiList = Array.from({ length: user.imsiCount }, (_, i) =>
+              String(parseInt(user.imsiStart) + i).padStart(15, '0')
+            );
+            scopeFilter = { imsi: { $in: imsiList } };
+          } else {
+            // No IMSI block assigned — return empty
+            return res.json({ status: 'ok', total: 0, page: 1, limit: parseInt(limit), pages: 0, data: [] });
+          }
+        }
+
+        // Build query combining scope + search
+        const searchFilter = search ? { imsi: { $regex: search, $options: 'i' } } : null;
+        const query = searchFilter && Object.keys(scopeFilter).length
+          ? { $and: [scopeFilter, searchFilter] }
+          : searchFilter || scopeFilter;
 
         const data = await subscribers
           .find(query)
@@ -1118,6 +1136,121 @@ data:
         res.json({
           status: 'ok',
           imported: results.filter(r => r.status === 'success').length,
+          skipped: results.filter(r => r.status === 'skipped').length,
+          failed: results.filter(r => r.status === 'failed').length,
+          results
+        });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // Helper: normalize subscriber document from UI form data
+    function normalizeSubscriberDoc(sub) {
+      return {
+        imsi: sub.imsi,
+        pdn: sub.pdn || [{ type: 0, apn: 'internet', slice: [{ sst: 1, sd: '000000' }] }],
+        slice: sub.slice || [{ sst: 1, sd: '000000' }],
+        security: {
+          k: sub.security?.k || 'fec86ba6eb707ed08ce33ae45b4a0fba',
+          opc: sub.security?.opc || 'c42449363464e2e4fa8adca3063168ca',
+          amf: sub.security?.amf || 'c3d4'
+        },
+        ambr: sub.ambr || { uplink: 1000000, downlink: 1000000 },
+        subscribed_rau_tau_timer: sub.subscribed_rau_tau_timer || 12,
+        plmn: sub.plmn || { mcc: '001', mnc: '01' },
+        subscriber_status: 0, network_access_mode: 0, __v: 0
+      };
+    }
+
+    // POST /subscribers/add - Add a single subscriber
+    app.post('/subscribers/add', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const sub = req.body;
+        if (!sub.imsi) return res.status(400).json({ error: 'IMSI required' });
+        const subscribers = db.collection('subscribers');
+        const existing = await subscribers.findOne({ imsi: sub.imsi });
+        if (existing) return res.status(409).json({ error: 'Subscriber already exists' });
+        await subscribers.insertOne(normalizeSubscriberDoc(sub));
+        res.json({ status: 'ok', imsi: sub.imsi });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // PUT /subscribers/:imsi - Update a subscriber
+    app.put('/subscribers/:imsi', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const { imsi } = req.params;
+        const sub = req.body;
+        const subscribers = db.collection('subscribers');
+        const doc = normalizeSubscriberDoc({ ...sub, imsi });
+        await subscribers.updateOne({ imsi }, { $set: doc });
+        res.json({ status: 'ok', imsi });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // DELETE /subscribers/:imsi - Delete a subscriber
+    app.delete('/subscribers/:imsi', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const { imsi } = req.params;
+        const result = await db.collection('subscribers').deleteOne({ imsi });
+        if (result.deletedCount === 0) return res.status(404).json({ error: 'Not found' });
+        res.json({ status: 'ok', imsi });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // GET /subscribers/:imsi - Get a single subscriber
+    app.get('/subscribers/:imsi', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const { imsi } = req.params;
+        const sub = await db.collection('subscribers').findOne({ imsi });
+        if (!sub) return res.status(404).json({ error: 'Not found' });
+        res.json({ status: 'ok', subscriber: sub });
+      } catch (e) {
+        res.status(500).json({ error: e.message });
+      }
+    });
+
+    // POST /subscribers/bulk-add - Add N sequential subscribers from startImsi
+    app.post('/subscribers/bulk-add', authenticateToken, async (req, res) => {
+      try {
+        if (!db) return res.status(503).json({ error: 'MongoDB not connected' });
+        const { startImsi, count, ...rest } = req.body;
+        if (!startImsi) return res.status(400).json({ error: 'startImsi required' });
+        if (!count || count < 1 || count > 1000) return res.status(400).json({ error: 'count must be 1–1000' });
+
+        const subscribers = db.collection('subscribers');
+        const results = [];
+        let imsiNum = BigInt(startImsi);
+
+        for (let i = 0; i < count; i++) {
+          const imsi = imsiNum.toString().padStart(startImsi.length, '0');
+          try {
+            const existing = await subscribers.findOne({ imsi });
+            if (existing) {
+              results.push({ imsi, status: 'skipped', reason: 'already exists' });
+            } else {
+              await subscribers.insertOne(normalizeSubscriberDoc({ ...rest, imsi }));
+              results.push({ imsi, status: 'success' });
+            }
+          } catch (err) {
+            results.push({ imsi, status: 'failed', reason: err.message });
+          }
+          imsiNum++;
+        }
+
+        res.json({
+          status: 'ok',
+          created: results.filter(r => r.status === 'success').length,
           skipped: results.filter(r => r.status === 'skipped').length,
           failed: results.filter(r => r.status === 'failed').length,
           results

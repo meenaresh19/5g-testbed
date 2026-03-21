@@ -478,6 +478,8 @@ data:
           const [editingSubscriber, setEditingSubscriber] = useState(null);
           const [formData, setFormData] = useState({});
           const [importJson, setImportJson] = useState('');
+          const [bulkMode, setBulkMode] = useState(false);
+          const [bulkCount, setBulkCount] = useState(10);
           const importSectionRef = React.useRef(null);
 
           // Fetch subscribers list
@@ -507,37 +509,39 @@ data:
             fetchSubscribers(e.target.value, 1);
           };
 
+          const defaultFormData = {
+            imsi: '',
+            security: { k: 'fec86ba6eb707ed08ce33ae45b4a0fba', opc: 'c42449363464e2e4fa8adca3063168ca', amf: 'c3d4' },
+            pdn: [{ type: 0, apn: 'internet', slice: [{ sst: 1, sd: '000000' }] }],
+            slice: [{ sst: 1, sd: '000000' }],
+            ambr: { uplink: 1000000, downlink: 1000000 },
+            subscribed_rau_tau_timer: 12,
+            plmn: { mcc: '001', mnc: '01' }
+          };
+
           const handleAdd = () => {
             setEditingSubscriber(null);
-            setFormData({
-              imsi: '',
-              security: { k: 'fec86ba6eb707ed08ce33ae45b4a0fba', opc: 'c42449363464e2e4fa8adca3063168ca', amf: 'c3d4' },
-              pdn: [{ type: 0, apn: 'internet', slice: [{ sst: 1, sd: '000000' }] }],
-              slice: [{ sst: 1, sd: '000000' }],
-              ambr: { uplink: 1000000, downlink: 1000000 },
-              subscribed_rau_tau_timer: 12,
-              plmn: { mcc: '001', mnc: '01' }
-            });
+            setBulkMode(false);
+            setBulkCount(10);
+            setFormData(defaultFormData);
             setShowModal(true);
           };
 
           const handleAddBulk = () => {
-            setImportJson('');
-            if (importSectionRef.current) {
-              importSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              setTimeout(() => {
-                const textarea = importSectionRef.current.querySelector('textarea');
-                if (textarea) textarea.focus();
-              }, 300);
-            }
+            setEditingSubscriber(null);
+            setBulkMode(true);
+            setBulkCount(10);
+            setFormData(defaultFormData);
+            setShowModal(true);
           };
 
           const handleEdit = async (imsi) => {
             try {
-              const res = await apiFetch(`/api/subscriber/${imsi}`);
+              const res = await apiFetch(`/api/subscribers/${imsi}`);
               if (!res.ok) throw new Error('Failed to fetch');
               const data = await res.json();
               setEditingSubscriber(imsi);
+              setBulkMode(false);
               setFormData(data.subscriber);
               setShowModal(true);
             } catch (e) {
@@ -548,14 +552,26 @@ data:
           const handleSave = async () => {
             if (!formData.imsi) { alert('IMSI required'); return; }
             try {
-              const method = editingSubscriber ? 'PUT' : 'POST';
-              const url = editingSubscriber ? `/api/subscriber/${editingSubscriber}` : '/api/ue/add';
-              const res = await apiFetch(url, {
-                method,
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(formData)
-              });
-              if (!res.ok) throw new Error('Failed to save');
+              if (bulkMode) {
+                if (!bulkCount || bulkCount < 1) { alert('Number of Subscribers must be at least 1'); return; }
+                const res = await apiFetch('/api/subscribers/bulk-add', {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({ startImsi: formData.imsi, count: bulkCount, ...formData })
+                });
+                if (!res.ok) throw new Error('Failed to bulk add');
+                const data = await res.json();
+                alert(`Created: ${data.created}, Skipped: ${data.skipped}, Failed: ${data.failed}`);
+              } else {
+                const method = editingSubscriber ? 'PUT' : 'POST';
+                const url = editingSubscriber ? `/api/subscribers/${editingSubscriber}` : '/api/subscribers/add';
+                const res = await apiFetch(url, {
+                  method,
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify(formData)
+                });
+                if (!res.ok) throw new Error('Failed to save');
+              }
               setShowModal(false);
               fetchSubscribers(search, page);
             } catch (e) {
@@ -566,7 +582,7 @@ data:
           const handleDelete = async (imsi) => {
             if (!confirm(`Delete ${imsi}?`)) return;
             try {
-              const res = await apiFetch(`/api/ue/delete?imsi=${imsi}`, {method: 'DELETE'});
+              const res = await apiFetch(`/api/subscribers/${imsi}`, {method: 'DELETE'});
               if (!res.ok) throw new Error('Failed to delete');
               fetchSubscribers(search, page);
             } catch (e) {
@@ -705,12 +721,19 @@ data:
               {showModal && (
                 <div style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000}}>
                   <div style={{background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '8px', padding: '24px', maxWidth: 600, width: '90%', maxHeight: '80vh', overflowY: 'auto'}}>
-                    <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>{editingSubscriber ? 'Edit Subscriber' : 'Add Subscriber'}</h2>
+                    <h2 style={{marginBottom: 16, color: 'var(--accent)'}}>{editingSubscriber ? 'Edit Subscriber' : bulkMode ? 'Add Bulk Subscribers' : 'Add Subscriber'}</h2>
 
                     <div className="form-group">
-                      <label>IMSI</label>
+                      <label>{bulkMode ? 'Starting IMSI' : 'IMSI'}</label>
                       <input type="text" value={formData.imsi || ''} onChange={e => setFormData({...formData, imsi: e.target.value})} placeholder="001010000000002" disabled={!!editingSubscriber} />
                     </div>
+
+                    {bulkMode && (
+                      <div className="form-group">
+                        <label>Number of Subscribers</label>
+                        <input type="number" value={bulkCount} onChange={e => setBulkCount(parseInt(e.target.value) || 1)} min="1" max="1000" placeholder="10" />
+                      </div>
+                    )}
 
                     <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
                       <div className="form-group">
