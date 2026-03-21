@@ -1523,6 +1523,182 @@ data:
       }
     });
 
+    // ============================================
+    // NETWORK SLICING (Phase 4)
+    // ============================================
+
+    const ALL_SLICE_NFS = [
+      'open5gs-nrf', 'open5gs-ausf', 'open5gs-udm', 'open5gs-udr',
+      'open5gs-pcf', 'open5gs-nssf', 'open5gs-bsf',
+      'open5gs-amf', 'open5gs-smf', 'open5gs-upf'
+    ];
+
+    function defaultNfAlloc(name) {
+      const required = ['open5gs-nrf','open5gs-ausf','open5gs-udm','open5gs-udr',
+                        'open5gs-pcf','open5gs-amf','open5gs-smf','open5gs-upf'];
+      return {
+        name, enabled: required.includes(name),
+        cpu:    { request: '100m', limit: '500m' },
+        memory: { request: '64Mi', limit: '256Mi' },
+        replicas: 1
+      };
+    }
+
+    // GET /slices — list all slices
+    app.get('/slices', authenticateToken, async (req, res) => {
+      try {
+        const slices = await db.collection('slices').find({}).sort({ sst: 1, sd: 1 }).toArray();
+        res.json(slices);
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // GET /slices/:id
+    app.get('/slices/:id', authenticateToken, async (req, res) => {
+      try {
+        const { ObjectId } = require('mongodb');
+        const slice = await db.collection('slices').findOne({ _id: new ObjectId(req.params.id) });
+        if (!slice) return res.status(404).json({ error: 'Slice not found' });
+        res.json(slice);
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // POST /slices — create slice (admin only)
+    app.post('/slices', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const b = req.body;
+        const nfs = (b.networkFunctions && b.networkFunctions.length)
+          ? b.networkFunctions
+          : ALL_SLICE_NFS.map(defaultNfAlloc);
+        const doc = {
+          name:        b.name || '',
+          description: b.description || '',
+          sst:         parseInt(b.sst) || 1,
+          sd:          b.sd || '',
+          color:       b.color || '#3b82f6',
+          status:      'draft',
+          dnn:         b.dnn || 'internet',
+          subnet:      b.subnet || '10.45.0.0/16',
+          dns:         b.dns || ['8.8.8.8', '8.8.4.4'],
+          ambr:        b.ambr || { downlink: { value: 1000, unit: 3 }, uplink: { value: 500, unit: 3 } },
+          qos:         b.qos  || { index: 9, arp: { priority_level: 8, pre_emption_capability: 1, pre_emption_vulnerability: 1 } },
+          mtu:         parseInt(b.mtu) || 1400,
+          priority:    parseInt(b.priority) || 1,
+          networkFunctions: nfs,
+          createdAt: new Date(), updatedAt: new Date()
+        };
+        const result = await db.collection('slices').insertOne(doc);
+        res.status(201).json({ ...doc, _id: result.insertedId });
+      } catch (e) { res.status(400).json({ error: e.message }); }
+    });
+
+    // PUT /slices/:id — update slice (admin only)
+    app.put('/slices/:id', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { ObjectId } = require('mongodb');
+        const update = { ...req.body, updatedAt: new Date() };
+        delete update._id;
+        const result = await db.collection('slices').findOneAndUpdate(
+          { _id: new ObjectId(req.params.id) },
+          { $set: update },
+          { returnDocument: 'after' }
+        );
+        if (!result) return res.status(404).json({ error: 'Slice not found' });
+        res.json(result);
+      } catch (e) { res.status(400).json({ error: e.message }); }
+    });
+
+    // DELETE /slices/:id (admin only)
+    app.delete('/slices/:id', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { ObjectId } = require('mongodb');
+        const result = await db.collection('slices').findOneAndDelete({ _id: new ObjectId(req.params.id) });
+        if (!result) return res.status(404).json({ error: 'Slice not found' });
+        res.json({ success: true });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // POST /slices/:id/apply — patch NF deployment resources/replicas (admin only)
+    app.post('/slices/:id/apply', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { ObjectId } = require('mongodb');
+        const slice = await db.collection('slices').findOne({ _id: new ObjectId(req.params.id) });
+        if (!slice) return res.status(404).json({ error: 'Slice not found' });
+
+        const results = [];
+        for (const nfAlloc of (slice.networkFunctions || [])) {
+          if (!nfAlloc.enabled) continue;
+          try {
+            const dep = await appsApi.readNamespacedDeployment(nfAlloc.name, ns);
+            const containers = dep.body.spec?.template?.spec?.containers || [];
+            if (containers.length === 0) {
+              results.push({ nf: nfAlloc.name, status: 'skipped', error: 'no containers' }); continue;
+            }
+            containers[0].resources = {
+              requests: { cpu: nfAlloc.cpu?.request || '100m', memory: nfAlloc.memory?.request || '64Mi' },
+              limits:   { cpu: nfAlloc.cpu?.limit   || '500m', memory: nfAlloc.memory?.limit   || '256Mi' }
+            };
+            if (dep.body.spec) dep.body.spec.replicas = nfAlloc.replicas || 1;
+            if (!dep.body.spec.template.metadata) dep.body.spec.template.metadata = {};
+            if (!dep.body.spec.template.metadata.annotations) dep.body.spec.template.metadata.annotations = {};
+            dep.body.spec.template.metadata.annotations['kubectl.kubernetes.io/restartedAt'] = new Date().toISOString();
+            await appsApi.replaceNamespacedDeployment(nfAlloc.name, ns, dep.body);
+            results.push({ nf: nfAlloc.name, status: 'applied' });
+          } catch (e) {
+            results.push({ nf: nfAlloc.name, status: 'error', error: e.message });
+          }
+        }
+
+        await db.collection('slices').updateOne(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { status: 'active', updatedAt: new Date() } }
+        );
+        res.json({ success: true, results });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // POST /slices/:id/deactivate (admin only)
+    app.post('/slices/:id/deactivate', authenticateToken, requireAdmin, async (req, res) => {
+      try {
+        const { ObjectId } = require('mongodb');
+        const result = await db.collection('slices').findOneAndUpdate(
+          { _id: new ObjectId(req.params.id) },
+          { $set: { status: 'inactive', updatedAt: new Date() } },
+          { returnDocument: 'after' }
+        );
+        if (!result) return res.status(404).json({ error: 'Slice not found' });
+        res.json({ success: true, slice: result });
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // GET /slices/:id/nf-status — live K8s deployment status for each NF in this slice
+    app.get('/slices/:id/nf-status', authenticateToken, async (req, res) => {
+      try {
+        const { ObjectId } = require('mongodb');
+        const slice = await db.collection('slices').findOne({ _id: new ObjectId(req.params.id) });
+        if (!slice) return res.status(404).json({ error: 'Slice not found' });
+
+        const statuses = await Promise.all(
+          (slice.networkFunctions || []).map(async (nf) => {
+            try {
+              const dep = await appsApi.readNamespacedDeployment(nf.name, ns);
+              const ready   = dep.body.status?.readyReplicas || 0;
+              const desired = dep.body.spec?.replicas || 1;
+              return {
+                name: nf.name,
+                ready, desired,
+                status: ready === desired ? 'Running' : ready === 0 ? 'Down' : 'Degraded',
+                cpu:    dep.body.spec?.template?.spec?.containers?.[0]?.resources?.limits?.cpu,
+                memory: dep.body.spec?.template?.spec?.containers?.[0]?.resources?.limits?.memory
+              };
+            } catch (_) {
+              return { name: nf.name, ready: 0, desired: 0, status: 'Unknown' };
+            }
+          })
+        );
+        res.json(statuses);
+      } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // Health check
     app.get('/health', (req, res) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });

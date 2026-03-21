@@ -203,7 +203,7 @@ data:
             server: '⚙️', database: '💾', network: '🌐', users: '👥',
             antenna: '🗼', chart: '📊', alert: '⚠️', check: '✓',
             power: '⚡', cpu: '💻', memory: '🔋', play: '▶️', stop: '⏹️',
-            phone: '📱', topology: '🕸️', scale: '⚖️'
+            phone: '📱', topology: '🕸️', scale: '⚖️', slice: '🔀'
           };
           return <span>{icons[name] || '•'}</span>;
         };
@@ -2094,6 +2094,507 @@ data:
           );
         }
 
+        // ── Network Slicing ───────────────────────────────────────────────────
+        const SST_LABELS = { 1: 'eMBB', 2: 'URLLC', 3: 'mIoT' };
+        const SST_COLORS = { 1: '#3b82f6', 2: '#f59e0b', 3: '#10b981' };
+        const PRESET_SLICES = [
+          { label: 'eMBB',  sst: 1, sd: '000001', color: '#3b82f6', dnn: 'internet', subnet: '10.45.0.0/16' },
+          { label: 'URLLC', sst: 2, sd: '000002', color: '#f59e0b', dnn: 'urllc',    subnet: '10.46.0.0/16' },
+          { label: 'mIoT',  sst: 3, sd: '000003', color: '#10b981', dnn: 'miot',     subnet: '10.47.0.0/16' }
+        ];
+        const ALL_SLICE_NFS = [
+          'open5gs-nrf','open5gs-ausf','open5gs-udm','open5gs-udr',
+          'open5gs-pcf','open5gs-nssf','open5gs-bsf',
+          'open5gs-amf','open5gs-smf','open5gs-upf'
+        ];
+        const NF_REQUIRED = new Set(['open5gs-nrf','open5gs-ausf','open5gs-udm','open5gs-udr',
+                                     'open5gs-pcf','open5gs-amf','open5gs-smf','open5gs-upf']);
+        function defaultSlice(preset) {
+          const p = preset || PRESET_SLICES[0];
+          return {
+            name: `${p.label}-slice-${Date.now().toString(36).slice(-4)}`,
+            description: '', sst: p.sst, sd: p.sd, color: p.color,
+            dnn: p.dnn, subnet: p.subnet, dns: ['8.8.8.8','8.8.4.4'],
+            ambr: { downlink: { value: p.sst===1?1000:p.sst===2?100:10, unit: 3 },
+                    uplink:   { value: p.sst===1?500: p.sst===2?100:10, unit: 3 } },
+            qos: { index: 9, arp: { priority_level: 8, pre_emption_capability: 1, pre_emption_vulnerability: 1 } },
+            mtu: 1400, priority: 1,
+            networkFunctions: ALL_SLICE_NFS.map(name => ({
+              name, enabled: NF_REQUIRED.has(name),
+              cpu: { request: '100m', limit: '500m' },
+              memory: { request: '64Mi', limit: '256Mi' },
+              replicas: 1
+            }))
+          };
+        }
+
+        function SlicingSection() {
+          const [slices, setSlices]       = useState([]);
+          const [loading, setLoading]     = useState(true);
+          const [modal, setModal]         = useState(null); // null | { mode:'new'|'edit', slice:{} }
+          const [nfStatus, setNfStatus]   = useState({});   // sliceId -> []
+          const [activeTab, setActiveTab] = useState('basic');
+          const [saving, setSaving]       = useState(false);
+          const [msg, setMsg]             = useState(null);
+
+          const load = async () => {
+            setLoading(true);
+            try {
+              const r = await apiFetch('/api/slices');
+              if (r.ok) setSlices(await r.json());
+            } catch(_) {} finally { setLoading(false); }
+          };
+
+          useState(() => { load(); }, []);
+          React.useEffect(() => { load(); }, []);
+
+          const openNew = (preset) => {
+            setModal({ mode: 'new', slice: defaultSlice(preset) });
+            setActiveTab('basic'); setMsg(null);
+          };
+
+          const openEdit = (slice) => {
+            setModal({ mode: 'edit', slice: JSON.parse(JSON.stringify(slice)) });
+            setActiveTab('basic'); setMsg(null);
+          };
+
+          const closeModal = () => { setModal(null); setMsg(null); };
+
+          const setField = (path, value) => {
+            setModal(m => {
+              const s = JSON.parse(JSON.stringify(m.slice));
+              const keys = path.split('.');
+              let cur = s;
+              for (let i = 0; i < keys.length - 1; i++) { cur = cur[keys[i]]; }
+              cur[keys[keys.length - 1]] = value;
+              return { ...m, slice: s };
+            });
+          };
+
+          const setNfField = (i, field, value) => {
+            setModal(m => {
+              const s = JSON.parse(JSON.stringify(m.slice));
+              if (field.includes('.')) {
+                const [f1,f2] = field.split('.');
+                s.networkFunctions[i][f1][f2] = value;
+              } else {
+                s.networkFunctions[i][field] = value;
+              }
+              return { ...m, slice: s };
+            });
+          };
+
+          const handleSave = async () => {
+            if (!modal) return;
+            setSaving(true); setMsg(null);
+            try {
+              const isEdit = modal.mode === 'edit';
+              const url  = isEdit ? `/api/slices/${modal.slice._id}` : '/api/slices';
+              const meth = isEdit ? 'PUT' : 'POST';
+              const r = await apiFetch(url, { method: meth, headers: {'Content-Type':'application/json'}, body: JSON.stringify(modal.slice) });
+              if (!r.ok) { const d = await r.json(); setMsg({ type:'error', text: d.error || 'Save failed' }); return; }
+              setMsg({ type:'success', text: isEdit ? 'Slice updated' : 'Slice created' });
+              await load();
+              setTimeout(closeModal, 800);
+            } catch(e) { setMsg({ type:'error', text: e.message }); }
+            finally { setSaving(false); }
+          };
+
+          const handleDelete = async (slice) => {
+            if (!confirm(`Delete slice "${slice.name}"?`)) return;
+            try {
+              await apiFetch(`/api/slices/${slice._id}`, { method: 'DELETE' });
+              await load();
+            } catch(e) { alert(e.message); }
+          };
+
+          const handleApply = async (slice) => {
+            if (!confirm(`Apply resource allocations for "${slice.name}" to Kubernetes? This will restart affected NFs.`)) return;
+            try {
+              const r = await apiFetch(`/api/slices/${slice._id}/apply`, { method: 'POST' });
+              const d = await r.json();
+              const ok = d.results?.filter(x => x.status==='applied').length || 0;
+              const err= d.results?.filter(x => x.status==='error').length || 0;
+              alert(`Applied: ${ok} NFs updated${err ? `, ${err} errors` : ''}.`);
+              await load();
+            } catch(e) { alert(e.message); }
+          };
+
+          const handleDeactivate = async (slice) => {
+            if (!confirm(`Deactivate slice "${slice.name}"?`)) return;
+            try {
+              await apiFetch(`/api/slices/${slice._id}/deactivate`, { method: 'POST' });
+              await load();
+            } catch(e) { alert(e.message); }
+          };
+
+          const loadNfStatus = async (slice) => {
+            try {
+              const r = await apiFetch(`/api/slices/${slice._id}/nf-status`);
+              if (r.ok) setNfStatus(s => ({ ...s, [slice._id]: await r.json() }));
+            } catch(_) {}
+          };
+
+          const statusColor = (s) => s==='Running'?'var(--success)':s==='Degraded'?'var(--warn)':'var(--danger)';
+          const sliceStatusBadge = (s) => s==='active'?'success':s==='inactive'?'danger':'warn';
+
+          const fi = { background:'var(--bg2)',border:'1px solid var(--border)',color:'var(--text1)',padding:'6px 8px',borderRadius:4,width:'100%',boxSizing:'border-box' };
+
+          return (
+            <div>
+              {/* Header */}
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+                <div>
+                  <h2 style={{margin:0}}>🔀 Network Slicing</h2>
+                  <div style={{fontSize:12,color:'var(--text3)',marginTop:2}}>
+                    Manage 5G network slices (eMBB / URLLC / mIoT) and NF resource allocations
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:8}}>
+                  {PRESET_SLICES.map(p => (
+                    <button key={p.label} onClick={() => openNew(p)}
+                      style={{padding:'6px 14px',background:`${p.color}22`,border:`1px solid ${p.color}`,
+                        color:p.color,borderRadius:4,cursor:'pointer',fontSize:13,fontWeight:600}}>
+                      + {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Stats row */}
+              <div className="stat-grid" style={{marginBottom:16}}>
+                <div className="stat-card">
+                  <div className="stat-label">Total Slices</div>
+                  <div className="stat-value">{slices.length}</div>
+                  <div className="stat-sub">Defined</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Active</div>
+                  <div className="stat-value" style={{color:'var(--success)'}}>{slices.filter(s=>s.status==='active').length}</div>
+                  <div className="stat-sub">Applied to K8s</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Draft</div>
+                  <div className="stat-value" style={{color:'var(--warn)'}}>{slices.filter(s=>s.status==='draft').length}</div>
+                  <div className="stat-sub">Not applied</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-label">Inactive</div>
+                  <div className="stat-value" style={{color:'var(--text3)'}}>{slices.filter(s=>s.status==='inactive').length}</div>
+                  <div className="stat-sub">Deactivated</div>
+                </div>
+              </div>
+
+              {loading && <div style={{padding:20,textAlign:'center',color:'var(--text3)'}}>Loading slices…</div>}
+
+              {/* Slice cards */}
+              {!loading && slices.length === 0 && (
+                <div className="info-box" style={{textAlign:'center',padding:32}}>
+                  No slices defined yet. Use the buttons above to create your first slice.
+                </div>
+              )}
+
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:16}}>
+                {slices.map(slice => (
+                  <div key={slice._id} className="panel" style={{borderTop:`3px solid ${slice.color||'#3b82f6'}`,padding:16}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:8}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:15}}>{slice.name}</div>
+                        {slice.description && <div style={{fontSize:11,color:'var(--text3)',marginTop:2}}>{slice.description}</div>}
+                      </div>
+                      <span className={`badge ${sliceStatusBadge(slice.status)}`}>{slice.status}</span>
+                    </div>
+
+                    <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                      <span style={{padding:'2px 8px',borderRadius:4,background:`${slice.color||'#3b82f6'}33`,
+                        color:slice.color||'#3b82f6',fontSize:12,fontWeight:600}}>
+                        SST {slice.sst} · {SST_LABELS[slice.sst] || 'Custom'}
+                      </span>
+                      {slice.sd && <span style={{padding:'2px 8px',borderRadius:4,background:'var(--bg2)',color:'var(--text2)',fontSize:12}}>SD: {slice.sd}</span>}
+                      <span style={{padding:'2px 8px',borderRadius:4,background:'var(--bg2)',color:'var(--text2)',fontSize:12}}>DNN: {slice.dnn}</span>
+                      <span style={{padding:'2px 8px',borderRadius:4,background:'var(--bg2)',color:'var(--text2)',fontSize:12}}>{slice.subnet}</span>
+                    </div>
+
+                    {/* AMBR summary */}
+                    <div style={{fontSize:11,color:'var(--text3)',marginBottom:10}}>
+                      AMBR ↓{slice.ambr?.downlink?.value}{['','Kbps','Mbps','Gbps'][slice.ambr?.downlink?.unit||3]}
+                      {' '}↑{slice.ambr?.uplink?.value}{['','Kbps','Mbps','Gbps'][slice.ambr?.uplink?.unit||3]}
+                      {' · '}NFs: {(slice.networkFunctions||[]).filter(n=>n.enabled).length}/{(slice.networkFunctions||[]).length} enabled
+                    </div>
+
+                    {/* NF live status (toggle) */}
+                    {nfStatus[slice._id] && (
+                      <div style={{marginBottom:10}}>
+                        {nfStatus[slice._id].map(n => (
+                          <div key={n.name} style={{display:'flex',justifyContent:'space-between',
+                            fontSize:11,padding:'2px 0',borderBottom:'1px solid var(--border)'}}>
+                            <span style={{color:'var(--text2)'}}>{n.name.replace('open5gs-','')}</span>
+                            <span style={{color:statusColor(n.status)}}>{n.status} {n.ready}/{n.desired}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                      <button onClick={() => openEdit(slice)}
+                        style={{padding:'4px 10px',background:'var(--bg2)',border:'1px solid var(--border)',
+                          color:'var(--text1)',borderRadius:4,cursor:'pointer',fontSize:12}}>
+                        ✏️ Edit
+                      </button>
+                      {slice.status !== 'active' && (
+                        <button onClick={() => handleApply(slice)}
+                          style={{padding:'4px 10px',background:'rgba(0,200,100,0.1)',border:'1px solid var(--success)',
+                            color:'var(--success)',borderRadius:4,cursor:'pointer',fontSize:12}}>
+                          ▶ Apply
+                        </button>
+                      )}
+                      {slice.status === 'active' && (
+                        <button onClick={() => handleDeactivate(slice)}
+                          style={{padding:'4px 10px',background:'rgba(255,150,0,0.1)',border:'1px solid var(--warn)',
+                            color:'var(--warn)',borderRadius:4,cursor:'pointer',fontSize:12}}>
+                          ⏸ Deactivate
+                        </button>
+                      )}
+                      <button onClick={() => loadNfStatus(slice)}
+                        style={{padding:'4px 10px',background:'var(--bg2)',border:'1px solid var(--border)',
+                          color:'var(--text2)',borderRadius:4,cursor:'pointer',fontSize:12}}>
+                        📡 NF Status
+                      </button>
+                      <button onClick={() => handleDelete(slice)}
+                        style={{padding:'4px 10px',background:'rgba(255,60,60,0.1)',border:'1px solid var(--danger)',
+                          color:'var(--danger)',borderRadius:4,cursor:'pointer',fontSize:12}}>
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Create/Edit Modal */}
+              {modal && (
+                <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+                  <div style={{background:'var(--bg1)',borderRadius:8,width:'100%',maxWidth:640,maxHeight:'90vh',overflow:'auto',boxShadow:'0 8px 32px rgba(0,0,0,0.5)'}}>
+                    <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                      <h3 style={{margin:0}}>{modal.mode==='new'?'New':'Edit'} Network Slice</h3>
+                      <button onClick={closeModal} style={{background:'none',border:'none',color:'var(--text2)',fontSize:20,cursor:'pointer'}}>×</button>
+                    </div>
+
+                    {/* Modal tabs */}
+                    <div style={{display:'flex',borderBottom:'1px solid var(--border)',padding:'0 20px'}}>
+                      {['basic','network','qos','nfs'].map(t => (
+                        <button key={t} onClick={() => setActiveTab(t)}
+                          style={{padding:'10px 16px',background:'none',border:'none',
+                            borderBottom: activeTab===t ? '2px solid var(--primary)' : '2px solid transparent',
+                            color: activeTab===t ? 'var(--primary)' : 'var(--text2)',
+                            cursor:'pointer',fontSize:13,fontWeight:activeTab===t?600:400}}>
+                          {t==='basic'?'Basic':t==='network'?'Network':t==='qos'?'QoS':'NF Allocation'}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div style={{padding:20}}>
+                      {/* Basic tab */}
+                      {activeTab==='basic' && (
+                        <div style={{display:'grid',gap:12}}>
+                          <div>
+                            <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>Slice Name</label>
+                            <input style={fi} value={modal.slice.name} onChange={e=>setField('name',e.target.value)} placeholder="e.g. embb-slice-1" />
+                          </div>
+                          <div>
+                            <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>Description</label>
+                            <input style={fi} value={modal.slice.description} onChange={e=>setField('description',e.target.value)} placeholder="Optional" />
+                          </div>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                            <div>
+                              <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>SST (Slice/Service Type)</label>
+                              <select style={fi} value={modal.slice.sst} onChange={e=>setField('sst',parseInt(e.target.value))}>
+                                <option value={1}>1 — eMBB (Enhanced Mobile Broadband)</option>
+                                <option value={2}>2 — URLLC (Ultra-Reliable Low Latency)</option>
+                                <option value={3}>3 — mIoT (Massive IoT)</option>
+                                <option value={4}>4 — Custom</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>SD (Slice Differentiator)</label>
+                              <input style={fi} value={modal.slice.sd} onChange={e=>setField('sd',e.target.value)} placeholder="e.g. 000001 (hex)" maxLength={6} />
+                            </div>
+                          </div>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                            <div>
+                              <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>Color</label>
+                              <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                                <input type="color" value={modal.slice.color} onChange={e=>setField('color',e.target.value)}
+                                  style={{width:40,height:32,padding:2,border:'1px solid var(--border)',borderRadius:4,cursor:'pointer',background:'var(--bg2)'}} />
+                                <input style={{...fi,flex:1}} value={modal.slice.color} onChange={e=>setField('color',e.target.value)} />
+                              </div>
+                            </div>
+                            <div>
+                              <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>Priority</label>
+                              <input type="number" style={fi} min={1} max={255} value={modal.slice.priority} onChange={e=>setField('priority',parseInt(e.target.value)||1)} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Network tab */}
+                      {activeTab==='network' && (
+                        <div style={{display:'grid',gap:12}}>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                            <div>
+                              <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>DNN (Data Network Name)</label>
+                              <input style={fi} value={modal.slice.dnn} onChange={e=>setField('dnn',e.target.value)} placeholder="internet" />
+                            </div>
+                            <div>
+                              <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>UE Subnet</label>
+                              <input style={fi} value={modal.slice.subnet} onChange={e=>setField('subnet',e.target.value)} placeholder="10.45.0.0/16" />
+                            </div>
+                          </div>
+                          <div>
+                            <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>DNS Servers (comma-separated)</label>
+                            <input style={fi} value={(modal.slice.dns||[]).join(', ')}
+                              onChange={e=>setField('dns',e.target.value.split(',').map(x=>x.trim()).filter(Boolean))}
+                              placeholder="8.8.8.8, 8.8.4.4" />
+                          </div>
+                          <div>
+                            <label style={{fontSize:12,color:'var(--text3)',display:'block',marginBottom:4}}>MTU</label>
+                            <input type="number" style={fi} value={modal.slice.mtu} onChange={e=>setField('mtu',parseInt(e.target.value)||1400)} />
+                          </div>
+                          <div style={{background:'var(--bg2)',borderRadius:6,padding:12}}>
+                            <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>Aggregate Max Bit Rate (AMBR)</div>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                              <div>
+                                <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Downlink (Mbps)</label>
+                                <input type="number" style={fi} value={modal.slice.ambr?.downlink?.value||1000}
+                                  onChange={e=>setField('ambr.downlink.value',parseInt(e.target.value)||0)} />
+                              </div>
+                              <div>
+                                <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Uplink (Mbps)</label>
+                                <input type="number" style={fi} value={modal.slice.ambr?.uplink?.value||500}
+                                  onChange={e=>setField('ambr.uplink.value',parseInt(e.target.value)||0)} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* QoS tab */}
+                      {activeTab==='qos' && (
+                        <div style={{display:'grid',gap:12}}>
+                          <div style={{background:'var(--bg2)',borderRadius:6,padding:12}}>
+                            <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>5QI / QoS Parameters</div>
+                            <div>
+                              <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>5QI Index</label>
+                              <input type="number" style={fi} min={1} max={255} value={modal.slice.qos?.index||9}
+                                onChange={e=>setField('qos.index',parseInt(e.target.value)||9)} />
+                            </div>
+                          </div>
+                          <div style={{background:'var(--bg2)',borderRadius:6,padding:12}}>
+                            <div style={{fontSize:12,fontWeight:600,marginBottom:8}}>ARP (Allocation and Retention Priority)</div>
+                            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+                              <div>
+                                <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Priority Level</label>
+                                <input type="number" style={fi} min={1} max={15} value={modal.slice.qos?.arp?.priority_level||8}
+                                  onChange={e=>setField('qos.arp.priority_level',parseInt(e.target.value)||8)} />
+                              </div>
+                              <div>
+                                <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Pre-emption Cap.</label>
+                                <select style={fi} value={modal.slice.qos?.arp?.pre_emption_capability||1}
+                                  onChange={e=>setField('qos.arp.pre_emption_capability',parseInt(e.target.value))}>
+                                  <option value={1}>May pre-empt</option>
+                                  <option value={2}>Shall not</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label style={{fontSize:11,color:'var(--text3)',display:'block',marginBottom:4}}>Pre-emption Vuln.</label>
+                                <select style={fi} value={modal.slice.qos?.arp?.pre_emption_vulnerability||1}
+                                  onChange={e=>setField('qos.arp.pre_emption_vulnerability',parseInt(e.target.value))}>
+                                  <option value={1}>Pre-emptable</option>
+                                  <option value={2}>Not pre-emptable</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* NF Allocation tab */}
+                      {activeTab==='nfs' && (
+                        <div>
+                          <div style={{fontSize:12,color:'var(--text3)',marginBottom:12}}>
+                            Configure resource limits and replica count for each Network Function in this slice.
+                          </div>
+                          <div style={{display:'grid',gap:8}}>
+                            {(modal.slice.networkFunctions||[]).map((nf,i) => (
+                              <div key={nf.name} style={{background:'var(--bg2)',borderRadius:6,padding:12,
+                                border:`1px solid ${nf.enabled?'var(--border)':'rgba(255,255,255,0.05)'}`}}>
+                                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:nf.enabled?10:0}}>
+                                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                                    <input type="checkbox" checked={nf.enabled} onChange={e=>setNfField(i,'enabled',e.target.checked)} style={{cursor:'pointer'}} />
+                                    <span style={{fontWeight:600,fontSize:13,color:nf.enabled?'var(--text1)':'var(--text3)'}}>
+                                      {nf.name.replace('open5gs-','').toUpperCase()}
+                                    </span>
+                                    {NF_REQUIRED.has(nf.name) && <span style={{fontSize:10,color:'var(--warn)'}}>required</span>}
+                                  </div>
+                                  <span style={{fontSize:11,color:'var(--text3)'}}>{nf.name}</span>
+                                </div>
+                                {nf.enabled && (
+                                  <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:8}}>
+                                    <div>
+                                      <label style={{fontSize:10,color:'var(--text3)',display:'block',marginBottom:2}}>CPU Req</label>
+                                      <input style={{...fi,fontSize:11}} value={nf.cpu?.request||'100m'} onChange={e=>setNfField(i,'cpu.request',e.target.value)} />
+                                    </div>
+                                    <div>
+                                      <label style={{fontSize:10,color:'var(--text3)',display:'block',marginBottom:2}}>CPU Limit</label>
+                                      <input style={{...fi,fontSize:11}} value={nf.cpu?.limit||'500m'} onChange={e=>setNfField(i,'cpu.limit',e.target.value)} />
+                                    </div>
+                                    <div>
+                                      <label style={{fontSize:10,color:'var(--text3)',display:'block',marginBottom:2}}>Mem Req</label>
+                                      <input style={{...fi,fontSize:11}} value={nf.memory?.request||'64Mi'} onChange={e=>setNfField(i,'memory.request',e.target.value)} />
+                                    </div>
+                                    <div>
+                                      <label style={{fontSize:10,color:'var(--text3)',display:'block',marginBottom:2}}>Mem Limit</label>
+                                      <input style={{...fi,fontSize:11}} value={nf.memory?.limit||'256Mi'} onChange={e=>setNfField(i,'memory.limit',e.target.value)} />
+                                    </div>
+                                    <div>
+                                      <label style={{fontSize:10,color:'var(--text3)',display:'block',marginBottom:2}}>Replicas</label>
+                                      <input type="number" style={{...fi,fontSize:11}} min={1} max={10} value={nf.replicas||1} onChange={e=>setNfField(i,'replicas',parseInt(e.target.value)||1)} />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {msg && (
+                        <div style={{marginTop:12,padding:'8px 12px',borderRadius:4,fontSize:13,
+                          background: msg.type==='error'?'rgba(255,60,60,0.1)':'rgba(0,200,100,0.1)',
+                          border:`1px solid ${msg.type==='error'?'var(--danger)':'var(--success)'}`,
+                          color: msg.type==='error'?'var(--danger)':'var(--success)'}}>
+                          {msg.text}
+                        </div>
+                      )}
+
+                      <div style={{display:'flex',justifyContent:'flex-end',gap:8,marginTop:16,paddingTop:12,borderTop:'1px solid var(--border)'}}>
+                        <button onClick={closeModal}
+                          style={{padding:'8px 16px',background:'var(--bg2)',border:'1px solid var(--border)',color:'var(--text1)',borderRadius:4,cursor:'pointer'}}>
+                          Cancel
+                        </button>
+                        <button onClick={handleSave} disabled={saving}
+                          style={{padding:'8px 20px',background:'var(--primary)',border:'none',color:'#fff',borderRadius:4,cursor:saving?'wait':'pointer',fontWeight:600}}>
+                          {saving ? 'Saving…' : '💾 Save Slice'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
         // ── CLA — Cluster Load & Autoscaling ─────────────────────────────────
         function ClaSection() {
           const [status, setStatus]     = useState(null);
@@ -2443,6 +2944,9 @@ data:
                     <div className={`tab ${page === 'subscribers' ? 'active' : ''}`} onClick={() => setPage('subscribers')} style={{cursor: 'pointer'}}>
                       <Icon name="database" /> Subscribers
                     </div>
+                    <div className={`tab ${page === 'slicing' ? 'active' : ''}`} onClick={() => setPage('slicing')} style={{cursor: 'pointer'}}>
+                      <Icon name="slice" /> Slicing
+                    </div>
                     <div className={`tab ${page === 'tracing' ? 'active' : ''}`} onClick={() => setPage('tracing')} style={{cursor: 'pointer'}}>
                       <Icon name="network" /> Tracing
                     </div>
@@ -2479,6 +2983,9 @@ data:
                     </div>
                     <div className={`section ${page === 'ue-mgmt' ? 'active' : ''}`}>
                       <UEManager />
+                    </div>
+                    <div className={`section ${page === 'slicing' ? 'active' : ''}`}>
+                      <SlicingSection />
                     </div>
                     <div className={`section ${page === 'tracing' ? 'active' : ''}`}>
                       <TracingSection />
