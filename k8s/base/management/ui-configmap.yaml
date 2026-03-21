@@ -201,9 +201,9 @@ data:
         const Icon = ({ name }) => {
           const icons = {
             server: '⚙️', database: '💾', network: '🌐', users: '👥',
-            antenna: '📡', chart: '📊', alert: '⚠️', check: '✓',
+            antenna: '🗼', chart: '📊', alert: '⚠️', check: '✓',
             power: '⚡', cpu: '💻', memory: '🔋', play: '▶️', stop: '⏹️',
-            phone: '📱', topology: '🗺️'
+            phone: '📱', topology: '🕸️'
           };
           return <span>{icons[name] || '•'}</span>;
         };
